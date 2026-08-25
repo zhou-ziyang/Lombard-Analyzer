@@ -137,8 +137,6 @@ history for what changed.
   `BuildRevenueSummary` and never accumulated afterwards, so its values are
   wrong for any asset class appearing more than once. Currently latent: the
   dictionary is not read for output.
-- `GetComparisonDate` computes `DateSerial(y, Month - MonthsBack, Day)`, which
-  rolls 31 March back to 3 March rather than to the end of February.
 
 **Fragile**
 
