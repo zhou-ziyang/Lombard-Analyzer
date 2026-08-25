@@ -1,0 +1,6 @@
+# VBA modules are exported by the VBE as Windows-1252 (ANSI) text with CRLF
+# line endings.  Treating them as binary keeps Git from normalising either one:
+# a UTF-8 round-trip would corrupt single-byte characters such as 0x80 (the
+# euro sign in WeeklyAnalysisGenerate / RevenueTools), and rewritten line
+# endings break re-import into the VBE.
+*.bas -text diff
