@@ -150,6 +150,16 @@ Private Function ImportCsvByDate( _
 
     End If
 
+    If FileLen(csvFilePath) = 0 Then
+
+        MissingFiles = _
+            MissingFiles & vbCrLf & _
+            csvFilePath
+
+        Exit Function
+
+    End If
+
     SheetName = _
         FileType & _
         " Output " & _
@@ -173,12 +183,7 @@ Private Function ImportCsvByDate( _
 
     If ws Is Nothing Then Exit Function
 
-    Open csvFilePath For Input As #1
-
-        csvData = _
-            Split(Input$(LOF(1), #1), vbCrLf)
-
-    Close #1
+    csvData = ReadAllLines(csvFilePath)
 
     Headers = csvData(0)
 

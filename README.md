@@ -57,6 +57,13 @@ Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
 
+`Clean` keeps only the sheets on its own list and deletes everything else,
+*Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and
+rebuilding them is the intended behaviour. The list also names sheets that
+are not in this workbook (`Code`, `DateRange`, `PEC List`, `Database`,
+`Report`, `CLN`, …) on purpose, so the same module can be dropped into the
+other Lombard workbooks without editing it.
+
 ## Layout
 
 ```
@@ -112,21 +119,8 @@ the euro signs in `RevenueTools` are the ones that bite first.
 
 ## Known issues
 
-Recorded here rather than fixed, so the exported modules still match the
-workbook they came from.
-
-**Leaves Excel in a bad state**
-
-- `GenerateWeeklyAnalysis` calls a bare `Reset` in both `ExitRoutine` and
-  `ErrorHandler` (`src/weekly/WeeklyAnalysisGenerate.bas:1110,1122`). No
-  procedure by that name exists — `Utils` defines `ResetExcel` — so this is
-  VBA's built-in `Reset` statement, which closes open files and does nothing
-  else. `Application.Calculation` is left on `xlCalculationManual` and
-  `EnableEvents` on `False` after every run. `DeltaCalculation` calls
-  `ResetExcel` correctly.
-- `NoteHandler` is restored only in `ErrorHandler`, not on the success path,
-  so after one successful weekly run the global stays pointed at
-  `WriteNoteWeekly` and later `Note` calls from other modules are swallowed.
+Open items. Anything fixed has been removed from this list; see the commit
+history for what changed.
 
 **Wrong numbers**
 
@@ -146,33 +140,16 @@ workbook they came from.
 
 **Fragile**
 
-- `ReadAllLines` and `ImportCsvByDate` both hard-code file number `#1` instead
-  of `FreeFile`. Safe while every call is serial; error 55 the moment one
-  nests inside another.
-- `ReadAllLines` splits on `vbCrLf` only. An LF-terminated extract would parse
-  as a single line and yield zero rows without raising anything.
-- `BuildPositionMovements` validates only `idxAsset` and `idxValue`;
-  `BuildPositionDateDictionaries` validates no header index at all. A missing
-  column makes `FindHeaderIndex` return -1 and the position key silently loses
-  a segment, rather than failing the way `RequiredPositionHeader`,
-  `RequiredAccountHeader` and `RequiredColumn` do elsewhere.
-- `LoadPositionCache` sets `LineCount = UBound(Lines)` and then
-  `ReDim Cache.Data(1 To LineCount)`; a header-only file gives `1 To 0` and
-  raises error 9. `BuildPositionMovements` sizes its output arrays the same
-  way.
 - `GetAssetClass` matches with `Like` in a module without `Option Compare
   Text`, so the patterns are case-sensitive. A casing change in the source
   extract sends whole asset classes to `"UNKNOWN"`.
-- `Clean`'s keep-list names twelve sheets that no longer exist in the workbook
-  (`Code`, `DateRange`, `PEC List`, `Database`, `Report`, `CLN`, …) and does
-  not name `Risk Exposure` or `New Geo-Sec Lookup`. Both of those are caches
-  the weekly run is written to reuse — `RiskStageTableCanBeReused` and
-  `StoredRiskStageDate` exist precisely to avoid rebuilding them — and both
-  get deleted.
 - `BuildRevenueSummary` resolves `Delta_<AnalysisEndDate>` with no error
   handling, so pressing *Revenue Estimate* after changing the end date but
   before re-running *Calculate Delta* surfaces a raw subscript-out-of-range
   error.
+- `DeltaCalculation` has no `Option Explicit`, unlike every other module here.
+  Adding it needs a compile pass in the VBE, which is why it has been left
+  alone.
 
 **Tidying**
 
