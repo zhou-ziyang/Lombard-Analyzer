@@ -11,6 +11,9 @@ Public Sub BuildRevenueSummary()
     Dim wsDelta As Worksheet
     Dim wsRevenueSummary As Worksheet
 
+    Dim DeltaSheetName As String
+    Dim PreviousScreenUpdating As Boolean
+
     '=========================================================================
     ' Row / Loop Variables
     '=========================================================================
@@ -65,6 +68,12 @@ Public Sub BuildRevenueSummary()
     Dim DictAssetVolume As Object
     Dim DictFYRevenue As Object
 
+    PreviousScreenUpdating = Application.ScreenUpdating
+
+    On Error GoTo ErrorHandler
+
+    Application.ScreenUpdating = False
+
     Set DictAssetVolume = CreateObject("Scripting.Dictionary")
     Set DictFYRevenue = CreateObject("Scripting.Dictionary")
 
@@ -77,10 +86,25 @@ Public Sub BuildRevenueSummary()
     ForecastYear = _
         Year(wsCode.Range("AnalysisEndDate").Value)
 
-    Set wsDelta = Worksheets( _
+    DeltaSheetName = _
         "Delta_" & _
-        GetDateCode( _
-            wsCode.Range("AnalysisEndDate").Value))
+        GetDateCode(wsCode.Range("AnalysisEndDate").Value)
+
+    '
+    ' Revenue Estimate reads whatever Calculate Delta last produced for
+    ' this end date. Say so, rather than letting Worksheets() raise a bare
+    ' subscript error when the end date has moved on since.
+    '
+    If Not SheetExists(DeltaSheetName) Then
+
+        Fatal _
+            "Worksheet not found:" & vbCrLf & DeltaSheetName & _
+            vbCrLf & vbCrLf & _
+            "Run Calculate Delta for this analysis end date first."
+
+    End If
+
+    Set wsDelta = Worksheets(DeltaSheetName)
 
     '=========================================================================
     ' Locate Columns
@@ -362,9 +386,24 @@ Public Sub BuildRevenueSummary()
 '    wsRevenueSummary.Rows(OutputRow + 3).RowHeight = 15
 '    wsRevenueSummary.Rows(OutputRow + 4).RowHeight = 30
 
-FormatRevenueSummary _
-    wsRevenueSummary, _
-    OutputRow - 2
+    FormatRevenueSummary _
+        wsRevenueSummary, _
+        OutputRow - 2
+
+    Application.ScreenUpdating = PreviousScreenUpdating
+
+    wsRevenueSummary.Activate
+
+    Exit Sub
+
+ErrorHandler:
+
+    Application.ScreenUpdating = PreviousScreenUpdating
+
+    MsgBox _
+        Err.Description, _
+        vbCritical, _
+        "Revenue Estimate"
 
 End Sub
 
