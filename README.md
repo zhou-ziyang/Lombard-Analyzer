@@ -139,13 +139,6 @@ the euro signs in `RevenueTools` are the ones that bite first.
 Open items. Anything fixed has been removed from this list; see the commit
 history for what changed.
 
-**Wrong numbers**
-
-- `DictAnnualAMRevenue` is only `.Add`ed in the first-seen branch of
-  `BuildRevenueSummary` and never accumulated afterwards, so its values are
-  wrong for any asset class appearing more than once. Currently latent: the
-  dictionary is not read for output.
-
 **Fragile**
 
 - `BuildRevenueSummary` resolves `Delta_<AnalysisEndDate>` with no error
