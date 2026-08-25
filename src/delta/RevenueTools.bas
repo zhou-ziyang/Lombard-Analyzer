@@ -56,12 +56,6 @@ Public Sub BuildRevenueSummary()
     ' Aggregations
     '=========================================================================
 
-    Dim TotalEligibleAssets As Double
-
-    Dim TotalLombardAnnualRevenue As Double
-    Dim TotalLombardFYRevenue As Double
-
-    Dim AssetManagementAnnualRevenue As Double
     Dim AssetManagementFYRevenue As Double
 
     '=========================================================================
@@ -69,25 +63,10 @@ Public Sub BuildRevenueSummary()
     '=========================================================================
 
     Dim DictAssetVolume As Object
-    Dim DictAnnualRevenue As Object
     Dim DictFYRevenue As Object
-    Dim DictAnnualAMRevenue As Object
-    Dim DictFYAMRevenue As Object
 
-    Set DictAssetVolume = _
-        CreateObject("Scripting.Dictionary")
-
-    Set DictAnnualRevenue = _
-        CreateObject("Scripting.Dictionary")
-
-    Set DictFYRevenue = _
-        CreateObject("Scripting.Dictionary")
-
-    Set DictAnnualAMRevenue = _
-        CreateObject("Scripting.Dictionary")
-
-    Set DictFYAMRevenue = _
-        CreateObject("Scripting.Dictionary")
+    Set DictAssetVolume = CreateObject("Scripting.Dictionary")
+    Set DictFYRevenue = CreateObject("Scripting.Dictionary")
 
     '=========================================================================
     ' Setup
@@ -179,67 +158,19 @@ Public Sub BuildRevenueSummary()
                 AnnualAMRevenue * _
                 EligibleMonths / 12#
 
-            If DictAssetVolume.Exists(AssetClass) Then
+            '
+            ' Assigning to a key the Dictionary does not hold yet creates
+            ' it, so these cover the first row of a class and every later
+            ' one without a separate first-seen branch.
+            '
+            DictAssetVolume(AssetClass) = _
+                DictAssetVolume(AssetClass) + PositionValue
 
-                DictAssetVolume(AssetClass) = _
-                    DictAssetVolume(AssetClass) + _
-                    PositionValue
-
-                DictAnnualRevenue(AssetClass) = _
-                    DictAnnualRevenue(AssetClass) + _
-                    AnnualRevenue
-
-                DictFYRevenue(AssetClass) = _
-                    DictFYRevenue(AssetClass) + _
-                    FYRevenue
-
-                DictFYAMRevenue(AssetClass) = _
-                    DictFYAMRevenue(AssetClass) + _
-                    FYAMRevenue
-
-            Else
-
-                DictAssetVolume.Add _
-                    AssetClass, _
-                    PositionValue
-
-                DictAnnualRevenue.Add _
-                    AssetClass, _
-                    AnnualRevenue
-
-                DictFYRevenue.Add _
-                    AssetClass, _
-                    FYRevenue
-
-                DictAnnualAMRevenue.Add _
-                    AssetClass, _
-                    AnnualAMRevenue
-
-                DictFYAMRevenue.Add _
-                    AssetClass, _
-                    FYAMRevenue
-
-            End If
-
-            TotalEligibleAssets = _
-                TotalEligibleAssets + _
-                PositionValue
-
-            TotalLombardAnnualRevenue = _
-                TotalLombardAnnualRevenue + _
-                AnnualRevenue
-
-            TotalLombardFYRevenue = _
-                TotalLombardFYRevenue + _
-                FYRevenue
-
-            AssetManagementAnnualRevenue = _
-                AssetManagementAnnualRevenue + _
-                AnnualAMRevenue
+            DictFYRevenue(AssetClass) = _
+                DictFYRevenue(AssetClass) + FYRevenue
 
             AssetManagementFYRevenue = _
-                AssetManagementFYRevenue + _
-                FYAMRevenue
+                AssetManagementFYRevenue + FYAMRevenue
 
         End If
 
@@ -288,9 +219,6 @@ Public Sub BuildRevenueSummary()
         wsRevenueSummary.Cells(OutputRow, 3).Value = _
             GetRevenueRate(k)
 
-'        wsRevenueSummary.Cells(OutputRow, 4).Value = _
-'            DictAnnualRevenue(k)
-        
         wsRevenueSummary.Cells(OutputRow, 4).Formula = _
             "=B" & OutputRow & "*C" & OutputRow
 
@@ -304,25 +232,13 @@ Public Sub BuildRevenueSummary()
     wsRevenueSummary.Cells(OutputRow, 1).Value = _
         "Total Lombard"
 
-'    wsRevenueSummary.Cells(OutputRow, 4).Value = _
-'        TotalLombardAnnualRevenue
-
     wsRevenueSummary.Cells(OutputRow, 4).Formula = _
         "=SUM(D" & (OutputRow - UBound(DictAssetVolume.Keys) - 1) & _
         ":D" & (OutputRow - 1) & ")"
 
-''    wsRevenueSummary.Cells(OutputRow, 5).Value = _
-''        TotalLombardFYRevenue
-
     wsRevenueSummary.Cells(OutputRow, 5).Formula = _
         "=SUM(E" & (OutputRow - UBound(DictAssetVolume.Keys) - 1) & _
         ":E" & (OutputRow - 1) & ")"
-
-'    AssetManagementAnnualRevenue = _
-'        TotalEligibleAssets * 0.0014
-'
-'    AssetManagementFYRevenue = _
-'        AssetManagementAnnualRevenue
 
     wsRevenueSummary.Cells(OutputRow + 1, 1).Value = _
         "Asset Management Uplift"
@@ -335,9 +251,6 @@ Public Sub BuildRevenueSummary()
 '
 '    End With
 
-'    wsRevenueSummary.Cells(OutputRow + 1, 2).Value = _
-'        TotalEligibleAssets
-        
     wsRevenueSummary.Cells(OutputRow + 1, 2).Formula = _
         "=SUM(B" & (OutputRow - UBound(DictAssetVolume.Keys) - 1) & _
         ":B" & (OutputRow - 1) & ")"
@@ -345,9 +258,6 @@ Public Sub BuildRevenueSummary()
     wsRevenueSummary.Cells(OutputRow + 1, 3).Value = _
         0.0014
 
-'    wsRevenueSummary.Cells(OutputRow + 1, 4).Value = _
-'        AssetManagementAnnualRevenue
-        
     wsRevenueSummary.Cells(OutputRow + 1, 4).Formula = _
         "=B" & (OutputRow + 1) & _
         "*C" & (OutputRow + 1)
@@ -358,17 +268,9 @@ Public Sub BuildRevenueSummary()
     wsRevenueSummary.Cells(OutputRow + 2, 1).Value = _
         "Total"
 
-'    wsRevenueSummary.Cells(OutputRow + 2, 4).Value = _
-'        TotalLombardAnnualRevenue + _
-'        AssetManagementAnnualRevenue
-
     wsRevenueSummary.Cells(OutputRow + 2, 4).Formula = _
         "=D" & (OutputRow) & _
         "+D" & (OutputRow + 1)
-
-'    wsRevenueSummary.Cells(OutputRow + 2, 5).Value = _
-'        TotalLombardFYRevenue + _
-'        AssetManagementFYRevenue
 
     wsRevenueSummary.Cells(OutputRow + 2, 5).Formula = _
         "=E" & (OutputRow) & _
