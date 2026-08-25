@@ -94,7 +94,9 @@ reference sheets, staged into the `RiskExposure` table with an account scope
 flag, then aggregated twice — full portfolio and excluding aggregated accounts
 — into top-10 tables by name, geography and sector.
 `CreateWeeklyEmail` re-exports the finished ranges as HTML and assembles the
-Outlook message.
+Outlook message. `docs/weekly-analysis-generate.md` walks through that module
+in detail — the staging table's schema, the certificate recursion, the entity
+name normalisation, and the three separate asset classifications.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears
