@@ -125,10 +125,6 @@ Public Sub FormatJourneyTable()
     FormatReportTable _
         TableRange, _
         HeaderRows:=1
-        
-    FormatReportTable _
-        TableRange, _
-        HeaderRows:=1
     
     FormatJourneyColumnSeparators _
         ws, _

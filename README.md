@@ -70,7 +70,7 @@ other Lombard workbooks without editing it.
 src/core/       Utils, DataTools, GlobalVariables, Cache, ImportTools, Clean, TextToCol
 src/weekly/     WeeklyAnalysisGenerate, WeeklyAnalysisLayout, WeeklyAnalysisEmail
 src/journey/    Journey, JourneyFormatting, JourneyDashboardTable, JourneyPositionAnalysis
-src/delta/      DeltaCalculation, RevenueTools, PortfolioDataTools
+src/delta/      DeltaCalculation, RevenueTools
 src/reference/  AssetMapping
 archive/        JourneyVisualization (superseded)
 ```
@@ -139,12 +139,6 @@ the euro signs in `RevenueTools` are the ones that bite first.
 Open items. Anything fixed has been removed from this list; see the commit
 history for what changed.
 
-**Fragile**
-
-- `DeltaCalculation` has no `Option Explicit`, unlike every other module here.
-  Adding it needs a compile pass in the VBE, which is why it has been left
-  alone.
-
 **Tidying**
 
 - `ImportCsvByDate` recomputes `LastRow = ws.Range("A2").End(xlUp).Row` inside
@@ -152,14 +146,11 @@ history for what changed.
   result happens to be correct but the lookup is dead weight. Its
   `TextToColumns` call also splits on `Chr(10)` where the rest of the codebase
   splits these files on `";"`.
-- `FormatJourneyTable` calls `FormatReportTable` twice in a row on the same
-  range.
-- `WriteHeader` and `WriteRow` in `DeltaCalculation` have no callers, and its
-  `ErrHandler` / `CleanExit` labels are unreachable because
-  `On Error GoTo ErrHandler` is commented out.
-- `PortfolioDataTools` has no callers anywhere in the codebase;
-  `WeeklyAnalysisGenerate` computes the same figures with
-  `CalculateWeeklyPortfolioStats`. It may still be bound to a button.
+- `DeltaCalculation`'s `ErrHandler` / `CleanExit` labels are unreachable
+  because `On Error GoTo ErrHandler` is commented out.
+- `FormatJourneyColumns` has no callers. It takes no arguments, so unlike the
+  other dead procedures it could be bound to a shape somewhere in the workbook;
+  it was left in place until that is confirmed.
 - `RegisterUnknownAsset` takes an optional `NoteHandler` argument that shadows
   the global of the same name and is never used.
 - `Journey.bas`'s header comment refers to `Code!journey_start` and

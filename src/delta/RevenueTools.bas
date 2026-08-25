@@ -442,18 +442,6 @@ Public Sub FormatRevenueSummary( _
     FormatTotalRow ws, 1, 5, LastSummaryRow - 2
     FormatTotalRow ws, 1, 5, LastSummaryRow
 
-'    AddTopBorder _
-'        ws, _
-'        LastSummaryRow - 2, _
-'        1, _
-'        5
-'
-'    AddBottomBorder _
-'        ws, _
-'        LastSummaryRow, _
-'        1, _
-'        5
-
     '=========================================================
     ' Number Formats
     '=========================================================
@@ -562,13 +550,5 @@ Public Function GetMonthsInForecastYear( _
     End Select
 
 End Function
-
-Public Function GetForecastYear( _
-    ByVal EndDate As Date) As Long
-
-    GetForecastYear = Year(EndDate)
-
-End Function
-
 
 
