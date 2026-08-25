@@ -22,11 +22,21 @@ Public Function LoadPositionCache( _
 
     Dim i As Long
     Dim Arr As Variant
+    Dim Capacity As Long
 
     Cache.LineCount = UBound(Lines)
+    If Cache.LineCount < 0 Then Cache.LineCount = 0
 
-    ReDim Cache.Data(1 To Cache.LineCount)
-    ReDim Cache.Keys(1 To Cache.LineCount)
+    '
+    ' A file holding only a header row has no data lines.  The arrays are
+    ' still allocated so callers can index them safely, while LineCount
+    ' keeps their loops empty.
+    '
+    Capacity = Cache.LineCount
+    If Capacity < 1 Then Capacity = 1
+
+    ReDim Cache.Data(1 To Capacity)
+    ReDim Cache.Keys(1 To Capacity)
 
     For i = 1 To Cache.LineCount
 

@@ -5,47 +5,50 @@ Option Explicit
 ' Asset Classification
 '====================================================
 
+'
+' Maps the raw Sophis Asset Type / Classification string onto the reporting
+' asset classes. Matching is done on an upper-cased copy, and the patterns are
+' upper case to match: Like is case-sensitive under this module's default
+' Option Compare Binary, so a re-cased extract would otherwise send a whole
+' asset class to UNKNOWN.
+'
+' UNKNOWN means the string did not match any pattern, not that the position is
+' ineligible. Only an explicit Non Eligible marking makes a position
+' ineligible, so callers count UNKNOWN collateral as eligible and surface the
+' unmatched string for the mapping rules to be extended.
+'
 Public Function GetAssetClass( _
     ByVal AssetType As String) As String
 
-    AssetType = Trim(AssetType)
+    AssetType = UCase$(Trim$(AssetType))
 
-    If AssetType Like "Non Eligible*" Then
-
+    If AssetType Like "NON ELIGIBLE*" Then
         GetAssetClass = "Non Eligible Asset"
 
-    ElseIf AssetType Like "Certificates*" Then
-
+    ElseIf AssetType Like "CERTIFICATES*" Then
         GetAssetClass = "Certificates"
 
-    ElseIf AssetType Like "Currency*" Then
-
+    ElseIf AssetType Like "CURRENCY*" Then
         GetAssetClass = "Cash"
 
-    ElseIf AssetType Like "Segregated Account*" Then
-
+    ElseIf AssetType Like "SEGREGATED ACCOUNT*" Then
         GetAssetClass = "GP"
 
-    ElseIf AssetType Like "Funds*" Then
-
+    ElseIf AssetType Like "FUNDS*" Then
         GetAssetClass = "Funds"
 
-    ElseIf AssetType Like "Insurance*" Then
-
+    ElseIf AssetType Like "INSURANCE*" Then
         GetAssetClass = "Insurance"
 
-    ElseIf AssetType Like "Senior Corporate*" _
-        Or AssetType Like "Sovereign*" _
-        Or AssetType Like "Subordinated Corporate*" Then
-
+    ElseIf AssetType Like "SENIOR CORPORATE*" _
+        Or AssetType Like "SOVEREIGN*" _
+        Or AssetType Like "SUBORDINATED CORPORATE*" Then
         GetAssetClass = "Bonds"
 
-    ElseIf AssetType Like "Stocks*" Then
-
+    ElseIf AssetType Like "STOCKS*" Then
         GetAssetClass = "Equity"
 
     Else
-
         GetAssetClass = "UNKNOWN"
 
     End If

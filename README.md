@@ -57,6 +57,13 @@ Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
 
+`Clean` keeps only the sheets on its own list and deletes everything else,
+*Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and
+rebuilding them is the intended behaviour. The list also names sheets that
+are not in this workbook (`Code`, `DateRange`, `PEC List`, `Database`,
+`Report`, `CLN`, …) on purpose, so the same module can be dropped into the
+other Lombard workbooks without editing it.
+
 ## Layout
 
 ```
@@ -87,7 +94,9 @@ reference sheets, staged into the `RiskExposure` table with an account scope
 flag, then aggregated twice — full portfolio and excluding aggregated accounts
 — into top-10 tables by name, geography and sector.
 `CreateWeeklyEmail` re-exports the finished ranges as HTML and assembles the
-Outlook message.
+Outlook message. `docs/weekly-analysis-generate.md` walks through that module
+in detail — the staging table's schema, the certificate recursion, the entity
+name normalisation, and the three separate asset classifications.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears
@@ -103,6 +112,21 @@ snapshots into `Delta_<date>` (new positions, new NDGs) and `Closed_<date>`,
 using first-seen/last-seen dictionaries built by scanning every snapshot in
 the range. `BuildRevenueSummary` prices the result by asset class.
 
+### Asset classification and UNKNOWN
+
+`GetAssetClass` maps the raw Sophis Asset Type string onto the reporting asset
+classes. `"UNKNOWN"` means the string matched none of its patterns — it does
+not mean the position is ineligible. A live position is eligible unless it is
+explicitly marked Non Eligible, so UNKNOWN collateral is counted as eligible
+and the unmatched string is surfaced for the mapping rules to be extended.
+
+How it is surfaced differs by design. Revenue Summary has a row per asset
+class, so an unmatched string appears there as a row literally labelled
+UNKNOWN — visible, and the prompt to go fix the rules. The weekly Collateral
+Breakdown has no such column, so an unmatched string would vanish silently;
+that path calls `RegisterUnknownAsset` instead, which writes the string into
+the report's Notes box.
+
 ## Encoding
 
 The `.bas` files are exported by the VBE as Windows-1252 with CRLF line
@@ -112,67 +136,25 @@ the euro signs in `RevenueTools` are the ones that bite first.
 
 ## Known issues
 
-Recorded here rather than fixed, so the exported modules still match the
-workbook they came from.
-
-**Leaves Excel in a bad state**
-
-- `GenerateWeeklyAnalysis` calls a bare `Reset` in both `ExitRoutine` and
-  `ErrorHandler` (`src/weekly/WeeklyAnalysisGenerate.bas:1110,1122`). No
-  procedure by that name exists — `Utils` defines `ResetExcel` — so this is
-  VBA's built-in `Reset` statement, which closes open files and does nothing
-  else. `Application.Calculation` is left on `xlCalculationManual` and
-  `EnableEvents` on `False` after every run. `DeltaCalculation` calls
-  `ResetExcel` correctly.
-- `NoteHandler` is restored only in `ErrorHandler`, not on the success path,
-  so after one successful weekly run the global stays pointed at
-  `WriteNoteWeekly` and later `Note` calls from other modules are swallowed.
+Open items. Anything fixed has been removed from this list; see the commit
+history for what changed.
 
 **Wrong numbers**
 
-- `BuildRevenueSummary` excludes `"Non Eligible Asset"` but not `"UNKNOWN"`,
-  which is what `GetAssetClass` returns for an unmapped asset type. Those rows
-  reach the summary with a zero revenue rate but still add their position
-  value to the Eligible Assets column, and the Asset Management Uplift row
-  sums that whole column — so unmapped collateral inflates the uplift base.
-  The `Calculate Delta` path never calls `RegisterUnknownAsset`, so nothing
-  warns about it.
 - `DictAnnualAMRevenue` is only `.Add`ed in the first-seen branch of
   `BuildRevenueSummary` and never accumulated afterwards, so its values are
   wrong for any asset class appearing more than once. Currently latent: the
   dictionary is not read for output.
-- `GetComparisonDate` computes `DateSerial(y, Month - MonthsBack, Day)`, which
-  rolls 31 March back to 3 March rather than to the end of February.
 
 **Fragile**
 
-- `ReadAllLines` and `ImportCsvByDate` both hard-code file number `#1` instead
-  of `FreeFile`. Safe while every call is serial; error 55 the moment one
-  nests inside another.
-- `ReadAllLines` splits on `vbCrLf` only. An LF-terminated extract would parse
-  as a single line and yield zero rows without raising anything.
-- `BuildPositionMovements` validates only `idxAsset` and `idxValue`;
-  `BuildPositionDateDictionaries` validates no header index at all. A missing
-  column makes `FindHeaderIndex` return -1 and the position key silently loses
-  a segment, rather than failing the way `RequiredPositionHeader`,
-  `RequiredAccountHeader` and `RequiredColumn` do elsewhere.
-- `LoadPositionCache` sets `LineCount = UBound(Lines)` and then
-  `ReDim Cache.Data(1 To LineCount)`; a header-only file gives `1 To 0` and
-  raises error 9. `BuildPositionMovements` sizes its output arrays the same
-  way.
-- `GetAssetClass` matches with `Like` in a module without `Option Compare
-  Text`, so the patterns are case-sensitive. A casing change in the source
-  extract sends whole asset classes to `"UNKNOWN"`.
-- `Clean`'s keep-list names twelve sheets that no longer exist in the workbook
-  (`Code`, `DateRange`, `PEC List`, `Database`, `Report`, `CLN`, …) and does
-  not name `Risk Exposure` or `New Geo-Sec Lookup`. Both of those are caches
-  the weekly run is written to reuse — `RiskStageTableCanBeReused` and
-  `StoredRiskStageDate` exist precisely to avoid rebuilding them — and both
-  get deleted.
 - `BuildRevenueSummary` resolves `Delta_<AnalysisEndDate>` with no error
   handling, so pressing *Revenue Estimate* after changing the end date but
   before re-running *Calculate Delta* surfaces a raw subscript-out-of-range
   error.
+- `DeltaCalculation` has no `Option Explicit`, unlike every other module here.
+  Adding it needs a compile pass in the VBE, which is why it has been left
+  alone.
 
 **Tidying**
 

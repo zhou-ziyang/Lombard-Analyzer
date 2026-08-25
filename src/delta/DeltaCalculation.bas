@@ -66,6 +66,9 @@ Public Sub BuildPositionMovements()
     Dim DeltaCount As Long
     Dim ClosedCount As Long
 
+    Dim DeltaCapacity As Long
+    Dim ClosedCapacity As Long
+
     Dim ColCount As Long
 
     Dim wsDelta As Worksheet
@@ -167,6 +170,14 @@ Public Sub BuildPositionMovements()
     StartSnapshotLines = _
         ReadAllLines(StartSnapshotFile)
 
+    If UBound(EndSnapshotLines) < 0 Then
+        Fatal "Positions file is empty:" & vbCrLf & EndSnapshotFile
+    End If
+
+    If UBound(StartSnapshotLines) < 0 Then
+        Fatal "Positions file is empty:" & vbCrLf & StartSnapshotFile
+    End If
+
     HeaderFields = _
         Split(EndSnapshotLines(0), ";")
 
@@ -174,28 +185,22 @@ Public Sub BuildPositionMovements()
     ' Read header indexes
     '=========================================================================
 
-    idxNDG = FindHeaderIndex(HeaderFields, "NDG")
-    idxCO = FindHeaderIndex(HeaderFields, "CO_FT_GAR")
-    idxISIN = FindHeaderIndex(HeaderFields, "ISIN")
-    idxSec = FindHeaderIndex(HeaderFields, "Security Name")
+    idxNDG = RequiredHeaderIndex(HeaderFields, "NDG", EndSnapshotFile)
+    idxCO = RequiredHeaderIndex(HeaderFields, "CO_FT_GAR", EndSnapshotFile)
+    idxISIN = RequiredHeaderIndex(HeaderFields, "ISIN", EndSnapshotFile)
+    idxSec = RequiredHeaderIndex(HeaderFields, "Security Name", EndSnapshotFile)
 
     idxAsset = _
-        FindHeaderIndex( _
+        RequiredHeaderIndex( _
             HeaderFields, _
-            "Asset Type / Classification")
+            "Asset Type / Classification", _
+            EndSnapshotFile)
 
     idxValue = _
-        FindHeaderIndex( _
+        RequiredHeaderIndex( _
             HeaderFields, _
-            "Position Value")
-
-    If idxAsset = -1 Then
-        Fatal "Header not found: Asset Type / Classification"
-    End If
-
-    If idxValue = -1 Then
-        Fatal "Header not found: Position Value"
-    End If
+            "Position Value", _
+            EndSnapshotFile)
 
     '=========================================================================
     ' Build caches
@@ -268,12 +273,23 @@ Public Sub BuildPositionMovements()
         UBound(HeaderFields) - _
         LBound(HeaderFields) + 5
 
+    '
+    ' A file holding only a header row has no data lines.  Keep at least
+    ' one slot so the ReDim cannot become (1 To 0); DeltaCount and
+    ' ClosedCount decide how much is written back.
+    '
+    DeltaCapacity = UBound(EndSnapshotLines)
+    If DeltaCapacity < 1 Then DeltaCapacity = 1
+
+    ClosedCapacity = UBound(StartSnapshotLines)
+    If ClosedCapacity < 1 Then ClosedCapacity = 1
+
     ReDim DeltaData( _
-        1 To UBound(EndSnapshotLines), _
+        1 To DeltaCapacity, _
         1 To ColCount)
 
     ReDim ClosedData( _
-        1 To UBound(StartSnapshotLines), _
+        1 To ClosedCapacity, _
         1 To ColCount)
 
     '=========================================================================
@@ -552,11 +568,35 @@ Private Function FindNearestExistingDate(BasePath As String, TargetDate As Date,
 End Function
 
 Public Function ReadAllLines(FilePath As String) As Variant
-    Dim txt As String
-    Open FilePath For Input As #1
-    txt = Input$(LOF(1), 1)
-    Close #1
-    ReadAllLines = Split(txt, vbCrLf)
+
+    Dim FileNumber As Integer
+    Dim FileSize As Long
+    Dim FileText As String
+
+    FileNumber = FreeFile
+
+    Open FilePath For Binary Access Read As #FileNumber
+
+    FileSize = LOF(FileNumber)
+
+    If FileSize > 0 Then
+
+        FileText = Space$(FileSize)
+        Get #FileNumber, , FileText
+
+    End If
+
+    Close #FileNumber
+
+    '
+    ' Accept CRLF, LF and CR line endings.  An LF-terminated extract
+    ' used to parse as a single line and yield no data at all.
+    '
+    FileText = Replace(FileText, vbCrLf, vbLf)
+    FileText = Replace(FileText, vbCr, vbLf)
+
+    ReadAllLines = Split(FileText, vbLf)
+
 End Function
 
 Public Function FindHeaderIndex(hdr As Variant, name As String) As Long
@@ -568,6 +608,32 @@ Public Function FindHeaderIndex(hdr As Variant, name As String) As Long
         End If
     Next i
     FindHeaderIndex = -1
+End Function
+
+Public Function RequiredHeaderIndex( _
+    ByRef HeaderFields As Variant, _
+    ByVal HeaderName As String, _
+    Optional ByVal FileName As String = "") As Long
+
+    RequiredHeaderIndex = _
+        FindHeaderIndex(HeaderFields, HeaderName)
+
+    If RequiredHeaderIndex = -1 Then
+
+        If FileName = "" Then
+
+            Fatal "Header not found: " & HeaderName
+
+        Else
+
+            Fatal _
+                "Header not found: " & HeaderName & _
+                vbCrLf & FileName
+
+        End If
+
+    End If
+
 End Function
 
 Private Sub WriteHeader(ws As Worksheet, hdr As Variant, r As Long, c As Long)
@@ -631,25 +697,28 @@ Public Sub BuildPositionDateDictionaries( _
             ReadAllLines( _
                 BasePath & FileName)
 
+        If UBound(Lines) < 1 Then GoTo NextPositionFile
+
         HeaderFields = _
             Split(Lines(0), ";")
 
         idxNDG = _
-            FindHeaderIndex(HeaderFields, "NDG")
+            RequiredHeaderIndex(HeaderFields, "NDG", FileName)
 
         idxCO = _
-            FindHeaderIndex(HeaderFields, "CO_FT_GAR")
+            RequiredHeaderIndex(HeaderFields, "CO_FT_GAR", FileName)
 
         idxISIN = _
-            FindHeaderIndex(HeaderFields, "ISIN")
+            RequiredHeaderIndex(HeaderFields, "ISIN", FileName)
 
         idxSec = _
-            FindHeaderIndex(HeaderFields, "Security Name")
+            RequiredHeaderIndex(HeaderFields, "Security Name", FileName)
 
         idxAsset = _
-            FindHeaderIndex( _
+            RequiredHeaderIndex( _
                 HeaderFields, _
-                "Asset Type / Classification")
+                "Asset Type / Classification", _
+                FileName)
         For i = 1 To UBound(Lines)
 
             If Trim$(Lines(i)) <> "" Then
@@ -681,6 +750,7 @@ Public Sub BuildPositionDateDictionaries( _
 
         Next i
 
+NextPositionFile:
     Next F
 
 End Sub
