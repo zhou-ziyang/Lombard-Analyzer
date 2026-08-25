@@ -26,9 +26,6 @@ Public Sub CreateWeeklyEmail()
     Dim ReportDateValue As Variant
     Dim ReportDate As Date
 
-    Dim r As Long
-    Dim c As Long
-
     Dim WordEditor As Object
     Dim WordRange As Object
     Dim shp As Object
@@ -147,70 +144,16 @@ Public Sub CreateWeeklyEmail()
         "</div>"
 
     '
-    ' Overview
+    ' Report blocks, in reading order. Each one is a Layout anchor plus
+    ' the height and width of the block that starts there.
     '
 
-    r = Layout.PortfolioRow
-    c = Layout.PortfolioCol
-    
     HTMLBody = HTMLBody & _
-        RangeToHTMLFragment( _
-            ws.Range( _
-                ws.Cells(r, c), _
-                ws.Cells(r + 7, c + 3)))
-
-    '
-    ' Collateral Breakdown
-    '
-
-    r = Layout.BreakdownRow
-    c = Layout.BreakdownCol
-    
-    HTMLBody = HTMLBody & _
-        RangeToHTMLFragment( _
-            ws.Range( _
-                ws.Cells(r, c), _
-                ws.Cells(r + 7, c + 8)))
-                
-
-    '
-    ' New Lombards
-    '
-
-    r = Layout.NewLoanRow
-    c = Layout.NewLoanCol
-    
-    HTMLBody = HTMLBody & _
-        RangeToHTMLFragment( _
-            ws.Range( _
-                ws.Cells(r, c), _
-                ws.Cells(r + 3, c + 3)))
-
-    '
-    ' Ended Lombards
-    '
-
-    r = Layout.EndedLoanRow
-    c = Layout.EndedLoanCol
-    
-    HTMLBody = HTMLBody & _
-        RangeToHTMLFragment( _
-            ws.Range( _
-                ws.Cells(r, c), _
-                ws.Cells(r + 3, c + 3)))
-
-    '
-    ' Entered Collateral
-    '
-
-    r = Layout.EnteredRow
-    c = Layout.EnteredCol
-    
-    HTMLBody = HTMLBody & _
-        RangeToHTMLFragment( _
-            ws.Range( _
-                ws.Cells(r, c), _
-                ws.Cells(r + 4, c + 8)))
+        BlockHtml(ws, Layout.PortfolioRow, Layout.PortfolioCol, 7, 3) & _
+        BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 7, 8) & _
+        BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 3, 3) & _
+        BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 3, 3) & _
+        BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 4, 8)
 
     '
     ' Pie Chart Placeholder
@@ -316,6 +259,21 @@ Public Sub CreateWeeklyEmail()
     
 
 End Sub
+
+Private Function BlockHtml( _
+    ByVal ws As Worksheet, _
+    ByVal TopRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal HeightRows As Long, _
+    ByVal WidthCols As Long) As String
+
+    BlockHtml = _
+        RangeToHTMLFragment( _
+            ws.Range( _
+                ws.Cells(TopRow, LeftCol), _
+                ws.Cells(TopRow + HeightRows, LeftCol + WidthCols)))
+
+End Function
 
 Private Function BuildRiskAnalysisHTML( _
     ByVal ws As Worksheet) As String

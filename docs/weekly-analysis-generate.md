@@ -64,6 +64,10 @@ flowchart TB
 支路把每一笔持仓变成一到多条「暴露」记录，汇进同一张暂存表，再从那张表分出两个口径、三个
 维度。
 
+报表区块用到的八个资产类别集中在 `CollateralCategories()` 一处定义（字典键 + 列标题），
+Collateral Breakdown、Entered Collateral、各处合计和饼图切片颜色都从它派生，所以增删一个
+类别只改这一个数组。
+
 ---
 
 ## 为什么这个模块的读取层和别处不一样
@@ -255,11 +259,6 @@ n 是某个资产类别下的唯一实体数——为了取前 10 名而把全�
 `FindEntityPrefixCanonicalName`：每遇到一个新实体键就遍历一次全部已有键，整体 O(n²) 的字符串
 比较。版本注释里 v64 到 v76 一直在做性能优化（缓存重复的证书展开、避免重复合并地域候选、缓存
 实体排序用的比较属性），这三处是剩下的量级项。
-
-**Asset Type Mapping 被写了两遍。** `WriteAssetTypeMapping` 是在 `BuildCollateralDictionary`
-内部调用的，而后者在一次运行里会被调两次（current 和 YTD）。所以那张表被 `CreateOrReplaceSheet`
-重建了两次。结果是对的——第二次调用时字典里已经含了第一次的内容——但白做一遍，而且如果之后有人
-在这张表上加了手工列，第一次重建就会把它清掉。
 
 **Notes 框的高度由饼图决定。** `BuildNotes` 的 LastRow 是
 `Layout.PieRow + Layout.PieHeightRows - 1`。改饼图的高度会连带改掉 Notes 框的高度。两者在

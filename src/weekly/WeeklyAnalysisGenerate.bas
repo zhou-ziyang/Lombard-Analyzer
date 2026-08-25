@@ -1025,6 +1025,8 @@ YTDDate = _
             PositionsYTD, _
             UnknownAssets
 
+        WriteAssetTypeMapping
+
     End If
 
     If WeeklyDataHasRows(PositionsCurrent) Then
@@ -1191,133 +1193,66 @@ Public Sub BuildPortfolioSection( _
     Dim Date3 As Date
     Dim YTDDate As Date
 
+    Dim RowDates As Variant
+    Dim ShowYTD As Boolean
+
+    Dim FirstDataRow As Long
+    Dim LastDataRow As Long
+
     Dim r As Long
     Dim c As Long
-
-    Dim ShowYTD As Boolean
+    Dim i As Long
 
     r = Layout.PortfolioRow
     c = Layout.PortfolioCol
 
-    Date2 = _
-        ResolveComparisonDate( _
-            GetComparisonDate(CurrentDate, 2))
-    
-    Date3 = _
-        ResolveComparisonDate( _
-            GetComparisonDate(CurrentDate, 3))
-
-    YTDDate = _
-        ResolveComparisonDate( _
-            GetYTDDate(CurrentDate))
+    Date2 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 2))
+    Date3 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 3))
+    YTDDate = ResolveComparisonDate(GetYTDDate(CurrentDate))
 
     '
-    ' If three months history already
-    ' reaches previous year,
-    ' do not show YTD row
+    ' Three months of history already reaches into the previous year, so a
+    ' separate year-end row would only repeat what the table shows anyway.
     '
+    ShowYTD = (Year(Date3) = Year(CurrentDate))
 
-    ShowYTD = _
-        (Year(Date3) = Year(CurrentDate))
+    If ShowYTD Then
+        RowDates = Array(YTDDate, Date3, Date2, ComparisonDate, CurrentDate)
+    Else
+        RowDates = Array(Date3, Date2, ComparisonDate, CurrentDate)
+    End If
 
-    '
-    ' Section Title
-    '
+    FirstDataRow = r + 2
+    LastDataRow = FirstDataRow + UBound(RowDates)
 
-    WriteSectionTitle _
-        ws, _
-        r, _
-        c, _
-        4, _
-        "Overview"
-
-    '
-    ' Header
-    '
+    WriteSectionTitle ws, r, c, 4, "Overview"
 
     ws.Cells(r + 1, c).Value = "Date"
     ws.Cells(r + 1, c + 1).Value = "Loans"
     ws.Cells(r + 1, c + 2).Value = "Drawn"
     ws.Cells(r + 1, c + 3).Value = "Approved"
 
+    For i = 0 To UBound(RowDates)
+        WritePortfolioRow ws, FirstDataRow + i, c, CDate(RowDates(i))
+    Next i
+
     If ShowYTD Then
-
-        '
-        ' Data
-        '
-
-        WritePortfolioRow ws, r + 2, c, YTDDate
-        ws.Cells(r + 2, c).Value = _
-            "YE " & Year(CurrentDate) - 1
-        WritePortfolioRow ws, r + 3, c, Date3
-        WritePortfolioRow ws, r + 4, c, Date2
-        WritePortfolioRow ws, r + 5, c, ComparisonDate
-        WritePortfolioRow ws, r + 6, c, CurrentDate
-
-        '
-        ' Formatting
-        '
-
-        ws.Range( _
-            ws.Cells(r + 2, c), _
-            ws.Cells(r + 6, c)).NumberFormat = _
-            "dd/mm/yyyy"
-
-        ws.Range( _
-            ws.Cells(r + 2, c + 2), _
-            ws.Cells(r + 6, c + 3)).NumberFormat = _
-            EuroNumberFormat()
-
-        FormatReportTable _
-            ws.Range( _
-                ws.Cells(r + 1, c), _
-                ws.Cells(r + 6, c + 3)), _
-            1
-
-        FormatFirstColumn _
-            ws, _
-            r + 1, _
-            r + 6, _
-            c
-
-    Else
-
-        '
-        ' Data
-        '
-
-        WritePortfolioRow ws, r + 2, c, Date3
-        WritePortfolioRow ws, r + 3, c, Date2
-        WritePortfolioRow ws, r + 4, c, ComparisonDate
-        WritePortfolioRow ws, r + 5, c, CurrentDate
-
-        '
-        ' Formatting
-        '
-
-        ws.Range( _
-            ws.Cells(r + 2, c), _
-            ws.Cells(r + 5, c)).NumberFormat = _
-            "dd/mm/yyyy"
-
-        ws.Range( _
-            ws.Cells(r + 2, c + 2), _
-            ws.Cells(r + 5, c + 3)).NumberFormat = _
-            EuroNumberFormat()
-
-        FormatReportTable _
-            ws.Range( _
-                ws.Cells(r + 1, c), _
-                ws.Cells(r + 5, c + 3)), _
-            1
-
-        FormatFirstColumn _
-            ws, _
-            r + 1, _
-            r + 5, _
-            c
-
+        ws.Cells(FirstDataRow, c).Value = "YE " & Year(CurrentDate) - 1
     End If
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, c), _
+        ws.Cells(LastDataRow, c)).NumberFormat = "dd/mm/yyyy"
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, c + 2), _
+        ws.Cells(LastDataRow, c + 3)).NumberFormat = EuroNumberFormat()
+
+    FormatReportTable _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastDataRow, c + 3)), _
+        1
+
+    FormatFirstColumn ws, r + 1, LastDataRow, c
 
 End Sub
 
@@ -1344,6 +1279,161 @@ Private Sub WritePortfolioRow( _
 
 End Sub
 
+'
+' The collateral categories in report order: dictionary key first, then the
+' column header. Every collateral table, total and pie slice is driven from
+' this one list, so a category is added or renamed in a single place.
+'
+Private Function CollateralCategories() As Variant
+
+    CollateralCategories = Array( _
+        Array("Certificates", "Certificates"), _
+        Array("Cash", "Cash"), _
+        Array("Funds", "Mutual Funds & ETF"), _
+        Array("Insurance", "Insurance"), _
+        Array("GP", "GP"), _
+        Array("Bonds", "Bonds"), _
+        Array("Equity", "Equity"), _
+        Array("Non Eligible Asset", "Non-Eligible"))
+
+End Function
+
+Private Function CollateralCategoryCount() As Long
+
+    CollateralCategoryCount = UBound(CollateralCategories()) + 1
+
+End Function
+
+'
+' Pie slice colours, in the same order as CollateralCategories.
+'
+Private Function CollateralSliceColors() As Variant
+
+    CollateralSliceColors = Array( _
+        RGB(95, 125, 150), _
+        RGB(130, 155, 170), _
+        RGB(170, 185, 190), _
+        RGB(215, 205, 185), _
+        RGB(195, 170, 145), _
+        RGB(170, 135, 120), _
+        RGB(165, 105, 120), _
+        RGB(120, 120, 120))
+
+End Function
+
+Private Function NewCollateralDictionary() As Object
+
+    Dim Amounts As Object
+    Dim Category As Variant
+
+    Set Amounts = CreateObject("Scripting.Dictionary")
+
+    For Each Category In CollateralCategories()
+        Amounts(Category(0)) = 0
+    Next Category
+
+    Set NewCollateralDictionary = Amounts
+
+End Function
+
+Private Function CollateralTotal(ByVal Amounts As Object) As Double
+
+    Dim Category As Variant
+
+    For Each Category In CollateralCategories()
+        CollateralTotal = CollateralTotal + Amounts(Category(0))
+    Next Category
+
+End Function
+
+'
+' The four row shapes every collateral table is built from. Each writes the
+' category columns only; the caller owns the row label in LeftCol.
+'
+Private Sub WriteCollateralHeaders( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long)
+
+    Dim Categories As Variant
+    Dim i As Long
+
+    Categories = CollateralCategories()
+
+    For i = 0 To UBound(Categories)
+        ws.Cells(RowNo, LeftCol + 1 + i).Value = Categories(i)(1)
+    Next i
+
+End Sub
+
+Private Sub WriteCollateralAmounts( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByVal Amounts As Object)
+
+    Dim Categories As Variant
+    Dim i As Long
+
+    Categories = CollateralCategories()
+
+    For i = 0 To UBound(Categories)
+        ws.Cells(RowNo, LeftCol + 1 + i).Value = Amounts(Categories(i)(0))
+    Next i
+
+End Sub
+
+Private Sub WriteCollateralShares( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByVal Amounts As Object, _
+    ByVal Total As Double)
+
+    Dim Categories As Variant
+    Dim i As Long
+
+    If Total = 0 Then Exit Sub
+
+    Categories = CollateralCategories()
+
+    For i = 0 To UBound(Categories)
+        ws.Cells(RowNo, LeftCol + 1 + i).Value = _
+            Amounts(Categories(i)(0)) / Total
+    Next i
+
+End Sub
+
+'
+' Percentage change against a base period. A category the base period did not
+' hold has no meaningful change, so its cell is left empty.
+'
+Private Sub WriteCollateralChange( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByVal Amounts As Object, _
+    ByVal BaseAmounts As Object)
+
+    Dim Categories As Variant
+    Dim BaseValue As Double
+    Dim i As Long
+
+    Categories = CollateralCategories()
+
+    For i = 0 To UBound(Categories)
+
+        BaseValue = BaseAmounts(Categories(i)(0))
+
+        If BaseValue <> 0 Then
+            ws.Cells(RowNo, LeftCol + 1 + i).Value = _
+                (Amounts(Categories(i)(0)) - BaseValue) / BaseValue
+        End If
+
+    Next i
+
+End Sub
+
 Public Sub BuildCollateralBreakdown( _
     ByVal ws As Worksheet, _
     ByRef CurrentPositions As Variant, _
@@ -1353,187 +1443,95 @@ Public Sub BuildCollateralBreakdown( _
     Dim DictCurrent As Object
     Dim DictYTD As Object
 
-    Dim Categories As Variant
-
     Dim TotalCurrent As Double
     Dim TotalYTD As Double
 
-    Dim i As Long
-    Dim ColNo As Long
+    Dim ReportDate As Date
 
     Dim r As Long
     Dim c As Long
+    Dim LastCol As Long
 
     If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
     If Not WeeklyDataHasRows(YTDPositions) Then Exit Sub
 
     r = Layout.BreakdownRow
     c = Layout.BreakdownCol
+    LastCol = c + CollateralCategoryCount()
 
-    Categories = Array("Certificates", "Cash", "Mutual Funds and ETF", "Insurance", "GP", "Bonds", "Equity")
+    ReportDate = Worksheets("Home").Range("WeeklyEndDate").Value
 
     Set DictCurrent = _
-        BuildCollateralDictionary( _
-            CurrentPositions, _
-            UnknownAssets)
-
+        BuildCollateralDictionary(CurrentPositions, UnknownAssets)
     Set DictYTD = _
-        BuildCollateralDictionary( _
-            YTDPositions, _
-            UnknownAssets)
+        BuildCollateralDictionary(YTDPositions, UnknownAssets)
 
-    ' Totals
+    TotalCurrent = CollateralTotal(DictCurrent)
+    TotalYTD = CollateralTotal(DictYTD)
 
-    TotalCurrent = _
-          DictCurrent("Certificates") _
-        + DictCurrent("Cash") _
-        + DictCurrent("Funds") _
-        + DictCurrent("Insurance") _
-        + DictCurrent("GP") _
-        + DictCurrent("Bonds") _
-        + DictCurrent("Equity") _
-        + DictCurrent("Non Eligible Asset")
-    
-    TotalYTD = _
-          DictYTD("Certificates") _
-        + DictYTD("Cash") _
-        + DictYTD("Funds") _
-        + DictYTD("Insurance") _
-        + DictYTD("GP") _
-        + DictYTD("Bonds") _
-        + DictYTD("Equity") _
-        + DictYTD("Non Eligible Asset")
-
-    ' Title
-
-    WriteSectionTitle ws, r, c, 9, "Collateral Breakdown"
-
-    ' Header
+    WriteSectionTitle _
+        ws, r, c, _
+        CollateralCategoryCount() + 1, _
+        "Collateral Breakdown"
 
     ws.Cells(r + 1, c).Value = "Date"
-    ws.Cells(r + 1, c + 1).Value = "Certificates"
-    ws.Cells(r + 1, c + 2).Value = "Cash"
-    ws.Cells(r + 1, c + 3).Value = "Mutual Funds & ETF"
-    ws.Cells(r + 1, c + 4).Value = "Insurance"
-    ws.Cells(r + 1, c + 5).Value = "GP"
-    ws.Cells(r + 1, c + 6).Value = "Bonds"
-    ws.Cells(r + 1, c + 7).Value = "Equity"
-    ws.Cells(r + 1, c + 8).Value = "Non-Eligible"
-    
-    ' YTD Amount
+    WriteCollateralHeaders ws, r + 1, c
 
-'    ws.Cells(r + 2, c).Value = DateSerial(Year(Worksheets("Home").Range("WeeklyEndDate").Value) - 1, 12, 31)
-    ws.Cells(r + 2, c).Value = "YE " & Year(Worksheets("Home").Range("WeeklyEndDate").Value) - 1
-    ws.Cells(r + 2, c + 1).Value = DictYTD("Certificates")
-    ws.Cells(r + 2, c + 2).Value = DictYTD("Cash")
-    ws.Cells(r + 2, c + 3).Value = DictYTD("Funds")
-    ws.Cells(r + 2, c + 4).Value = DictYTD("Insurance")
-    ws.Cells(r + 2, c + 5).Value = DictYTD("GP")
-    ws.Cells(r + 2, c + 6).Value = DictYTD("Bonds")
-    ws.Cells(r + 2, c + 7).Value = DictYTD("Equity")
-    ws.Cells(r + 2, c + 8).Value = DictYTD("Non Eligible Asset")
-
-    ' YTD %
+    ws.Cells(r + 2, c).Value = "YE " & Year(ReportDate) - 1
+    WriteCollateralAmounts ws, r + 2, c, DictYTD
 
     ws.Cells(r + 3, c).Value = "% of Portfolio"
+    WriteCollateralShares ws, r + 3, c, DictYTD, TotalYTD
 
-    For i = 1 To 8
-
-        If TotalYTD <> 0 Then
-
-            ws.Cells(r + 3, c + i).Value = ws.Cells(r + 2, c + i).Value / TotalYTD
-
-        End If
-
-    Next i
-
-    ' Current Amount
-
-    ws.Cells(r + 4, c).Value = Worksheets("Home").Range("WeeklyEndDate").Value
-    ws.Cells(r + 4, c + 1).Value = DictCurrent("Certificates")
-    ws.Cells(r + 4, c + 2).Value = DictCurrent("Cash")
-    ws.Cells(r + 4, c + 3).Value = DictCurrent("Funds")
-    ws.Cells(r + 4, c + 4).Value = DictCurrent("Insurance")
-    ws.Cells(r + 4, c + 5).Value = DictCurrent("GP")
-    ws.Cells(r + 4, c + 6).Value = DictCurrent("Bonds")
-    ws.Cells(r + 4, c + 7).Value = DictCurrent("Equity")
-    ws.Cells(r + 4, c + 8).Value = DictCurrent("Non Eligible Asset")
-
-    ' Current %
+    ws.Cells(r + 4, c).Value = ReportDate
+    WriteCollateralAmounts ws, r + 4, c, DictCurrent
 
     ws.Cells(r + 5, c).Value = "% of Portfolio"
-
-    For i = 1 To 8
-
-        If TotalCurrent <> 0 Then
-
-            ws.Cells(r + 5, c + i).Value = ws.Cells(r + 4, c + i).Value / TotalCurrent
-
-        End If
-
-    Next i
-
-    ' Increase YTD
+    WriteCollateralShares ws, r + 5, c, DictCurrent, TotalCurrent
 
     ws.Cells(r + 6, c).Value = "% Change YTD"
+    WriteCollateralChange ws, r + 6, c, DictCurrent, DictYTD
 
-    For i = 1 To 8
-
-        If ws.Cells(r + 2, c + i).Value <> 0 Then
-
-            ws.Cells(r + 6, c + i).Value = (ws.Cells(r + 4, c + i).Value - ws.Cells(r + 2, c + i).Value) / ws.Cells(r + 2, c + i).Value
-
-        End If
-
-    Next i
-
+    '
     ' Formatting
+    '
 
     ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 4, c)).NumberFormat = "dd/mm/yyyy"
-    ws.Range(ws.Cells(r + 2, c + 1), ws.Cells(r + 4, c + 8)).NumberFormat = EuroNumberFormat()
-    ws.Range(ws.Cells(r + 3, c + 1), ws.Cells(r + 3, c + 8)).NumberFormat = "0.00%"
-    ws.Range(ws.Cells(r + 5, c + 1), ws.Cells(r + 5, c + 8)).NumberFormat = "0.00%"
-    ws.Range(ws.Cells(r + 6, c + 1), ws.Cells(r + 6, c + 8)).NumberFormat = "0.00%"
+
+    ws.Range( _
+        ws.Cells(r + 2, c + 1), _
+        ws.Cells(r + 4, LastCol)).NumberFormat = EuroNumberFormat()
+
+    ws.Range( _
+        ws.Cells(r + 3, c + 1), _
+        ws.Cells(r + 3, LastCol)).NumberFormat = "0.00%"
+
+    ws.Range( _
+        ws.Cells(r + 5, c + 1), _
+        ws.Cells(r + 5, LastCol)).NumberFormat = "0.00%"
+
+    ws.Range( _
+        ws.Cells(r + 6, c + 1), _
+        ws.Cells(r + 6, LastCol)).NumberFormat = "0.00%"
 
     FormatReportTable _
-        ws.Range( _
-            ws.Cells(r + 1, c), _
-            ws.Cells(r + 6, c + 8)), _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(r + 6, LastCol)), _
         1
 
-    FormatFirstColumn _
-        ws, _
-        r + 1, _
-        r + 6, _
-        c
-    
-    AddBottomBorder _
-        ws, _
-        r + 3, _
-        c, _
-        c + 8
-    
-    AddBottomBorder _
-        ws, _
-        r + 5, _
-        c, _
-        c + 8
-        
+    FormatFirstColumn ws, r + 1, r + 6, c
+
+    AddBottomBorder ws, r + 3, c, LastCol
+    AddBottomBorder ws, r + 5, c, LastCol
+
     ws.Cells(r + 3, c).Font.Bold = False
     ws.Cells(r + 5, c).Font.Bold = False
-        
-    ws.Range( _
-        ws.Cells(r + 6, c), _
-        ws.Cells(r + 6, c + 8)).Font.Bold = True
-        
-    ws.Range( _
-        ws.Cells(r + 6, c), _
-        ws.Cells(r + 6, c + 8)).Interior.Color = _
-        RGB(212, 212, 212)
 
-    ' Pie Chart
+    With ws.Range(ws.Cells(r + 6, c), ws.Cells(r + 6, LastCol))
+        .Font.Bold = True
+        .Interior.Color = RGB(212, 212, 212)
+    End With
 
-    CreateCollateralPieChart ws, DictCurrent, Worksheets("Home").Range("WeeklyEndDate").Value
+    CreateCollateralPieChart ws, DictCurrent, ReportDate
 
 End Sub
 
@@ -1543,154 +1541,15 @@ Public Sub BuildNewLoansSection( _
     ByRef PreviousAccounts As Variant, _
     ByRef CurrentPositions As Variant)
 
-    Dim DictPrev As Object
-    Dim DictNewNDG As Object
-
-    Dim r As Long
-
-    Dim NDG As String
-
-    Dim LoanCount As Long
-
-    Dim TotalApproved As Double
-    Dim TotalDrawn As Double
-    Dim TotalCollateral As Double
-
-    Dim TopRow As Long
-    Dim LeftCol As Long
-
-    TopRow = Layout.NewLoanRow
-    LeftCol = Layout.NewLoanCol
-
-    If Not WeeklyDataHasRows(CurrentAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(PreviousAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
-
-    Set DictPrev = CreateObject("Scripting.Dictionary")
-    DictPrev.CompareMode = vbTextCompare
-
-    Set DictNewNDG = CreateObject("Scripting.Dictionary")
-    DictNewNDG.CompareMode = vbTextCompare
-
-    ' Previous Month NDGs
-
-    For r = _
-        LBound(PreviousAccounts, 1) To _
-        UBound(PreviousAccounts, 1)
-
-        NDG = _
-            CleanWeeklyCsvField( _
-                PreviousAccounts( _
-                    r, _
-                    WeeklyAccountNDG))
-
-        If NDG <> "" Then
-
-            DictPrev(NDG) = True
-
-        End If
-
-    Next r
-
-    ' New NDGs
-
-    For r = _
-        LBound(CurrentAccounts, 1) To _
-        UBound(CurrentAccounts, 1)
-
-        NDG = _
-            CleanWeeklyCsvField( _
-                CurrentAccounts( _
-                    r, _
-                    WeeklyAccountNDG))
-
-        If NDG <> "" Then
-
-            If Not DictPrev.Exists(NDG) And _
-               Not DictNewNDG.Exists(NDG) Then
-
-                DictNewNDG(NDG) = True
-
-                LoanCount = LoanCount + 1
-
-                TotalApproved = _
-                    TotalApproved + _
-                    CDbl( _
-                        CurrentAccounts( _
-                            r, _
-                            WeeklyAccountApproved))
-
-                TotalDrawn = _
-                    TotalDrawn + _
-                    CDbl( _
-                        CurrentAccounts( _
-                            r, _
-                            WeeklyAccountDrawn))
-
-            End If
-
-        End If
-
-    Next r
-
-    ' Position Value
-
-    For r = _
-        LBound(CurrentPositions, 1) To _
-        UBound(CurrentPositions, 1)
-
-        NDG = _
-            CleanWeeklyCsvField( _
-                CurrentPositions( _
-                    r, _
-                    WeeklyPosNDG))
-
-        If DictNewNDG.Exists(NDG) Then
-
-            TotalCollateral = _
-                TotalCollateral + _
-                CDbl( _
-                    CurrentPositions( _
-                        r, _
-                        WeeklyPosPositionValue))
-
-        End If
-
-    Next r
-
-    ' Section Title
-    
-    WriteSectionTitle ws, TopRow, LeftCol, 4, "New Lombard Loans in the Past Month"
-
-    ' Header
-
-    ws.Cells(TopRow + 1, LeftCol).Value = "New Loans"
-    ws.Cells(TopRow + 1, LeftCol + 1).Value = "Max Approved Loan"
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Drawn Amount"
-    ws.Cells(TopRow + 1, LeftCol + 3).Value = "Collateral Value"
-    
-    ' Values
-
-    ws.Cells(TopRow + 2, LeftCol).Value = LoanCount
-    ws.Cells(TopRow + 2, LeftCol + 1).Value = TotalApproved
-    ws.Cells(TopRow + 2, LeftCol + 2).Value = TotalDrawn
-    ws.Cells(TopRow + 2, LeftCol + 3).Value = TotalCollateral
-
-    ' Formatting
-
-    ws.Range(ws.Cells(TopRow + 2, LeftCol + 1), ws.Cells(TopRow + 3, LeftCol + 3)).NumberFormat = EuroNumberFormat()
-
-    FormatReportTable _
-        ws.Range( _
-            ws.Cells(TopRow + 1, LeftCol), _
-            ws.Cells(TopRow + 2, LeftCol + 3)), _
-        1
-    
-'    AddBottomBorder _
-'        ws, _
-'        TopRow + 2, _
-'        LeftCol, _
-'        LeftCol + 3
+    WriteLoanMovementSection _
+        ws, _
+        Layout.NewLoanRow, _
+        Layout.NewLoanCol, _
+        "New Lombard Loans in the Past Month", _
+        "New Loans", _
+        CurrentAccounts, _
+        PreviousAccounts, _
+        CurrentPositions
 
 End Sub
 
@@ -1699,123 +1558,108 @@ Public Sub BuildEndedLoansSection( _
     ByRef CurrentAccounts As Variant, _
     ByRef ComparisonAccounts As Variant, _
     ByRef ComparisonPositions As Variant)
-    
-    Dim DictCurrent As Object
-    Dim DictEnded As Object
 
-    Dim r As Long
+    WriteLoanMovementSection _
+        ws, _
+        Layout.EndedLoanRow, _
+        Layout.EndedLoanCol, _
+        "Lombard Loans Ended in the Past Month", _
+        "Ended Loans", _
+        ComparisonAccounts, _
+        CurrentAccounts, _
+        ComparisonPositions
+
+End Sub
+
+'
+' One loan-movement table: the accounts present in SubjectAccounts but absent
+' from ReferenceAccounts, with their collateral read from the snapshot the
+' loans were still live in. New loans compare the current snapshot against the
+' previous one; ended loans compare the previous snapshot against the current
+' one. An NDG is counted once however many account rows it holds.
+'
+Private Sub WriteLoanMovementSection( _
+    ByVal ws As Worksheet, _
+    ByVal TopRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal Title As String, _
+    ByVal CountHeader As String, _
+    ByRef SubjectAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant, _
+    ByRef SubjectPositions As Variant)
+
+    Dim ReferenceNDGs As Object
+    Dim MovedNDGs As Object
+
+    Dim NDG As String
 
     Dim LoanCount As Long
-
     Dim TotalApproved As Double
     Dim TotalDrawn As Double
     Dim TotalCollateral As Double
 
-    Dim NDG As String
+    Dim r As Long
 
-    Dim TopRow As Long
-    Dim LeftCol As Long
+    If Not WeeklyDataHasRows(SubjectAccounts) Then Exit Sub
+    If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Sub
 
-    TopRow = Layout.EndedLoanRow
-    LeftCol = Layout.EndedLoanCol
+    Set ReferenceNDGs = GetAccountNDGDictionary(ReferenceAccounts)
+    Set MovedNDGs = NewNDGSet()
 
-    If Not WeeklyDataHasRows(CurrentAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(ComparisonAccounts) Then Exit Sub
-            
-    Set DictCurrent = _
-        GetAccountNDGDictionary(CurrentAccounts)
+    For r = LBound(SubjectAccounts, 1) To UBound(SubjectAccounts, 1)
 
-    Set DictEnded = CreateObject("Scripting.Dictionary")
-    DictEnded.CompareMode = vbTextCompare
+        NDG = CleanWeeklyCsvField(SubjectAccounts(r, WeeklyAccountNDG))
 
-For r = _
-    LBound(ComparisonAccounts, 1) To _
-    UBound(ComparisonAccounts, 1)
+        If NDG <> "" Then
 
-    NDG = _
-        CleanWeeklyCsvField( _
-            ComparisonAccounts( _
-                r, _
-                WeeklyAccountNDG))
+            If Not ReferenceNDGs.Exists(NDG) And _
+               Not MovedNDGs.Exists(NDG) Then
 
-    If NDG <> "" Then
+                MovedNDGs(NDG) = True
+                LoanCount = LoanCount + 1
 
-        If Not DictCurrent.Exists(NDG) And _
-           Not DictEnded.Exists(NDG) Then
+                TotalApproved = TotalApproved + _
+                    CDbl(SubjectAccounts(r, WeeklyAccountApproved))
 
-            DictEnded(NDG) = True
+                TotalDrawn = TotalDrawn + _
+                    CDbl(SubjectAccounts(r, WeeklyAccountDrawn))
 
-            LoanCount = LoanCount + 1
-
-            TotalApproved = _
-                TotalApproved + _
-                CDbl( _
-                    ComparisonAccounts( _
-                        r, _
-                        WeeklyAccountApproved))
-
-            TotalDrawn = _
-                TotalDrawn + _
-                CDbl( _
-                    ComparisonAccounts( _
-                        r, _
-                        WeeklyAccountDrawn))
+            End If
 
         End If
 
-    End If
+    Next r
 
-Next r
+    If WeeklyDataHasRows(SubjectPositions) Then
 
-    ' Position Value from Comparison Positions
+        For r = LBound(SubjectPositions, 1) To UBound(SubjectPositions, 1)
 
-    If WeeklyDataHasRows(ComparisonPositions) Then
+            NDG = CleanWeeklyCsvField(SubjectPositions(r, WeeklyPosNDG))
 
-        For r = _
-            LBound(ComparisonPositions, 1) To _
-            UBound(ComparisonPositions, 1)
-
-            NDG = _
-                CleanWeeklyCsvField( _
-                    ComparisonPositions( _
-                        r, _
-                        WeeklyPosNDG))
-
-            If DictEnded.Exists(NDG) Then
-
-                TotalCollateral = _
-                    TotalCollateral + _
-                    CDbl( _
-                        ComparisonPositions( _
-                            r, _
-                            WeeklyPosPositionValue))
-
+            If MovedNDGs.Exists(NDG) Then
+                TotalCollateral = TotalCollateral + _
+                    CDbl(SubjectPositions(r, WeeklyPosPositionValue))
             End If
 
         Next r
 
     End If
 
-    ' Section Title
+    WriteSectionTitle ws, TopRow, LeftCol, 4, Title
 
-    WriteSectionTitle ws, TopRow, LeftCol, 4, "Lombard Loans Ended in the Past Month"
-
-    ' Header
-
-    ws.Cells(TopRow + 1, LeftCol).Value = "Ended Loans"
+    ws.Cells(TopRow + 1, LeftCol).Value = CountHeader
     ws.Cells(TopRow + 1, LeftCol + 1).Value = "Max Approved Loan"
     ws.Cells(TopRow + 1, LeftCol + 2).Value = "Drawn Amount"
     ws.Cells(TopRow + 1, LeftCol + 3).Value = "Collateral Value"
-    ' Values
 
     ws.Cells(TopRow + 2, LeftCol).Value = LoanCount
     ws.Cells(TopRow + 2, LeftCol + 1).Value = TotalApproved
     ws.Cells(TopRow + 2, LeftCol + 2).Value = TotalDrawn
     ws.Cells(TopRow + 2, LeftCol + 3).Value = TotalCollateral
 
-    ' Formatting
-    
-    ws.Range(ws.Cells(TopRow + 2, LeftCol + 1), ws.Cells(TopRow + 3, LeftCol + 3)).NumberFormat = EuroNumberFormat()
+    ws.Range( _
+        ws.Cells(TopRow + 2, LeftCol + 1), _
+        ws.Cells(TopRow + 3, LeftCol + 3)).NumberFormat = EuroNumberFormat()
 
     FormatReportTable _
         ws.Range( _
@@ -1831,73 +1675,34 @@ Private Function BuildCollateralDictionary( _
 
     Dim Dict As Object
 
-    Dim r As Long
-
     Dim AssetType As String
     Dim AssetClass As String
 
-    Dim PositionValue As Double
+    Dim r As Long
 
     If Not WeeklyDataHasRows(PositionData) Then Exit Function
 
-    Set Dict = CreateObject("Scripting.Dictionary")
+    Set Dict = NewCollateralDictionary()
 
-    Dict("Certificates") = 0
-    Dict("Cash") = 0
-    Dict("Funds") = 0
-    Dict("Insurance") = 0
-    Dict("GP") = 0
-    Dict("Bonds") = 0
-    Dict("Equity") = 0
-    Dict("Non Eligible Asset") = 0
+    For r = LBound(PositionData, 1) To UBound(PositionData, 1)
 
-    For r = _
-        LBound(PositionData, 1) To _
-        UBound(PositionData, 1)
-
-        AssetType = _
-            CleanWeeklyCsvField( _
-                PositionData( _
-                    r, _
-                    WeeklyPosAssetType))
-
-        PositionValue = _
-            CDbl( _
-                PositionData( _
-                    r, _
-                    WeeklyPosPositionValue))
-
+        AssetType = CleanWeeklyCsvField(PositionData(r, WeeklyPosAssetType))
         AssetClass = GetAssetClass(AssetType)
-        
-        If AssetType <> "" Then
 
+        If AssetType <> "" Then
             If Not AssetTypeMapping.Exists(AssetType) Then
-        
-                AssetTypeMapping.Add _
-                    AssetType, _
-                    AssetClass
-        
+                AssetTypeMapping.Add AssetType, AssetClass
             End If
-        
         End If
 
-        Select Case AssetClass
-
-'            Case "Non Eligible Asset"
-
-            Case "UNKNOWN"
-
-                RegisterUnknownAsset AssetType, UnknownAssets
-
-            Case Else
-
-                Dict(AssetClass) = Dict(AssetClass) + PositionValue
-
-        End Select
+        If AssetClass = "UNKNOWN" Then
+            RegisterUnknownAsset AssetType, UnknownAssets
+        Else
+            Dict(AssetClass) = Dict(AssetClass) + _
+                CDbl(PositionData(r, WeeklyPosPositionValue))
+        End If
 
     Next r
-    
-    WriteAssetTypeMapping
 
     Set BuildCollateralDictionary = Dict
 
@@ -1917,6 +1722,7 @@ Public Sub WriteAssetTypeMapping()
     Dim r As Long
 
     If AssetTypeMapping Is Nothing Then Exit Sub
+    If AssetTypeMapping.Count = 0 Then Exit Sub
 
     Set ws = _
         CreateOrReplaceSheet("Asset Type Mapping")
@@ -1992,209 +1798,102 @@ Public Sub BuildEnteredCollateralSection( _
     ByRef CurrentPositions As Variant, _
     ByRef UnknownAssets As Object)
 
-    Dim DictOld As Object
-    Dim DictNewNDG As Object
-    Dim DictResult As Object
-
-    Dim r As Long
+    Dim PreviousNDGs As Object
+    Dim NewNDGs As Object
+    Dim Amounts As Object
 
     Dim NDG As String
     Dim AssetType As String
     Dim AssetClass As String
 
-    Dim TopRow As Long
-    Dim LeftCol As Long
-
-    TopRow = Layout.EnteredRow
-    LeftCol = Layout.EnteredCol
+    Dim r As Long
 
     If Not WeeklyDataHasRows(CurrentAccounts) Then Exit Sub
     If Not WeeklyDataHasRows(PreviousAccounts) Then Exit Sub
     If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
 
-    Set DictOld = CreateObject("Scripting.Dictionary")
-    DictOld.CompareMode = vbTextCompare
+    Set PreviousNDGs = GetAccountNDGDictionary(PreviousAccounts)
+    Set NewNDGs = NewNDGSet()
+    Set Amounts = NewCollateralDictionary()
 
-    Set DictNewNDG = CreateObject("Scripting.Dictionary")
-    DictNewNDG.CompareMode = vbTextCompare
+    For r = LBound(CurrentAccounts, 1) To UBound(CurrentAccounts, 1)
 
-    Set DictResult = CreateObject("Scripting.Dictionary")
-
-    DictResult("Certificates") = 0
-    DictResult("Cash") = 0
-    DictResult("Funds") = 0
-    DictResult("Insurance") = 0
-    DictResult("GP") = 0
-    DictResult("Bonds") = 0
-    DictResult("Equity") = 0
-    DictResult("Non Eligible Asset") = 0
-
-    ' Previous Month NDGs
-
-    For r = _
-        LBound(PreviousAccounts, 1) To _
-        UBound(PreviousAccounts, 1)
-
-        NDG = _
-            CleanWeeklyCsvField( _
-                PreviousAccounts( _
-                    r, _
-                    WeeklyAccountNDG))
+        NDG = CleanWeeklyCsvField(CurrentAccounts(r, WeeklyAccountNDG))
 
         If NDG <> "" Then
-
-            DictOld(NDG) = True
-
+            If Not PreviousNDGs.Exists(NDG) Then NewNDGs(NDG) = True
         End If
 
     Next r
 
-    ' New NDGs
+    For r = LBound(CurrentPositions, 1) To UBound(CurrentPositions, 1)
 
-    For r = _
-        LBound(CurrentAccounts, 1) To _
-        UBound(CurrentAccounts, 1)
+        NDG = CleanWeeklyCsvField(CurrentPositions(r, WeeklyPosNDG))
 
-        NDG = _
-            CleanWeeklyCsvField( _
-                CurrentAccounts( _
-                    r, _
-                    WeeklyAccountNDG))
+        If NewNDGs.Exists(NDG) Then
 
-        If NDG <> "" Then
+            AssetType = _
+                CleanWeeklyCsvField(CurrentPositions(r, WeeklyPosAssetType))
+            AssetClass = GetAssetClass(AssetType)
 
-            If Not DictOld.Exists(NDG) Then
-
-                DictNewNDG(NDG) = True
-
+            If AssetClass = "UNKNOWN" Then
+                RegisterUnknownAsset AssetType, UnknownAssets
+            Else
+                Amounts(AssetClass) = Amounts(AssetClass) + _
+                    CDbl(CurrentPositions(r, WeeklyPosPositionValue))
             End If
 
         End If
 
     Next r
 
-    ' Position Value of New NDGs
-
-    For r = _
-        LBound(CurrentPositions, 1) To _
-        UBound(CurrentPositions, 1)
-
-        NDG = _
-            CleanWeeklyCsvField( _
-                CurrentPositions( _
-                    r, _
-                    WeeklyPosNDG))
-
-        If DictNewNDG.Exists(NDG) Then
-
-            AssetType = _
-                CleanWeeklyCsvField( _
-                    CurrentPositions( _
-                        r, _
-                        WeeklyPosAssetType))
-
-            AssetClass = GetAssetClass(AssetType)
-
-            Select Case AssetClass
-
-                Case "UNKNOWN"
-
-                    RegisterUnknownAsset AssetType, UnknownAssets
-
-                Case Else
-
-                    DictResult(AssetClass) = _
-                        DictResult(AssetClass) + _
-                        CDbl( _
-                            CurrentPositions( _
-                                r, _
-                                WeeklyPosPositionValue))
-
-            End Select
-
-        End If
-
-    Next r
-
-    WriteEnteredCollateralLayout ws, DictResult, TopRow, LeftCol
+    WriteEnteredCollateralLayout _
+        ws, Amounts, Layout.EnteredRow, Layout.EnteredCol
 
 End Sub
 
-Private Sub WriteEnteredCollateralLayout(ByVal ws As Worksheet, ByVal DictResult As Object, ByVal TopRow As Long, ByVal LeftCol As Long)
+Private Sub WriteEnteredCollateralLayout( _
+    ByVal ws As Worksheet, _
+    ByVal Amounts As Object, _
+    ByVal TopRow As Long, _
+    ByVal LeftCol As Long)
 
-    Dim TotalEntered As Double
+    Dim Total As Double
+    Dim LastCol As Long
 
-    TotalEntered = DictResult("Certificates") + DictResult("Cash") + DictResult("Funds") + DictResult("Insurance") + DictResult("GP") + DictResult("Bonds") + DictResult("Equity") + DictResult("Non Eligible Asset")
+    Total = CollateralTotal(Amounts)
+    LastCol = LeftCol + CollateralCategoryCount()
 
-    ' Title
+    WriteSectionTitle _
+        ws, TopRow, LeftCol, _
+        CollateralCategoryCount() + 1, _
+        "Collateral Entered with New NDGs in the Past Month"
 
-    WriteSectionTitle ws, TopRow, LeftCol, 9, "Collateral Entered with New NDGs in the Past Month"
-
-    ' Header
-
-    ws.Cells(TopRow + 1, LeftCol + 1).Value = "Certificates"
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Cash"
-    ws.Cells(TopRow + 1, LeftCol + 3).Value = "Mutual Funds & ETF"
-    ws.Cells(TopRow + 1, LeftCol + 4).Value = "Insurance"
-    ws.Cells(TopRow + 1, LeftCol + 5).Value = "GP"
-    ws.Cells(TopRow + 1, LeftCol + 6).Value = "Bonds"
-    ws.Cells(TopRow + 1, LeftCol + 7).Value = "Equity"
-    ws.Cells(TopRow + 1, LeftCol + 8).Value = "Non-Eligible"
-    
-    ' Amounts
+    WriteCollateralHeaders ws, TopRow + 1, LeftCol
 
     ws.Cells(TopRow + 2, LeftCol).Value = "Collateral Value"
-    ws.Cells(TopRow + 2, LeftCol + 1).Value = DictResult("Certificates")
-    ws.Cells(TopRow + 2, LeftCol + 2).Value = DictResult("Cash")
-    ws.Cells(TopRow + 2, LeftCol + 3).Value = DictResult("Funds")
-    ws.Cells(TopRow + 2, LeftCol + 4).Value = DictResult("Insurance")
-    ws.Cells(TopRow + 2, LeftCol + 5).Value = DictResult("GP")
-    ws.Cells(TopRow + 2, LeftCol + 6).Value = DictResult("Bonds")
-    ws.Cells(TopRow + 2, LeftCol + 7).Value = DictResult("Equity")
-    ws.Cells(TopRow + 2, LeftCol + 8).Value = DictResult("Non Eligible Asset")
-
-    ' Percentages
+    WriteCollateralAmounts ws, TopRow + 2, LeftCol, Amounts
 
     ws.Cells(TopRow + 3, LeftCol).Value = "%"
+    WriteCollateralShares ws, TopRow + 3, LeftCol, Amounts, Total
 
-    If TotalEntered <> 0 Then
+    ws.Range( _
+        ws.Cells(TopRow + 2, LeftCol + 1), _
+        ws.Cells(TopRow + 2, LastCol)).NumberFormat = EuroNumberFormat()
 
-        ws.Cells(TopRow + 3, LeftCol + 1).Value = DictResult("Certificates") / TotalEntered
-        ws.Cells(TopRow + 3, LeftCol + 2).Value = DictResult("Cash") / TotalEntered
-        ws.Cells(TopRow + 3, LeftCol + 3).Value = DictResult("Funds") / TotalEntered
-        ws.Cells(TopRow + 3, LeftCol + 4).Value = DictResult("Insurance") / TotalEntered
-        ws.Cells(TopRow + 3, LeftCol + 5).Value = DictResult("GP") / TotalEntered
-        ws.Cells(TopRow + 3, LeftCol + 6).Value = DictResult("Bonds") / TotalEntered
-        ws.Cells(TopRow + 3, LeftCol + 7).Value = DictResult("Equity") / TotalEntered
-        ws.Cells(TopRow + 3, LeftCol + 8).Value = DictResult("Non Eligible Asset") / TotalEntered
-
-    End If
-
-    ' Formatting
-
-    ws.Range(ws.Cells(TopRow + 2, LeftCol + 1), ws.Cells(TopRow + 2, LeftCol + 8)).NumberFormat = EuroNumberFormat()
-    ws.Range(ws.Cells(TopRow + 3, LeftCol + 1), ws.Cells(TopRow + 3, LeftCol + 8)).NumberFormat = "0.00%"
+    ws.Range( _
+        ws.Cells(TopRow + 3, LeftCol + 1), _
+        ws.Cells(TopRow + 3, LastCol)).NumberFormat = "0.00%"
 
     FormatReportTable _
         ws.Range( _
             ws.Cells(TopRow + 1, LeftCol), _
-            ws.Cells(TopRow + 3, LeftCol + 8)), _
+            ws.Cells(TopRow + 3, LastCol)), _
         1
 
-    FormatFirstColumn _
-        ws, _
-        TopRow + 1, _
-        TopRow + 3, _
-        LeftCol
+    FormatFirstColumn ws, TopRow + 1, TopRow + 3, LeftCol
 
     ws.Cells(TopRow + 3, LeftCol).Font.Bold = False
-    
-'    ws.Range(ws.Cells(TopRow + 3, LeftCol), _
-'             ws.Cells(TopRow + 3, LeftCol + 8)).Font.Bold = False
-'
-'    ws.Range(ws.Cells(TopRow + 3, LeftCol), _
-'             ws.Cells(TopRow + 3, LeftCol + 8)).Font.Color = _
-'             RGB(90, 90, 90)
 
 End Sub
 
@@ -12612,7 +12311,7 @@ Public Sub CreateCollateralPieChart( _
     Dim BreakdownRow As Long
     Dim BreakdownCol As Long
 
-    Dim Colors(1 To 8) As Long
+    Dim SliceColors As Variant
     Dim i As Long
 
     BreakdownRow = Layout.BreakdownRow
@@ -12622,16 +12321,8 @@ Public Sub CreateCollateralPieChart( _
     ' Total Collateral
     '
 
-    TotalCollateral = _
-          DictCurrent("Certificates") _
-        + DictCurrent("Cash") _
-        + DictCurrent("Funds") _
-        + DictCurrent("Insurance") _
-        + DictCurrent("GP") _
-        + DictCurrent("Bonds") _
-        + DictCurrent("Equity") _
-        + DictCurrent("Non Eligible Asset")
-        
+    TotalCollateral = CollateralTotal(DictCurrent)
+
 
     '
     ' Delete old chart
@@ -12698,7 +12389,9 @@ Public Sub CreateCollateralPieChart( _
         .SeriesCollection(1).XValues = _
             ws.Range( _
                 ws.Cells(BreakdownRow + 1, BreakdownCol + 1), _
-                ws.Cells(BreakdownRow + 1, BreakdownCol + 8))
+                ws.Cells( _
+                    BreakdownRow + 1, _
+                    BreakdownCol + CollateralCategoryCount()))
 
         '
         ' Current Amounts
@@ -12707,7 +12400,9 @@ Public Sub CreateCollateralPieChart( _
         .SeriesCollection(1).Values = _
             ws.Range( _
                 ws.Cells(BreakdownRow + 5, BreakdownCol + 1), _
-                ws.Cells(BreakdownRow + 5, BreakdownCol + 8))
+                ws.Cells( _
+                    BreakdownRow + 5, _
+                    BreakdownCol + CollateralCategoryCount()))
 
         '
         ' Clean look
@@ -12793,18 +12488,7 @@ Public Sub CreateCollateralPieChart( _
 
     End With
 
-    '
-    ' Professional Palette
-    '
-
-    Colors(1) = RGB(95, 125, 150)     ' Slate Blue
-    Colors(2) = RGB(130, 155, 170)    ' Steel Blue
-    Colors(3) = RGB(170, 185, 190)    ' Blue Grey
-    Colors(4) = RGB(215, 205, 185)    ' Sand
-    Colors(5) = RGB(195, 170, 145)    ' Taupe
-    Colors(6) = RGB(170, 135, 120)    ' Warm Brown
-    Colors(7) = RGB(165, 105, 120)    ' Soft Burgundy
-    Colors(8) = RGB(120, 120, 120)    ' Grey for Non-Eligible
+    SliceColors = CollateralSliceColors()
 
     For i = 1 To _
         ChartObj.Chart.SeriesCollection(1).Points.Count
@@ -12812,7 +12496,7 @@ Public Sub CreateCollateralPieChart( _
         With ChartObj.Chart.SeriesCollection(1).Points(i)
 
             .Format.Fill.ForeColor.RGB = _
-                Colors(i)
+                SliceColors(i - 1)
 
             '
             ' White separators
