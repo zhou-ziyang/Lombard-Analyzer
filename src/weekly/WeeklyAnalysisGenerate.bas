@@ -1107,7 +1107,9 @@ ExitRoutine:
 
     ClearWeeklySourceCache
 
-    Reset
+    NoteHandler = OldNoteHandler
+
+    ResetExcel
 
     If Not ws Is Nothing Then
 
@@ -1119,9 +1121,7 @@ ExitRoutine:
 
 ErrorHandler:
 
-    Reset
-    
-    NoteHandler = OldNoteHandler
+    ResetExcel
 
     MsgBox _
         Err.Description, _
