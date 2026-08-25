@@ -32,10 +32,31 @@ Public Function GetComparisonDate( _
     ByVal ReferenceDate As Date, _
     Optional ByVal MonthsBack As Long = 1) As Date
 
-    GetComparisonDate = DateSerial( _
-        Year(ReferenceDate), _
-        Month(ReferenceDate) - MonthsBack, _
-        Day(ReferenceDate))
+    Dim TargetYear As Long
+    Dim TargetMonth As Long
+    Dim TargetDay As Long
+    Dim LastDayOfTargetMonth As Long
+
+    TargetYear = Year(ReferenceDate)
+    TargetMonth = Month(ReferenceDate) - MonthsBack
+    TargetDay = Day(ReferenceDate)
+
+    '
+    ' DateSerial carries a month number outside 1-12 into the neighbouring
+    ' year by itself, which is what we want. It also carries a day number
+    ' the month does not have into the following month, which is not: one
+    ' month before 31 March would come back as 3 March. Day zero of the
+    ' next month is the last day of this one, so clamp to that.
+    '
+    LastDayOfTargetMonth = _
+        Day(DateSerial(TargetYear, TargetMonth + 1, 0))
+
+    If TargetDay > LastDayOfTargetMonth Then
+        TargetDay = LastDayOfTargetMonth
+    End If
+
+    GetComparisonDate = _
+        DateSerial(TargetYear, TargetMonth, TargetDay)
 
 End Function
 
