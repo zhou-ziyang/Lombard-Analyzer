@@ -141,10 +141,6 @@ history for what changed.
 
 **Fragile**
 
-- `BuildRevenueSummary` resolves `Delta_<AnalysisEndDate>` with no error
-  handling, so pressing *Revenue Estimate* after changing the end date but
-  before re-running *Calculate Delta* surfaces a raw subscript-out-of-range
-  error.
 - `DeltaCalculation` has no `Option Explicit`, unlike every other module here.
   Adding it needs a compile pass in the VBE, which is why it has been left
   alone.
