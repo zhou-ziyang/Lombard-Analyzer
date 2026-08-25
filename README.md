@@ -112,6 +112,21 @@ snapshots into `Delta_<date>` (new positions, new NDGs) and `Closed_<date>`,
 using first-seen/last-seen dictionaries built by scanning every snapshot in
 the range. `BuildRevenueSummary` prices the result by asset class.
 
+### Asset classification and UNKNOWN
+
+`GetAssetClass` maps the raw Sophis Asset Type string onto the reporting asset
+classes. `"UNKNOWN"` means the string matched none of its patterns — it does
+not mean the position is ineligible. A live position is eligible unless it is
+explicitly marked Non Eligible, so UNKNOWN collateral is counted as eligible
+and the unmatched string is surfaced for the mapping rules to be extended.
+
+How it is surfaced differs by design. Revenue Summary has a row per asset
+class, so an unmatched string appears there as a row literally labelled
+UNKNOWN — visible, and the prompt to go fix the rules. The weekly Collateral
+Breakdown has no such column, so an unmatched string would vanish silently;
+that path calls `RegisterUnknownAsset` instead, which writes the string into
+the report's Notes box.
+
 ## Encoding
 
 The `.bas` files are exported by the VBE as Windows-1252 with CRLF line
@@ -126,13 +141,6 @@ history for what changed.
 
 **Wrong numbers**
 
-- `BuildRevenueSummary` excludes `"Non Eligible Asset"` but not `"UNKNOWN"`,
-  which is what `GetAssetClass` returns for an unmapped asset type. Those rows
-  reach the summary with a zero revenue rate but still add their position
-  value to the Eligible Assets column, and the Asset Management Uplift row
-  sums that whole column — so unmapped collateral inflates the uplift base.
-  The `Calculate Delta` path never calls `RegisterUnknownAsset`, so nothing
-  warns about it.
 - `DictAnnualAMRevenue` is only `.Add`ed in the first-seen branch of
   `BuildRevenueSummary` and never accumulated afterwards, so its values are
   wrong for any asset class appearing more than once. Currently latent: the
@@ -140,9 +148,6 @@ history for what changed.
 
 **Fragile**
 
-- `GetAssetClass` matches with `Like` in a module without `Option Compare
-  Text`, so the patterns are case-sensitive. A casing change in the source
-  extract sends whole asset classes to `"UNKNOWN"`.
 - `BuildRevenueSummary` resolves `Delta_<AnalysisEndDate>` with no error
   handling, so pressing *Revenue Estimate* after changing the end date but
   before re-running *Calculate Delta* surfaces a raw subscript-out-of-range
