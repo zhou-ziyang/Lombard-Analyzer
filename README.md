@@ -142,15 +142,14 @@ history for what changed.
 **Tidying**
 
 - `ImportCsvByDate` recomputes `LastRow = ws.Range("A2").End(xlUp).Row` inside
-  its write loop; column A is always empty so the value is always 1. The
-  result happens to be correct but the lookup is dead weight. Its
-  `TextToColumns` call also splits on `Chr(10)` where the rest of the codebase
-  splits these files on `";"`.
+  its write loop. It is 1 on every iteration whatever the sheet holds, because
+  the search starts at row 2 and the only cell it can reach going up is A1.
+  The write target is therefore `B(2 + i)` and the output is correct, but the
+  lookup is a constant dressed as a search. Its `TextToColumns` call also
+  splits on `Chr(10)` where the rest of the codebase splits these files on
+  `";"`.
 - `DeltaCalculation`'s `ErrHandler` / `CleanExit` labels are unreachable
   because `On Error GoTo ErrHandler` is commented out.
-- `FormatJourneyColumns` has no callers. It takes no arguments, so unlike the
-  other dead procedures it could be bound to a shape somewhere in the workbook;
-  it was left in place until that is confirmed.
 - `RegisterUnknownAsset` takes an optional `NoteHandler` argument that shadows
   the global of the same name and is never used.
 - `Journey.bas`'s header comment refers to `Code!journey_start` and

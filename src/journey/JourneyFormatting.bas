@@ -217,7 +217,6 @@ Public Sub FormatJourneyTable()
 
 '    ws.Rows("2:" & LastRow).AutoFit
 
-'    FormatJourneyColumns
 
 ExitHandler:
 
@@ -468,71 +467,6 @@ Private Sub ApplyJourneyBandFormatting( _
         TargetRange, _
         IsTechnical, _
         IsShortfall
-
-End Sub
-
-Public Sub FormatJourneyColumns()
-
-    Dim ws As Worksheet
-
-    Dim DateCol As Long
-    Dim MCSinceCol As Long
-    Dim SFSinceCol As Long
-    Dim EventCol As Long
-    Dim ReasonCol As Long
-    Dim CommentCol As Long
-
-    Set ws = Worksheets("NDG Journey")
-
-    DateCol = _
-        FindColumnByHeader( _
-            ws, _
-            "Snapshot Date")
-
-    MCSinceCol = _
-        FindColumnByHeader(ws, "MC Since")
-    
-    SFSinceCol = _
-        FindColumnByHeader(ws, "SF Since")
-
-    EventCol = _
-        FindColumnByHeader( _
-            ws, _
-            "Event")
-
-    ReasonCol = _
-        FindColumnByHeader( _
-            ws, _
-            "Reason MC/SF")
-            
-    CommentCol = _
-        FindColumnByHeader( _
-            ws, _
-            "Comment")
-
-    If DateCol > 0 Then
-        ws.Columns(DateCol).AutoFit
-    End If
-
-    If MCSinceCol > 0 Then
-        ws.Columns(MCSinceCol).AutoFit
-    End If
-
-    If SFSinceCol > 0 Then
-        ws.Columns(SFSinceCol).AutoFit
-    End If
-
-    If EventCol > 0 Then
-        ws.Columns(EventCol).AutoFit
-    End If
-
-    If ReasonCol > 0 Then
-        ws.Columns(ReasonCol).AutoFit
-    End If
-    
-    If CommentCol > 0 Then
-        ws.Columns(CommentCol).AutoFit
-    End If
 
 End Sub
 
