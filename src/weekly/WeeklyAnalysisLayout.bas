@@ -179,24 +179,6 @@ Public Sub InitializeLayout()
 
 End Sub
 
-Public Sub AddTopBorder( _
-    ByVal ws As Worksheet, _
-    ByVal RowNo As Long, _
-    ByVal FirstCol As Long, _
-    ByVal LastCol As Long)
-
-    With ws.Range( _
-        ws.Cells(RowNo, FirstCol), _
-        ws.Cells(RowNo, LastCol)).Borders(xlEdgeTop)
-
-        .LineStyle = xlContinuous
-        .Weight = xlThin
-        .Color = RGB(128, 128, 128)
-
-    End With
-
-End Sub
-
 Public Sub AddMediumTopBorder( _
     ByVal ws As Worksheet, _
     ByVal RowNo As Long, _
@@ -248,27 +230,6 @@ Public Sub AddRightBorder( _
         .Color = RGB(128, 128, 128)
 
     End With
-
-End Sub
-
-Public Sub AddTableBorders( _
-    ByVal ws As Worksheet, _
-    ByVal FirstRow As Long, _
-    ByVal LastRow As Long, _
-    ByVal FirstCol As Long, _
-    ByVal LastCol As Long)
-
-    AddTopBorder _
-        ws, _
-        FirstRow, _
-        FirstCol, _
-        LastCol
-
-    AddBottomBorder _
-        ws, _
-        LastRow, _
-        FirstCol, _
-        LastCol
 
 End Sub
 

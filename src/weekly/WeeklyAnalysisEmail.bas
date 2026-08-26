@@ -26,6 +26,9 @@ Public Sub CreateWeeklyEmail()
     Dim ReportDateValue As Variant
     Dim ReportDate As Date
 
+    Dim ToAddresses As String
+    Dim CcAddresses As String
+
     Dim WordEditor As Object
     Dim WordRange As Object
     Dim shp As Object
@@ -60,6 +63,22 @@ Public Sub CreateWeeklyEmail()
     End If
 
     ReportDate = CDate(ReportDateValue)
+
+    ToAddresses = HomeSetting("EmailTo")
+    CcAddresses = HomeSetting("EmailCc")
+
+    If ToAddresses = "" Then
+
+        MsgBox _
+            "No recipient is configured." & vbCrLf & vbCrLf & _
+            "Add a cell on Home named EmailTo — and EmailCc if you " & _
+            "want one — holding the addresses separated by " & _
+            "semicolons. The draft opens without a recipient until " & _
+            "then.", _
+            vbInformation, _
+            "Weekly Lombard Analysis"
+
+    End If
 
     Set OutApp = CreateObject("Outlook.Application")
     Set OutMail = OutApp.CreateItem(0)
@@ -202,12 +221,8 @@ Public Sub CreateWeeklyEmail()
 
     With OutMail
 
-        .To = _
-            "ROSSELLA.GUAINAIRICCI@unicredit.eu"
-
-        .CC = _
-            "FRANCESCO.BRUNELLO@unicredit.eu;" & _
-            "Anna.Stenger@unicredit.de;"
+        .To = ToAddresses
+        .CC = CcAddresses
 
         .Subject = _
             "Weekly Lombard Analysis " & _
@@ -259,6 +274,31 @@ Public Sub CreateWeeklyEmail()
     
 
 End Sub
+
+'
+' Reads a configuration cell from Home by defined name. A name that does
+' not exist yet returns an empty string rather than raising, so the report
+' still opens while the workbook is being set up.
+'
+Private Function HomeSetting( _
+    ByVal RangeName As String) As String
+
+    Dim RawValue As Variant
+
+    On Error GoTo NotConfigured
+
+    RawValue = _
+        ThisWorkbook.Worksheets("Home").Range(RangeName).Value
+
+    If IsError(RawValue) Then GoTo NotConfigured
+
+    HomeSetting = Trim$(CStr(RawValue))
+
+    Exit Function
+
+NotConfigured:
+
+End Function
 
 Private Function BlockHtml( _
     ByVal ws As Worksheet, _

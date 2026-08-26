@@ -214,12 +214,21 @@ Private Function ImportCsvByDate( _
 
         Line = csvData(i)
 
-        LastRow = _
-            ws.Range("A2").End(xlUp).Row
-
-        ws.Range("B1").Offset( _
-            LastRow + i, _
-            0).Value = Line
+        '
+        ' LastRow was 1 on every iteration, whatever the sheet held: the
+        ' search started at row 2, so A1 is the only cell End(xlUp) could
+        ' reach. That made the target B1.Offset(1 + i) = B(2 + i), which is
+        ' what the line below writes directly. The original is kept until
+        ' this path has a caller again and the change can be exercised:
+        '
+        '        LastRow = _
+        '            ws.Range("A2").End(xlUp).Row
+        '
+        '        ws.Range("B1").Offset( _
+        '            LastRow + i, _
+        '            0).Value = Line
+        '
+        ws.Range("B2").Offset(i, 0).Value = Line
 
     Next i
 

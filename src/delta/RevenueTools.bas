@@ -11,6 +11,9 @@ Public Sub BuildRevenueSummary()
     Dim wsDelta As Worksheet
     Dim wsRevenueSummary As Worksheet
 
+    Dim DeltaSheetName As String
+    Dim PreviousScreenUpdating As Boolean
+
     '=========================================================================
     ' Row / Loop Variables
     '=========================================================================
@@ -56,12 +59,6 @@ Public Sub BuildRevenueSummary()
     ' Aggregations
     '=========================================================================
 
-    Dim TotalEligibleAssets As Double
-
-    Dim TotalLombardAnnualRevenue As Double
-    Dim TotalLombardFYRevenue As Double
-
-    Dim AssetManagementAnnualRevenue As Double
     Dim AssetManagementFYRevenue As Double
 
     '=========================================================================
@@ -69,25 +66,16 @@ Public Sub BuildRevenueSummary()
     '=========================================================================
 
     Dim DictAssetVolume As Object
-    Dim DictAnnualRevenue As Object
     Dim DictFYRevenue As Object
-    Dim DictAnnualAMRevenue As Object
-    Dim DictFYAMRevenue As Object
 
-    Set DictAssetVolume = _
-        CreateObject("Scripting.Dictionary")
+    PreviousScreenUpdating = Application.ScreenUpdating
 
-    Set DictAnnualRevenue = _
-        CreateObject("Scripting.Dictionary")
+    On Error GoTo ErrorHandler
 
-    Set DictFYRevenue = _
-        CreateObject("Scripting.Dictionary")
+    Application.ScreenUpdating = False
 
-    Set DictAnnualAMRevenue = _
-        CreateObject("Scripting.Dictionary")
-
-    Set DictFYAMRevenue = _
-        CreateObject("Scripting.Dictionary")
+    Set DictAssetVolume = CreateObject("Scripting.Dictionary")
+    Set DictFYRevenue = CreateObject("Scripting.Dictionary")
 
     '=========================================================================
     ' Setup
@@ -98,10 +86,25 @@ Public Sub BuildRevenueSummary()
     ForecastYear = _
         Year(wsCode.Range("AnalysisEndDate").Value)
 
-    Set wsDelta = Worksheets( _
+    DeltaSheetName = _
         "Delta_" & _
-        GetDateCode( _
-            wsCode.Range("AnalysisEndDate").Value))
+        GetDateCode(wsCode.Range("AnalysisEndDate").Value)
+
+    '
+    ' Revenue Estimate reads whatever Calculate Delta last produced for
+    ' this end date. Say so, rather than letting Worksheets() raise a bare
+    ' subscript error when the end date has moved on since.
+    '
+    If Not SheetExists(DeltaSheetName) Then
+
+        Fatal _
+            "Worksheet not found:" & vbCrLf & DeltaSheetName & _
+            vbCrLf & vbCrLf & _
+            "Run Calculate Delta for this analysis end date first."
+
+    End If
+
+    Set wsDelta = Worksheets(DeltaSheetName)
 
     '=========================================================================
     ' Locate Columns
@@ -179,67 +182,19 @@ Public Sub BuildRevenueSummary()
                 AnnualAMRevenue * _
                 EligibleMonths / 12#
 
-            If DictAssetVolume.Exists(AssetClass) Then
+            '
+            ' Assigning to a key the Dictionary does not hold yet creates
+            ' it, so these cover the first row of a class and every later
+            ' one without a separate first-seen branch.
+            '
+            DictAssetVolume(AssetClass) = _
+                DictAssetVolume(AssetClass) + PositionValue
 
-                DictAssetVolume(AssetClass) = _
-                    DictAssetVolume(AssetClass) + _
-                    PositionValue
-
-                DictAnnualRevenue(AssetClass) = _
-                    DictAnnualRevenue(AssetClass) + _
-                    AnnualRevenue
-
-                DictFYRevenue(AssetClass) = _
-                    DictFYRevenue(AssetClass) + _
-                    FYRevenue
-
-                DictFYAMRevenue(AssetClass) = _
-                    DictFYAMRevenue(AssetClass) + _
-                    FYAMRevenue
-
-            Else
-
-                DictAssetVolume.Add _
-                    AssetClass, _
-                    PositionValue
-
-                DictAnnualRevenue.Add _
-                    AssetClass, _
-                    AnnualRevenue
-
-                DictFYRevenue.Add _
-                    AssetClass, _
-                    FYRevenue
-
-                DictAnnualAMRevenue.Add _
-                    AssetClass, _
-                    AnnualAMRevenue
-
-                DictFYAMRevenue.Add _
-                    AssetClass, _
-                    FYAMRevenue
-
-            End If
-
-            TotalEligibleAssets = _
-                TotalEligibleAssets + _
-                PositionValue
-
-            TotalLombardAnnualRevenue = _
-                TotalLombardAnnualRevenue + _
-                AnnualRevenue
-
-            TotalLombardFYRevenue = _
-                TotalLombardFYRevenue + _
-                FYRevenue
-
-            AssetManagementAnnualRevenue = _
-                AssetManagementAnnualRevenue + _
-                AnnualAMRevenue
+            DictFYRevenue(AssetClass) = _
+                DictFYRevenue(AssetClass) + FYRevenue
 
             AssetManagementFYRevenue = _
-                AssetManagementFYRevenue + _
-                FYAMRevenue
+                AssetManagementFYRevenue + FYAMRevenue
 
         End If
 
@@ -288,9 +243,6 @@ Public Sub BuildRevenueSummary()
         wsRevenueSummary.Cells(OutputRow, 3).Value = _
             GetRevenueRate(k)
 
-'        wsRevenueSummary.Cells(OutputRow, 4).Value = _
-'            DictAnnualRevenue(k)
-        
         wsRevenueSummary.Cells(OutputRow, 4).Formula = _
             "=B" & OutputRow & "*C" & OutputRow
 
@@ -304,25 +256,13 @@ Public Sub BuildRevenueSummary()
     wsRevenueSummary.Cells(OutputRow, 1).Value = _
         "Total Lombard"
 
-'    wsRevenueSummary.Cells(OutputRow, 4).Value = _
-'        TotalLombardAnnualRevenue
-
     wsRevenueSummary.Cells(OutputRow, 4).Formula = _
         "=SUM(D" & (OutputRow - UBound(DictAssetVolume.Keys) - 1) & _
         ":D" & (OutputRow - 1) & ")"
 
-''    wsRevenueSummary.Cells(OutputRow, 5).Value = _
-''        TotalLombardFYRevenue
-
     wsRevenueSummary.Cells(OutputRow, 5).Formula = _
         "=SUM(E" & (OutputRow - UBound(DictAssetVolume.Keys) - 1) & _
         ":E" & (OutputRow - 1) & ")"
-
-'    AssetManagementAnnualRevenue = _
-'        TotalEligibleAssets * 0.0014
-'
-'    AssetManagementFYRevenue = _
-'        AssetManagementAnnualRevenue
 
     wsRevenueSummary.Cells(OutputRow + 1, 1).Value = _
         "Asset Management Uplift"
@@ -335,9 +275,6 @@ Public Sub BuildRevenueSummary()
 '
 '    End With
 
-'    wsRevenueSummary.Cells(OutputRow + 1, 2).Value = _
-'        TotalEligibleAssets
-        
     wsRevenueSummary.Cells(OutputRow + 1, 2).Formula = _
         "=SUM(B" & (OutputRow - UBound(DictAssetVolume.Keys) - 1) & _
         ":B" & (OutputRow - 1) & ")"
@@ -345,9 +282,6 @@ Public Sub BuildRevenueSummary()
     wsRevenueSummary.Cells(OutputRow + 1, 3).Value = _
         0.0014
 
-'    wsRevenueSummary.Cells(OutputRow + 1, 4).Value = _
-'        AssetManagementAnnualRevenue
-        
     wsRevenueSummary.Cells(OutputRow + 1, 4).Formula = _
         "=B" & (OutputRow + 1) & _
         "*C" & (OutputRow + 1)
@@ -358,17 +292,9 @@ Public Sub BuildRevenueSummary()
     wsRevenueSummary.Cells(OutputRow + 2, 1).Value = _
         "Total"
 
-'    wsRevenueSummary.Cells(OutputRow + 2, 4).Value = _
-'        TotalLombardAnnualRevenue + _
-'        AssetManagementAnnualRevenue
-
     wsRevenueSummary.Cells(OutputRow + 2, 4).Formula = _
         "=D" & (OutputRow) & _
         "+D" & (OutputRow + 1)
-
-'    wsRevenueSummary.Cells(OutputRow + 2, 5).Value = _
-'        TotalLombardFYRevenue + _
-'        AssetManagementFYRevenue
 
     wsRevenueSummary.Cells(OutputRow + 2, 5).Formula = _
         "=E" & (OutputRow) & _
@@ -460,9 +386,24 @@ Public Sub BuildRevenueSummary()
 '    wsRevenueSummary.Rows(OutputRow + 3).RowHeight = 15
 '    wsRevenueSummary.Rows(OutputRow + 4).RowHeight = 30
 
-FormatRevenueSummary _
-    wsRevenueSummary, _
-    OutputRow - 2
+    FormatRevenueSummary _
+        wsRevenueSummary, _
+        OutputRow - 2
+
+    Application.ScreenUpdating = PreviousScreenUpdating
+
+    wsRevenueSummary.Activate
+
+    Exit Sub
+
+ErrorHandler:
+
+    Application.ScreenUpdating = PreviousScreenUpdating
+
+    MsgBox _
+        Err.Description, _
+        vbCritical, _
+        "Revenue Estimate"
 
 End Sub
 
@@ -500,18 +441,6 @@ Public Sub FormatRevenueSummary( _
 
     FormatTotalRow ws, 1, 5, LastSummaryRow - 2
     FormatTotalRow ws, 1, 5, LastSummaryRow
-
-'    AddTopBorder _
-'        ws, _
-'        LastSummaryRow - 2, _
-'        1, _
-'        5
-'
-'    AddBottomBorder _
-'        ws, _
-'        LastSummaryRow, _
-'        1, _
-'        5
 
     '=========================================================
     ' Number Formats
@@ -621,13 +550,5 @@ Public Function GetMonthsInForecastYear( _
     End Select
 
 End Function
-
-Public Function GetForecastYear( _
-    ByVal EndDate As Date) As Long
-
-    GetForecastYear = Year(EndDate)
-
-End Function
-
 
 

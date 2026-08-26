@@ -15,7 +15,7 @@ configuration parameters (as defined names) and one button per entry point.
 | 01 Configuration | — | Clear Sheets | `Clean.Clean` |
 | 02 Date Range Analysis | `AnalysisStartDate`, `AnalysisEndDate` | Calculate Delta | `DeltaCalculation.BuildPositionMovements` |
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `RevenueTools.BuildRevenueSummary` |
-| 03 Weekly Analysis | `WeeklyEndDate` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
+| 03 Weekly Analysis | `WeeklyEndDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
@@ -23,6 +23,11 @@ configuration parameters (as defined names) and one button per entry point.
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
 buttons that `AddPositionAnalysisButtons` draws onto *NDG Journey* and the
 dashboard's history table.
+
+`EmailTo` and `EmailCc` hold the draft's recipients, semicolon-separated, and
+are read like any other Home parameter. A name that has not been created yet
+reads as empty: the draft still opens, and a message says which name to add.
+The addresses deliberately live in the workbook rather than in source.
 
 ## Source data
 
@@ -70,7 +75,7 @@ other Lombard workbooks without editing it.
 src/core/       Utils, DataTools, GlobalVariables, Cache, ImportTools, Clean, TextToCol
 src/weekly/     WeeklyAnalysisGenerate, WeeklyAnalysisLayout, WeeklyAnalysisEmail
 src/journey/    Journey, JourneyFormatting, JourneyDashboardTable, JourneyPositionAnalysis
-src/delta/      DeltaCalculation, RevenueTools, PortfolioDataTools
+src/delta/      DeltaCalculation, RevenueTools
 src/reference/  AssetMapping
 archive/        JourneyVisualization (superseded)
 ```
@@ -139,41 +144,20 @@ the euro signs in `RevenueTools` are the ones that bite first.
 Open items. Anything fixed has been removed from this list; see the commit
 history for what changed.
 
-**Wrong numbers**
+**Kept on purpose**
 
-- `DictAnnualAMRevenue` is only `.Add`ed in the first-seen branch of
-  `BuildRevenueSummary` and never accumulated afterwards, so its values are
-  wrong for any asset class appearing more than once. Currently latent: the
-  dictionary is not read for output.
-
-**Fragile**
-
-- `BuildRevenueSummary` resolves `Delta_<AnalysisEndDate>` with no error
-  handling, so pressing *Revenue Estimate* after changing the end date but
-  before re-running *Calculate Delta* surfaces a raw subscript-out-of-range
-  error.
-- `DeltaCalculation` has no `Option Explicit`, unlike every other module here.
-  Adding it needs a compile pass in the VBE, which is why it has been left
-  alone.
+`ImportAccountsByDate` and `ImportPositionsByDate` have had no caller since
+`PortfolioDataTools` was removed, and `ImportCsvByDate`, `SourceFileExists` and
+`ResolveAvailableDate` sit behind them. They are retained for future use — a
+dead-code sweep should skip them rather than take half of `ImportTools` with
+them. Because nothing exercises that path, the write loop's simplification
+keeps the statements it replaced as a comment.
 
 **Tidying**
 
-- `ImportCsvByDate` recomputes `LastRow = ws.Range("A2").End(xlUp).Row` inside
-  its write loop; column A is always empty so the value is always 1. The
-  result happens to be correct but the lookup is dead weight. Its
-  `TextToColumns` call also splits on `Chr(10)` where the rest of the codebase
-  splits these files on `";"`.
-- `FormatJourneyTable` calls `FormatReportTable` twice in a row on the same
-  range.
-- `WriteHeader` and `WriteRow` in `DeltaCalculation` have no callers, and its
-  `ErrHandler` / `CleanExit` labels are unreachable because
-  `On Error GoTo ErrHandler` is commented out.
-- `PortfolioDataTools` has no callers anywhere in the codebase;
-  `WeeklyAnalysisGenerate` computes the same figures with
-  `CalculateWeeklyPortfolioStats`. It may still be bound to a button.
-- `RegisterUnknownAsset` takes an optional `NoteHandler` argument that shadows
-  the global of the same name and is never used.
+- `ImportCsvByDate`'s `TextToColumns` call splits on `Chr(10)` where the rest
+  of the codebase splits these files on `";"`. Left alone until the intent is
+  known.
 - `Journey.bas`'s header comment refers to `Code!journey_start` and
   `Code!report_path`; both parameters live on *Home*, which is what the code
   reads.
-- `WeeklyAnalysisEmail` hard-codes the recipient addresses in `.To` and `.CC`.

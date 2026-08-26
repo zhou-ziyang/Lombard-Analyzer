@@ -1041,28 +1041,6 @@ Private Sub BuildPositionChangeAnalysis(ByVal PreviousDate As Date, _
                      CollectionText(CurrencyChanges) & "."
     End If
 
-'    Insights.Add BuildAttributionInsight( _
-'        "Position MV attribution", _
-'        TotalPriceEffect, TotalQuantityEffect, _
-'        CompositionValueEffect, TotalResidualEffect, _
-'        "residual")
-'
-'    Insights.Add BuildAttributionInsight( _
-'        "Position-level HCV attribution", _
-'        PriceHCVEffect, QuantityHCVEffect, _
-'        CompositionHCVEffect, OtherHCVEffect, _
-'        "LTV, eligibility, and residual factors")
-
-'    If HasAccountMetrics And PreviousMC = 0 And CurrentMC > 0 Then
-'        Insights.Add PrimaryNegativeDriver( _
-'            "Main negative HCV driver", PriceHCVEffect, QuantityHCVEffect, _
-'            CompositionHCVEffect, OtherHCVEffect)
-'    ElseIf HasAccountMetrics And PreviousSF = 0 And CurrentSF > 0 Then
-'        Insights.Add PrimaryNegativeDriver( _
-'            "Main negative MTM driver", TotalPriceEffect, TotalQuantityEffect, _
-'            CompositionValueEffect, TotalResidualEffect)
-'    End If
-
     If TopNegativeAsset <> "" Then
         Insights.Add "Largest negative HCV contributor: " & TopNegativeAsset & _
                      " (" & SignedAmount(TopNegativeHCV) & ")."
@@ -1356,34 +1334,6 @@ Private Function CollectionText(ByVal Items As Collection) As String
     Next Item
 End Function
 
-Private Function BuildAttributionInsight(ByVal InsightTitle As String, _
-                                         ByVal PriceEffect As Double, _
-                                         ByVal QuantityEffect As Double, _
-                                         ByVal CompositionEffect As Double, _
-                                         ByVal OtherEffect As Double, _
-                                         ByVal OtherLabel As String) As String
-    Dim EffectsText As String
-
-    AddMaterialEffect EffectsText, "price", PriceEffect
-    AddMaterialEffect EffectsText, "quantity", QuantityEffect
-    AddMaterialEffect EffectsText, "asset additions/removals", CompositionEffect
-    AddMaterialEffect EffectsText, OtherLabel, OtherEffect
-
-    If EffectsText = "" Then
-        BuildAttributionInsight = InsightTitle & ": no material effects."
-    Else
-        BuildAttributionInsight = InsightTitle & ": " & EffectsText & "."
-    End If
-End Function
-
-Private Sub AddMaterialEffect(ByRef EffectsText As String, _
-                              ByVal EffectLabel As String, _
-                              ByVal EffectValue As Double)
-    If Not ValuesDiffer(EffectValue, 0) Then Exit Sub
-    If EffectsText <> "" Then EffectsText = EffectsText & "; "
-    EffectsText = EffectsText & EffectLabel & " " & SignedAmount(EffectValue)
-End Sub
-
 Private Function AssetChangeInsight(ByVal NewCount As Long, _
                                     ByVal RemovedCount As Long, _
                                     ByVal HCVEffect As Double) As String
@@ -1516,43 +1466,6 @@ End Function
 
 Private Function SignedPercent(ByVal Value As Double) As String
     SignedPercent = Format$(Value, "+0.0%;-0.0%;0.0%")
-End Function
-
-Private Function PrimaryNegativeDriver(ByVal InsightTitle As String, _
-                                       ByVal PriceEffect As Double, _
-                                       ByVal QuantityEffect As Double, _
-                                       ByVal CompositionEffect As Double, _
-                                       ByVal OtherEffect As Double) As String
-    Dim DriverName As String
-    Dim DriverValue As Double
-
-    If PriceEffect < DriverValue Then
-        DriverName = "price"
-        DriverValue = PriceEffect
-    End If
-
-    If QuantityEffect < DriverValue Then
-        DriverName = "quantity"
-        DriverValue = QuantityEffect
-    End If
-
-    If CompositionEffect < DriverValue Then
-        DriverName = "asset additions/removals"
-        DriverValue = CompositionEffect
-    End If
-
-    If OtherEffect < DriverValue Then
-        DriverName = "LTV, eligibility, or residual factors"
-        DriverValue = OtherEffect
-    End If
-
-    If DriverName = "" Then
-        PrimaryNegativeDriver = _
-            InsightTitle & ": no material negative driver identified."
-    Else
-        PrimaryNegativeDriver = InsightTitle & ": " & DriverName & _
-                                " (" & SignedAmount(DriverValue) & ")."
-    End If
 End Function
 
 Private Sub WriteAccountSummary(ByVal ws As Worksheet, _

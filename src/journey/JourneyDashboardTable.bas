@@ -897,7 +897,6 @@ Private Sub BuildMainChart( _
 
     ' Excel can regroup combo-chart series when area bands are added.
     FormatLineSeries ApprovedSeries, ColorLTV, msoLineDash
-'    AddLTVLegendOnlySeries ch
 End Sub
 
 Private Sub FormatJourneyChart(ByVal ch As ChartObject)
@@ -2071,18 +2070,6 @@ Private Sub AddMCTextLabelByRows( _
         End With
         .ZOrder msoBringToFront
     End With
-End Sub
-
-Private Sub AddLTVLegendOnlySeries(ByVal ch As ChartObject)
-    Dim LegendSeries As Series
-
-    Set LegendSeries = ch.Chart.SeriesCollection.NewSeries
-    With LegendSeries
-        .name = "LTV"
-        .XValues = Array(0)
-        .Values = Array(0)
-    End With
-    FormatLineSeries LegendSeries, ColorLTV
 End Sub
 
 Private Sub RebuildMainChartLegend(ByVal ch As ChartObject)

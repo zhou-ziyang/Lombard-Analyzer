@@ -1,4 +1,6 @@
 Attribute VB_Name = "DeltaCalculation"
+Option Explicit
+
 Public Sub BuildPositionMovements()
 
     '=========================================================================
@@ -106,7 +108,7 @@ Public Sub BuildPositionMovements()
 
     Application.ScreenUpdating = False
 
-'   On Error GoTo ErrHandler
+    On Error GoTo ErrHandler
 
     '=========================================================================
     ' Read settings
@@ -635,20 +637,6 @@ Public Function RequiredHeaderIndex( _
     End If
 
 End Function
-
-Private Sub WriteHeader(ws As Worksheet, hdr As Variant, r As Long, c As Long)
-    Dim i As Long
-    For i = LBound(hdr) To UBound(hdr)
-        ws.Cells(r, c + i) = hdr(i)
-    Next i
-End Sub
-
-Private Sub WriteRow(ws As Worksheet, Arr As Variant, r As Long, c As Long)
-    Dim i As Long
-    For i = LBound(Arr) To UBound(Arr)
-        ws.Cells(r, c + i) = Arr(i)
-    Next i
-End Sub
 
 Public Sub BuildPositionDateDictionaries( _
     ByVal BasePath As String, _
