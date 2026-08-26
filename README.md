@@ -220,10 +220,14 @@ exposure, with every dimension beside the measure), so the 432 lines of
 does natively. What the probe tests is not whether that is possible but
 whether the *semantics* survive the translation. Four are easy to lose:
 
-- **Issuer's denominator is not its numerator.** A certificate component with
-  no resolved entity carries the `__CERTIFICATE_NON_ENTITY__|` prefix, which
-  keeps it out of the ranked list but not out of the share total. Country of
-  Risk and Sector aggregate entity rows only, so there the two filters match.
+- **Issuer's denominator is not its numerator.** The name aggregation sits
+  outside the `If IsEntityExposure` branch that geography and sector sit
+  inside, so Issuer receives every row of a class. A certificate component
+  that resolved to no entity is not dropped but renamed, with the
+  `__CERTIFICATE_NON_ENTITY__|` prefix — into the same dictionary, under a key
+  the ranked list skips and `DictionaryTotal` still sums. So part of an
+  Issuer table's denominator can never appear in the table. Country of Risk
+  and Sector never see those rows, and their two filters match.
 - **The `#NDG` on a total row is a union, not a sum** of the ten counts above
   it.
 - **Ties break on name ascending**, case-insensitively, after value descending.

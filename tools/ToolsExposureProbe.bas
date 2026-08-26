@@ -308,17 +308,13 @@ Private Sub WriteBlock( _
 
         ws.Cells(r, 1).Value = i
 
-        ws.Cells(r, 5).Formula2 = _
-            "=IF($B" & CStr(r) & "="""",""""," & _
-            "C" & CStr(r) & "/" & TotalCell & ")"
-
         ws.Cells(r, 9).Formula2 = _
             "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
             "C" & CStr(r) & "-G" & CStr(r) & ")"
 
         ws.Cells(r, 10).Formula2 = _
             "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
-            "D" & CStr(r) & "-H" & CStr(r) & ")"
+            "E" & CStr(r) & "-H" & CStr(r) & ")"
 
         ws.Cells(r, 11).Formula2 = _
             "=IF($B" & CStr(r) & "=$F" & CStr(r) & ",""same"",""different"")"
@@ -334,11 +330,11 @@ Private Sub WriteBlock( _
     ws.Cells(TotalRow, 3).Formula2 = _
         "=SUM(C" & CStr(FirstRow) & ":C" & CStr(TotalRow - 1) & ")"
 
-    ws.Cells(TotalRow, 4).Formula2 = _
+    ws.Cells(TotalRow, 4).Formula2 = "=C" & CStr(TotalRow) & "/" & TotalCell
+
+    ws.Cells(TotalRow, 5).Formula2 = _
         UnionNdgFormula( _
             DimensionSpec, ClassSpecValue, ScopeSpec, FirstRow, TotalRow)
-
-    ws.Cells(TotalRow, 5).Formula2 = "=C" & CStr(TotalRow) & "/" & TotalCell
 
     ws.Cells(TotalRow, 7).Formula2 = _
         "=SUM(G" & CStr(FirstRow) & ":G" & CStr(TotalRow - 1) & ")"
@@ -347,7 +343,7 @@ Private Sub WriteBlock( _
         "=C" & CStr(TotalRow) & "-G" & CStr(TotalRow)
 
     ws.Cells(TotalRow, 10).Formula2 = _
-        "=D" & CStr(TotalRow) & "-H" & CStr(TotalRow)
+        "=E" & CStr(TotalRow) & "-H" & CStr(TotalRow)
 
     '
     ' Category total, the share denominator.  For Issuer this includes the
@@ -401,14 +397,48 @@ Private Function RankedTableFormula( _
 
     RankedTableFormula = _
         "=LET(" & _
-        Bindings(DimensionSpec, "cls,typ,nme,dim,ndg,val" & ScopeBinding(ScopeSpec)) & _
+        Bindings( _
+            DimensionSpec, _
+            "cls,typ,nme,dim,ndg,val" & ScopeBinding(ScopeSpec)) & _
         "k," & KeepExpression(ClassSpecValue, ScopeSpec, True) & "," & _
         "g,FILTER(" & CStr(DimensionSpec(2)) & ",k)," & _
         "v,FILTER(val,k),n,FILTER(ndg,k)," & _
         "a,DROP(GROUPBY(g,HSTACK(v,n)," & _
         "HSTACK(SUM,LAMBDA(x,COUNTA(UNIQUE(x)))),0,0),1)," & _
-        "IFERROR(TAKE(SORTBY(a,CHOOSECOLS(a,2),-1,CHOOSECOLS(a,1),1)," & _
-        CStr(TOP_COUNT) & "),""""))"
+        "s,TAKE(SORTBY(a,CHOOSECOLS(a,2),-1,CHOOSECOLS(a,1),1)," & _
+        CStr(TOP_COUNT) & ")," & _
+        "d," & DenominatorExpression(ClassSpecValue, ScopeSpec, DimensionSpec) & _
+        ",IFERROR(HSTACK(CHOOSECOLS(s,1),CHOOSECOLS(s,2)," & _
+        "CHOOSECOLS(s,2)/d,CHOOSECOLS(s,3)),""""))"
+
+End Function
+
+'
+' The share denominator, inside the same formula as the ranked table so the
+' percentage does not depend on a cell elsewhere.
+'
+' For Country of Risk and Sector it is the total of the rows that were
+' ranked, which is SUM of the values already filtered.  For Issuer it is
+' larger: rows that are not entity exposures were aggregated under a
+' prefixed name, so they count towards the total but can never appear in
+' the list.
+'
+Private Function DenominatorExpression( _
+    ByVal ClassSpecValue As Variant, _
+    ByVal ScopeSpec As Variant, _
+    ByVal DimensionSpec As Variant) As String
+
+    If CBool(DimensionSpec(3)) Then
+
+        DenominatorExpression = "SUM(v)"
+
+    Else
+
+        DenominatorExpression = _
+            "SUM(FILTER(val," & _
+            KeepExpression(ClassSpecValue, ScopeSpec, False) & ",0))"
+
+    End If
 
 End Function
 
@@ -593,8 +623,8 @@ Private Sub WriteBlockHeaders( _
     Dim i As Long
 
     Headers = Array( _
-        "#", DimensionLabel, "Value (formula)", "#NDG (formula)", _
-        "Share (formula)", DimensionLabel & " (VBA)", "Value (VBA)", _
+        "#", DimensionLabel, "Value (formula)", "Share (formula)", _
+        "#NDG (formula)", DimensionLabel & " (VBA)", "Value (VBA)", _
         "#NDG (VBA)", "d Value", "d #NDG", "name")
 
     For i = LBound(Headers) To UBound(Headers)
@@ -618,7 +648,7 @@ Private Sub FormatBlock( _
     ws.Range(ws.Cells(FirstRow, 7), ws.Cells(TotalRow + 1, 7)) _
         .NumberFormat = "#,##0"
 
-    ws.Range(ws.Cells(FirstRow, 5), ws.Cells(TotalRow, 5)) _
+    ws.Range(ws.Cells(FirstRow, 4), ws.Cells(TotalRow, 4)) _
         .NumberFormat = "0.00%"
 
     ws.Range(ws.Cells(FirstRow, 9), ws.Cells(TotalRow + 1, 9)) _
