@@ -137,8 +137,8 @@ Public Sub BuildExposureProbe()
 
     WriteProbeHeader ws, StageTable, BlockCount, BlockRow
 
-    Application.Calculation = PreviousCalculation
     ws.Calculate
+    Application.Calculation = PreviousCalculation
 
     ws.Columns("A:K").AutoFit
     ws.Activate
@@ -694,6 +694,7 @@ Private Sub ReferenceTopTen( _
     Dim i As Long
     Dim j As Long
     Dim n As Long
+    Dim Best As Long
 
     Dim SwapText As String
     Dim SwapValue As Double
@@ -781,28 +782,49 @@ Private Sub ReferenceTopTen( _
         i = i + 1
     Next Item
 
-    For i = 1 To n - 1
+    OutCount = n
+    If OutCount > TOP_COUNT Then OutCount = TOP_COUNT
+
+    '
+    ' Only the first ten are ever read, so this selects them instead of
+    ' ordering the whole set: one scan of what is left per place, ten scans
+    ' in total.  Sorting all of it costs n squared, and n here is the number
+    ' of distinct names - a few dozen countries or sectors, but thousands of
+    ' issuers.
+    '
+    ' The comparison is the one WriteTopExposureGroup makes: value
+    ' descending, name ascending on a tie.  The report sorts in full there,
+    ' for the same top ten.
+    '
+    For i = 1 To OutCount
+
+        Best = i
+
         For j = i + 1 To n
 
-            If Totals(j) > Totals(i) Or _
-               (Totals(j) = Totals(i) And _
-                StrComp(Names(j), Names(i), vbTextCompare) < 0) Then
+            If Totals(j) > Totals(Best) Or _
+               (Totals(j) = Totals(Best) And _
+                StrComp(Names(j), Names(Best), vbTextCompare) < 0) Then
 
-                SwapValue = Totals(i)
-                Totals(i) = Totals(j)
-                Totals(j) = SwapValue
-
-                SwapText = Names(i)
-                Names(i) = Names(j)
-                Names(j) = SwapText
+                Best = j
 
             End If
 
         Next j
-    Next i
 
-    OutCount = n
-    If OutCount > TOP_COUNT Then OutCount = TOP_COUNT
+        If Best <> i Then
+
+            SwapValue = Totals(i)
+            Totals(i) = Totals(Best)
+            Totals(Best) = SwapValue
+
+            SwapText = Names(i)
+            Names(i) = Names(Best)
+            Names(Best) = SwapText
+
+        End If
+
+    Next i
 
     ReDim OutNames(1 To OutCount)
     ReDim OutValues(1 To OutCount)

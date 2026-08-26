@@ -247,6 +247,12 @@ its value columns in a row of its own, that row is text, and sorting by value
 descending therefore carries it to the top and pushes the tenth country out of
 the table — `DROP(…, 1)` takes it off before the sort.
 
+The probe's VBA side selects the top ten rather than sorting every name, which
+matters once the Issuer dimension is in scope: sorting costs n², and n there is
+the number of distinct issuers — thousands, where a country or sector table has
+dozens. `WriteTopExposureGroup` sorts in full for the same top ten, so the
+report pays that cost too.
+
 ## Encoding
 
 The `.bas` files are exported by the VBE as Windows-1252 with CRLF line
