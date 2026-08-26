@@ -78,8 +78,14 @@ Private Const CERTIFICATE_PATH_NAME As String = "Certificate_Path"
 Private Const CERTIFICATE_SEARCH_PREFIX As String = "SearchResults"
 Private Const CERTIFICATE_INSTRUMENT_PREFIX As String = "InstrumentList"
 Private Const MISSING_CERTIFICATE_RIC_PREFIX As String = "__MISSING_RIC__|"
-Private Const NON_ENTITY_CERTIFICATE_PREFIX As String = _
-    "__CERTIFICATE_NON_ENTITY__|"
+'
+' A certificate whose underlying could not be named at all.  The prefix marks
+' the component while the basket is being expanded; it is stripped before the
+' row reaches the staging table, where UNKNOWN_UNDERLYING_TYPE identifies it
+' instead.  Neither is a category of exposure - both say the parse failed.
+'
+Private Const UNKNOWN_UNDERLYING_PREFIX As String = _
+    "__UNKNOWN_CERTIFICATE_UNDERLYING__|"
 Private Const CERTIFICATE_MAX_BASKET_DEPTH As Long = 12
 Private Const EQUITY_NAMES_SHEET As String = "Equity Names"
 Private Const BOND_ISSUERS_SHEET As String = "Bond Issuers"
@@ -113,9 +119,20 @@ Private Const GEO_ISIN_PRIORITY_UNDERLYING As Long = 2
 Private Const GEO_ISIN_PRIORITY_MANAGED_FUND As Long = 3
 Private Const TOP_NAME_COUNT As Long = 10
 Private Const OTHER_RISK_DIMENSION As String = "Others"
-Private Const NON_ENTITY_CERTIFICATE_TYPE As String = _
+Private Const UNKNOWN_UNDERLYING_TYPE As String = _
+    "Unknown certificate underlying"
+
+'
+' The spelling this exposure type carried before the rename.  A staging table
+' built by the previous version stays on the sheet until the next rebuild,
+' and reading those rows as entity exposures would put unresolved certificate
+' text into the Issuer table under its own name.
+'
+Private Const LEGACY_UNKNOWN_UNDERLYING_TYPE As String = _
     "Certificate non-entity component"
 Private Const NON_DPM_SCOPE As String = "Non-DPM"
+
+Private Const UNKNOWN_UNDERLYING_NOTE_LIMIT As Long = 10
 
 Private Const RISK_FORMULA_INDENT As String = "    "
 Private Const RISK_BIND_WIDTH As Long = 6
@@ -3452,8 +3469,8 @@ Private Function CertificateComponentsContainResolvedEntity( _
            MISSING_CERTIFICATE_RIC_PREFIX And _
            Left( _
                 ComponentName, _
-                Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-           NON_ENTITY_CERTIFICATE_PREFIX Then
+                Len(UNKNOWN_UNDERLYING_PREFIX)) <> _
+           UNKNOWN_UNDERLYING_PREFIX Then
 
             CertificateComponentsContainResolvedEntity = True
 
@@ -4138,7 +4155,7 @@ Private Function ExpandCertificateRic( _
 
         AddCertificateComponent _
             Result, _
-            NON_ENTITY_CERTIFICATE_PREFIX & UnderlyingName, _
+            UNKNOWN_UNDERLYING_PREFIX & UnderlyingName, _
             1, _
             "", _
             UnderlyingAssetClass
@@ -4746,8 +4763,8 @@ Private Function LoadCertificateUnderlyingMap( _
                MISSING_CERTIFICATE_RIC_PREFIX And _
                Left( _
                     CStr(Component("Name")), _
-                    Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-               NON_ENTITY_CERTIFICATE_PREFIX Then
+                    Len(UNKNOWN_UNDERLYING_PREFIX)) <> _
+               UNKNOWN_UNDERLYING_PREFIX Then
 
                 If CStr(Component("ReferenceISIN")) <> "" Then
 
@@ -6985,8 +7002,8 @@ Private Function ResolveCanonicalEntityName( _
 
     If Left( _
             RawName, _
-            Len(NON_ENTITY_CERTIFICATE_PREFIX)) = _
-       NON_ENTITY_CERTIFICATE_PREFIX Then
+            Len(UNKNOWN_UNDERLYING_PREFIX)) = _
+       UNKNOWN_UNDERLYING_PREFIX Then
 
         ResolveCanonicalEntityName = RawName
 
@@ -7324,8 +7341,8 @@ Private Sub AddCertificateGeographyEntries( _
            MISSING_CERTIFICATE_RIC_PREFIX And _
            Left( _
                 UnderlyingName, _
-                Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-           NON_ENTITY_CERTIFICATE_PREFIX Then
+                Len(UNKNOWN_UNDERLYING_PREFIX)) <> _
+           UNKNOWN_UNDERLYING_PREFIX Then
 
             GeographyName = UnderlyingName
             UnderlyingKey = NormalizeExactNameKey(UnderlyingName)
@@ -8857,11 +8874,13 @@ Private Function RiskKeepExpression( _
 
     If EntityOnly Then
 
-        Factors.Add "(typ <> """ & NON_ENTITY_CERTIFICATE_TYPE & """)"
+        Factors.Add _
+            "ISNA(MATCH(typ, {""" & UNKNOWN_UNDERLYING_TYPE & """, """ & _
+            LEGACY_UNKNOWN_UNDERLYING_TYPE & """}, 0))"
 
         Factors.Add _
-            "(LEFT(nme, " & CStr(Len(NON_ENTITY_CERTIFICATE_PREFIX)) & _
-            ") <> """ & NON_ENTITY_CERTIFICATE_PREFIX & """)"
+            "(LEFT(nme, " & CStr(Len(UNKNOWN_UNDERLYING_PREFIX)) & _
+            ") <> """ & UNKNOWN_UNDERLYING_PREFIX & """)"
 
     End If
 
@@ -9342,13 +9361,13 @@ Private Sub AppendCertificateRiskStageRows( _
 
         If Left( _
                 UnderlyingName, _
-                Len(NON_ENTITY_CERTIFICATE_PREFIX)) = _
-           NON_ENTITY_CERTIFICATE_PREFIX Then
+                Len(UNKNOWN_UNDERLYING_PREFIX)) = _
+           UNKNOWN_UNDERLYING_PREFIX Then
 
             UnderlyingName = _
                 Mid( _
                     UnderlyingName, _
-                    Len(NON_ENTITY_CERTIFICATE_PREFIX) + 1)
+                    Len(UNKNOWN_UNDERLYING_PREFIX) + 1)
 
             If Trim(UnderlyingName) = "" Then
 
@@ -9356,7 +9375,7 @@ Private Sub AppendCertificateRiskStageRows( _
 
             End If
 
-            ExposureType = "Certificate non-entity component"
+            ExposureType = UNKNOWN_UNDERLYING_TYPE
 
         ElseIf Left( _
                 UnderlyingName, _
@@ -9513,14 +9532,11 @@ Private Function FinalizeRiskStageData( _
         Set CompanyEntry = Nothing
 
         IsEntityExposure = _
-            (StrComp( _
-                Trim(ExposureType), _
-                "Certificate non-entity component", _
-                vbTextCompare) <> 0 And _
+            (Not IsUnknownUnderlyingType(ExposureType) And _
              Left( _
                 RawName, _
-                Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-             NON_ENTITY_CERTIFICATE_PREFIX)
+                Len(UNKNOWN_UNDERLYING_PREFIX)) <> _
+             UNKNOWN_UNDERLYING_PREFIX)
 
         If IsEntityExposure Then
 
@@ -10684,6 +10700,12 @@ Private Sub BuildRiskGranularitySection( _
 AggregateUnifiedRiskStageDataLabel:
 
     '
+    ' Reported whether the staging table was rebuilt or reused, because the
+    ' condition belongs to the data being reported, not to how it got here.
+    '
+    AddUnknownUnderlyingNote StageData
+
+    '
     ' Every table below reads the staging table through its own formulas, so
     ' the only thing to settle first is whether a right-hand Certificate
     ' subtable would repeat the left-hand one - the case
@@ -10813,6 +10835,100 @@ AggregateUnifiedRiskStageDataLabel:
 
     End If
 
+
+End Sub
+
+'
+' An exposure the certificate expansion could not name, under either the
+' current spelling or the one used before the rename.
+'
+Private Function IsUnknownUnderlyingType( _
+    ByVal ExposureType As String) As Boolean
+
+    Dim Trimmed As String
+
+    Trimmed = Trim$(ExposureType)
+
+    IsUnknownUnderlyingType = _
+        StrComp(Trimmed, UNKNOWN_UNDERLYING_TYPE, vbTextCompare) = 0 Or _
+        StrComp(Trimmed, LEGACY_UNKNOWN_UNDERLYING_TYPE, vbTextCompare) = 0
+
+End Function
+
+'
+' A certificate whose underlying could not be resolved to anything nameable
+' carries its whole value into the Issuer share denominator under a name no
+' one can act on, and used to say nothing about it.  This names the
+' certificates, so the reference data behind them can be fixed.
+'
+Private Sub AddUnknownUnderlyingNote( _
+    ByRef StageData As Variant)
+
+    Dim Certificates As Object
+    Dim CertificateKey As Variant
+
+    Dim RowCount As Long
+    Dim TotalValue As Double
+    Dim Listed As Long
+    Dim Detail As String
+
+    Dim RowNo As Long
+
+    If Not IsArray(StageData) Then Exit Sub
+    If UBound(StageData, 1) < 1 Then Exit Sub
+
+    Set Certificates = CreateObject("Scripting.Dictionary")
+    Certificates.CompareMode = vbTextCompare
+
+    For RowNo = 1 To UBound(StageData, 1)
+
+        If IsUnknownUnderlyingType( _
+                SafeText(StageData(RowNo, RiskStageExposureType))) Then
+
+            RowCount = RowCount + 1
+
+            TotalValue = _
+                TotalValue + _
+                CDbl(StageData(RowNo, RiskStageAllocatedValue))
+
+            Certificates( _
+                SafeText(StageData(RowNo, RiskStageSecurityName)) & _
+                " (" & _
+                SafeText(StageData(RowNo, RiskStageProductISIN)) & ")") = True
+
+        End If
+
+    Next RowNo
+
+    If RowCount = 0 Then Exit Sub
+
+    For Each CertificateKey In Certificates.Keys
+
+        If Listed >= UNKNOWN_UNDERLYING_NOTE_LIMIT Then
+
+            Detail = _
+                Detail & vbLf & "and " & _
+                CStr(Certificates.Count - Listed) & " more"
+
+            Exit For
+
+        End If
+
+        Detail = Detail & vbLf & CStr(CertificateKey)
+        Listed = Listed + 1
+
+    Next CertificateKey
+
+    WriteNoteWeekly _
+        CStr(Certificates.Count) & _
+        " Certificate position(s) (excl. Protected) have an underlying " & _
+        "that could not be identified at all. Their collateral value is " & _
+        "counted in the Certificates total and in the Issuer share " & _
+        "denominator, but they can never appear in a Top 10 by name." & _
+        vbLf & _
+        "Collateral value: " & Format(TotalValue, EuroNumberFormat()) & _
+        " over " & CStr(RowCount) & " staging row(s)." & _
+        Detail
 
 End Sub
 

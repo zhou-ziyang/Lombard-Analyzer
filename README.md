@@ -220,14 +220,20 @@ exposure, with every dimension beside the measure), so the 432 lines of
 does natively. What the probe tests is not whether that is possible but
 whether the *semantics* survive the translation. Four are easy to lose:
 
-- **Issuer's denominator is not its numerator.** The name aggregation sits
-  outside the `If IsEntityExposure` branch that geography and sector sit
-  inside, so Issuer receives every row of a class. A certificate component
-  that resolved to no entity is not dropped but renamed, with the
-  `__CERTIFICATE_NON_ENTITY__|` prefix — into the same dictionary, under a key
-  the ranked list skips and `DictionaryTotal` still sums. So part of an
+- **Issuer's denominator is not its numerator.** Issuer receives every row of
+  a class. A certificate whose underlying could not be identified at all is
+  not dropped but marked — `__UNKNOWN_CERTIFICATE_UNDERLYING__|` while the
+  basket is being expanded, then the `Unknown certificate underlying` exposure
+  type once staged — and it carries the certificate's whole value at weight 1.
+  The ranked list skips it; the share denominator counts it. So part of an
   Issuer table's denominator can never appear in the table. Country of Risk
   and Sector never see those rows, and their two filters match.
+
+  That condition should not happen and is not benign: it means the reference
+  data could not say what is inside a certificate the portfolio is lending
+  against. The analysis still completes — the money is real exposure either
+  way — but the weekly report now names the certificates in its Notes rather
+  than absorbing them silently.
 - **The `#NDG` on a total row is a union, not a sum** of the ten counts above
   it.
 - **Ties break on name ascending**, case-insensitively, after value descending.
