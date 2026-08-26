@@ -220,8 +220,12 @@ but whether the *semantics* survive the translation — the three that are easy
 to lose being the share denominator, the union-not-sum `#NDG` on the total
 row, and the tie-break on equal values.
 
-It needs `LET`, `FILTER`, `UNIQUE`, `SORTBY` and `SEQUENCE`: Excel 2021 or
-365. Nothing newer — `LAMBDA`, `BYROW` and `TAKE` are deliberately avoided.
+Where `GROUPBY` is available the whole ranked table — country, value and
+distinct NDG count, ordered and cut to ten — is one formula per asset class,
+and no helper column is needed because `GROUPBY` aggregates arrays. The probe
+asks Excel whether it has `GROUPBY` rather than assuming, and falls back to a
+`SUMIFS` formulation (which needs two spilled helper columns, since `SUMIFS`
+matches on ranges) on a build that does not. The sheet says which path ran.
 
 ## Encoding
 

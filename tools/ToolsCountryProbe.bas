@@ -36,11 +36,11 @@ Option Explicit
 ' Full scope is every row, DPM and Non-DPM alike, which is what the report''s
 ' left-hand table shows.
 '
-' Two helper columns carry the only per-row work the formulas need: the
-' geography with blanks turned into "Others", and a 1/0 entity flag.  They
-' exist because SUMIFS and COUNTIFS need real ranges, not computed arrays.
-' If this approach is adopted, those two belong in the staging table itself,
-' written once by the pass that builds it.
+' Where GROUPBY is available the ranked table - country, value and distinct
+' NDG count - is one formula per asset class, and no helper column is needed
+' because GROUPBY aggregates arrays.  Where it is not, the probe falls back
+' to SUMIFS, which wants real ranges rather than computed arrays and so needs
+' two spilled helper columns.  Which path ran is stated on the sheet.
 '
 
 Private Const PROBE_SHEET As String = "Country Probe"
@@ -52,24 +52,26 @@ Private Const OTHER_DIMENSION As String = "Others"
 Private Const TOP_COUNT As Long = 10
 
 Private Const BLOCK_HEIGHT As Long = 15
-Private Const FIRST_BLOCK_ROW As Long = 8
+Private Const FIRST_BLOCK_ROW As Long = 9
 
 Private Const HELPER_COL As Long = 14         ' N, the cleaned geography
 Private Const HELPER_FLAG_COL As Long = 15    ' O, the entity flag
 Private Const HELPER_ROW As Long = 2
+
+Private UseGroupBy As Boolean
 
 Public Sub BuildCountryConcentrationProbe()
 
     Dim StageTable As ListObject
     Dim StageData As Variant
     Dim ws As Worksheet
+    Dim Col As Object
 
     Dim Classes As Variant
     Dim ClassIndex As Long
     Dim BlockRow As Long
     Dim LastRow As Long
 
-    Dim Col As Object
     Dim PreviousUpdating As Boolean
 
     On Error GoTo Failed
@@ -105,8 +107,10 @@ Public Sub BuildCountryConcentrationProbe()
 
     Set ws = ReplaceSheet(PROBE_SHEET)
 
+    UseGroupBy = SupportsGroupBy(ws)
+
     WriteProbeHeader ws, StageTable
-    WriteHelperColumns ws
+    If Not UseGroupBy Then WriteHelperColumns ws
 
     Classes = Array("Equity", "Corporate Bonds", "Certificates")
     BlockRow = FIRST_BLOCK_ROW
@@ -121,18 +125,9 @@ Public Sub BuildCountryConcentrationProbe()
 
     LastRow = BlockRow
 
-    ws.Range("B4").Formula = _
-        "=MAX(IF(ISNUMBER(I" & CStr(FIRST_BLOCK_ROW) & ":I" & CStr(LastRow) & _
-        "),ABS(I" & CStr(FIRST_BLOCK_ROW) & ":I" & CStr(LastRow) & "),0))"
+    WriteSummaryFormulas ws, LastRow
 
-    ws.Range("B5").Formula = _
-        "=MAX(IF(ISNUMBER(J" & CStr(FIRST_BLOCK_ROW) & ":J" & CStr(LastRow) & _
-        "),ABS(J" & CStr(FIRST_BLOCK_ROW) & ":J" & CStr(LastRow) & "),0))"
-
-    ws.Range("B6").Formula = _
-        "=COUNTIF(K" & CStr(FIRST_BLOCK_ROW) & ":K" & CStr(LastRow) & _
-        ",""different"")"
-
+    ws.Calculate
     ws.Columns("A:K").AutoFit
 
     ws.Activate
@@ -152,6 +147,37 @@ Failed:
         vbCritical, "Country probe"
 
 End Sub
+
+'
+' GROUPBY reached Excel in 2024, so a workbook on a slower update channel
+' may not have it.  Asking Excel rather than assuming: an unknown function
+' name evaluates to #NAME?, which ISERROR reports as True.
+'
+Private Function SupportsGroupBy( _
+    ByVal ws As Worksheet) As Boolean
+
+    Dim Probe As Range
+    Dim Answer As Variant
+
+    Set Probe = ws.Cells(1, 30)
+
+    On Error GoTo Unsupported
+
+    Probe.Formula = "=ISERROR(GROUPBY({""a"";""b""},{1;2},SUM))"
+    Probe.Calculate
+    Answer = Probe.Value
+
+    Probe.ClearContents
+
+    SupportsGroupBy = (Answer = False)
+
+    Exit Function
+
+Unsupported:
+
+    Probe.ClearContents
+
+End Function
 
 '
 ' Workbook names, so each formula below reads as the rule it implements
@@ -201,20 +227,60 @@ Private Sub WriteProbeHeader( _
         Format$(StageTable.ListRows.Count, "#,##0") & _
         " rows) against a VBA pass over the same table"
 
-    ws.Range("A4").Value = "largest value difference"
-    ws.Range("A5").Value = "largest #NDG difference"
-    ws.Range("A6").Value = "country lists that differ"
+    If UseGroupBy Then
+
+        ws.Range("A3").Value = _
+            "ranked table: one GROUPBY per asset class, no helper columns"
+
+    Else
+
+        ws.Range("A3").Value = _
+            "ranked table: SUMIFS, with helper columns in N and O " & _
+            "(GROUPBY not available in this build)"
+
+    End If
+
+    ws.Range("A5").Value = "largest value difference"
+    ws.Range("A6").Value = "largest #NDG difference"
+    ws.Range("A7").Value = "country lists that differ"
 
     ws.Range("A1").Font.Bold = True
-    ws.Range("A4:A6").Font.Bold = True
-    ws.Range("B4").NumberFormat = "#,##0.0000"
-    ws.Range("B5:B6").NumberFormat = "0"
+    ws.Range("A3").Font.Italic = True
+    ws.Range("A5:A7").Font.Bold = True
+    ws.Range("B5").NumberFormat = "#,##0.0000"
+    ws.Range("B6:B7").NumberFormat = "0"
+
+End Sub
+
+Private Sub WriteSummaryFormulas( _
+    ByVal ws As Worksheet, _
+    ByVal LastRow As Long)
+
+    Dim FirstText As String
+    Dim LastText As String
+
+    FirstText = CStr(FIRST_BLOCK_ROW)
+    LastText = CStr(LastRow)
+
+    ws.Range("B5").Formula = _
+        "=MAX(IF(ISNUMBER(I" & FirstText & ":I" & LastText & _
+        "),ABS(I" & FirstText & ":I" & LastText & "),0))"
+
+    ws.Range("B6").Formula = _
+        "=MAX(IF(ISNUMBER(J" & FirstText & ":J" & LastText & _
+        "),ABS(J" & FirstText & ":J" & LastText & "),0))"
+
+    ws.Range("B7").Formula = _
+        "=COUNTIF(K" & FirstText & ":K" & LastText & ",""different"")"
 
 End Sub
 
 '
-' SUMIFS and COUNTIFS want ranges, so the two derived values every formula
-' needs are spilled once here and referred to as N2# and O2#.
+' Only the SUMIFS path needs these: it matches on ranges, and neither the
+' Others-filled geography nor the entity flag is a column of the staging
+' table.  If the formula approach is adopted, both belong in that table,
+' written once by the pass that builds it - and then this sheet needs
+' neither helper nor GROUPBY.
 '
 Private Sub WriteHelperColumns( _
     ByVal ws As Worksheet)
@@ -236,7 +302,8 @@ Private Function GeoRange() As String
 End Function
 
 Private Function FlagRange() As String
-    FlagRange = "$" & ColumnLetter(HELPER_FLAG_COL) & "$" & CStr(HELPER_ROW) & "#"
+    FlagRange = _
+        "$" & ColumnLetter(HELPER_FLAG_COL) & "$" & CStr(HELPER_ROW) & "#"
 End Function
 
 Private Sub WriteClassBlock( _
@@ -253,8 +320,7 @@ Private Sub WriteClassBlock( _
     Dim RefTotal As Double
     Dim RefUnionNDG As Long
 
-    Dim ClassTest As String
-    Dim Criteria As String
+    Dim Keep As String
     Dim FirstRow As Long
     Dim TotalRow As Long
     Dim TotalCell As String
@@ -265,32 +331,22 @@ Private Sub WriteClassBlock( _
     TotalRow = FirstRow + TOP_COUNT
     TotalCell = "$C$" & CStr(TotalRow + 1)
 
-    ClassTest = "(pxClass=""" & AssetClass & """)*" & FlagRange()
-
-    '
-    ' The SUMIFS criteria triplet every value cell in this block uses.
-    '
-    Criteria = _
-        "pxClass,""" & AssetClass & """," & _
-        FlagRange() & ",1"
-
     ws.Cells(TopRow, 1).Value = AssetClass
     ws.Cells(TopRow, 1).Font.Bold = True
 
     WriteBlockHeaders ws, TopRow + 1
 
-    '
-    ' One spilling formula produces the ranked list.  SUMIFS takes the
-    ' distinct countries as an array criterion and spills a total for each,
-    ' which SORTBY orders by value descending and by name ascending for ties
-    ' - the order the VBA bubble sort produces.  INDEX over SEQUENCE takes
-    ' the first ten and pads with blanks when a class has fewer.
-    '
-    ws.Cells(FirstRow, 2).Formula = _
-        "=LET(u,UNIQUE(FILTER(" & GeoRange() & "," & ClassTest & "))," & _
-        "t,SUMIFS(pxValue," & GeoRange() & ",u," & Criteria & ")," & _
-        "IFERROR(INDEX(SORTBY(u,t,-1,u,1),SEQUENCE(" & _
-        CStr(TOP_COUNT) & ")),""""))"
+    If UseGroupBy Then
+
+        Keep = "(pxClass=""" & AssetClass & """)*pxEntity"
+        WriteGroupByList ws, FirstRow, Keep
+
+    Else
+
+        Keep = "(pxClass=""" & AssetClass & """)*" & FlagRange()
+        WriteSumIfsList ws, FirstRow, AssetClass, Keep
+
+    End If
 
     For i = 1 To TOP_COUNT
 
@@ -298,19 +354,9 @@ Private Sub WriteClassBlock( _
 
         ws.Cells(r, 1).Value = i
 
-        ws.Cells(r, 3).Formula = _
-            "=IF($B" & CStr(r) & "="""",""""," & _
-            "SUMIFS(pxValue," & GeoRange() & ",$B" & CStr(r) & _
-            "," & Criteria & "))"
-
-        ws.Cells(r, 4).Formula = _
-            "=IF($B" & CStr(r) & "="""",""""," & _
-            "C" & CStr(r) & "/" & TotalCell & ")"
-
         ws.Cells(r, 5).Formula = _
             "=IF($B" & CStr(r) & "="""",""""," & _
-            "COUNTA(UNIQUE(FILTER(pxNDG," & ClassTest & _
-            "*(" & GeoRange() & "=$B" & CStr(r) & ")))))"
+            "C" & CStr(r) & "/" & TotalCell & ")"
 
         ws.Cells(r, 9).Formula = _
             "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
@@ -318,7 +364,7 @@ Private Sub WriteClassBlock( _
 
         ws.Cells(r, 10).Formula = _
             "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
-            "E" & CStr(r) & "-H" & CStr(r) & ")"
+            "D" & CStr(r) & "-H" & CStr(r) & ")"
 
         ws.Cells(r, 11).Formula = _
             "=IF($B" & CStr(r) & "=$F" & CStr(r) & ",""same"",""different"")"
@@ -334,12 +380,9 @@ Private Sub WriteClassBlock( _
     ws.Cells(TotalRow, 3).Formula = _
         "=SUM(C" & CStr(FirstRow) & ":C" & CStr(TotalRow - 1) & ")"
 
-    ws.Cells(TotalRow, 4).Formula = "=C" & CStr(TotalRow) & "/" & TotalCell
+    ws.Cells(TotalRow, 4).Formula = UnionNdgFormula(AssetClass, FirstRow, TotalRow)
 
-    ws.Cells(TotalRow, 5).Formula = _
-        "=COUNTA(UNIQUE(FILTER(pxNDG," & ClassTest & _
-        "*ISNUMBER(MATCH(" & GeoRange() & ",$B$" & CStr(FirstRow) & _
-        ":$B$" & CStr(TotalRow - 1) & ",0)))))"
+    ws.Cells(TotalRow, 5).Formula = "=C" & CStr(TotalRow) & "/" & TotalCell
 
     ws.Cells(TotalRow, 7).Formula = _
         "=SUM(G" & CStr(FirstRow) & ":G" & CStr(TotalRow - 1) & ")"
@@ -348,15 +391,14 @@ Private Sub WriteClassBlock( _
         "=C" & CStr(TotalRow) & "-G" & CStr(TotalRow)
 
     ws.Cells(TotalRow, 10).Formula = _
-        "=E" & CStr(TotalRow) & "-H" & CStr(TotalRow)
+        "=D" & CStr(TotalRow) & "-H" & CStr(TotalRow)
 
     '
     ' Category total, the share denominator: every row of the class that
     ' reached the dimension, ranked or not.
     '
     ws.Cells(TotalRow + 1, 2).Value = "Category total"
-
-    ws.Cells(TotalRow + 1, 3).Formula = "=SUMIFS(pxValue," & Criteria & ")"
+    ws.Cells(TotalRow + 1, 3).Formula = CategoryTotalFormula(AssetClass)
 
     ws.Cells(TotalRow + 1, 9).Formula = _
         "=C" & CStr(TotalRow + 1) & "-G" & CStr(TotalRow + 1)
@@ -382,6 +424,116 @@ Private Sub WriteClassBlock( _
 
 End Sub
 
+'
+' The whole ranked table in one formula: country, total value and distinct
+' NDG count, ordered by value descending with ties broken by name ascending,
+' first ten.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
+' distinct count is written where SUM sits rather than assembled from
+' UNIQUE and COUNTA per row.
+'
+Private Sub WriteGroupByList( _
+    ByVal ws As Worksheet, _
+    ByVal FirstRow As Long, _
+    ByVal Keep As String)
+
+    ws.Cells(FirstRow, 2).Formula = _
+        "=LET(k," & Keep & "," & _
+        "g,FILTER(pxGeography,k)," & _
+        "v,FILTER(pxValue,k)," & _
+        "n,FILTER(pxNDG,k)," & _
+        "a,GROUPBY(g,HSTACK(v,n)," & _
+        "HSTACK(SUM,LAMBDA(x,COUNTA(UNIQUE(x)))),0,0)," & _
+        "IFERROR(TAKE(SORTBY(a,CHOOSECOLS(a,2),-1,CHOOSECOLS(a,1),1)," & _
+        CStr(TOP_COUNT) & "),""""))"
+
+End Sub
+
+'
+' The same table without GROUPBY: the names rank in one formula, and the two
+' measures are then looked up a row at a time.
+'
+Private Sub WriteSumIfsList( _
+    ByVal ws As Worksheet, _
+    ByVal FirstRow As Long, _
+    ByVal AssetClass As String, _
+    ByVal Keep As String)
+
+    Dim Criteria As String
+    Dim r As Long
+    Dim i As Long
+
+    Criteria = "pxClass,""" & AssetClass & """," & FlagRange() & ",1"
+
+    ws.Cells(FirstRow, 2).Formula = _
+        "=LET(u,UNIQUE(FILTER(" & GeoRange() & "," & Keep & "))," & _
+        "t,SUMIFS(pxValue," & GeoRange() & ",u," & Criteria & ")," & _
+        "IFERROR(INDEX(SORTBY(u,t,-1,u,1),SEQUENCE(" & _
+        CStr(TOP_COUNT) & ")),""""))"
+
+    For i = 1 To TOP_COUNT
+
+        r = FirstRow + i - 1
+
+        ws.Cells(r, 3).Formula = _
+            "=IF($B" & CStr(r) & "="""",""""," & _
+            "SUMIFS(pxValue," & GeoRange() & ",$B" & CStr(r) & _
+            "," & Criteria & "))"
+
+        ws.Cells(r, 4).Formula = _
+            "=IF($B" & CStr(r) & "="""",""""," & _
+            "COUNTA(UNIQUE(FILTER(pxNDG," & Keep & _
+            "*(" & GeoRange() & "=$B" & CStr(r) & ")))))"
+
+    Next i
+
+End Sub
+
+Private Function UnionNdgFormula( _
+    ByVal AssetClass As String, _
+    ByVal FirstRow As Long, _
+    ByVal TotalRow As Long) As String
+
+    Dim Keep As String
+    Dim GeographyRef As String
+
+    If UseGroupBy Then
+
+        Keep = "(pxClass=""" & AssetClass & """)*pxEntity"
+        GeographyRef = "pxGeography"
+
+    Else
+
+        Keep = "(pxClass=""" & AssetClass & """)*" & FlagRange()
+        GeographyRef = GeoRange()
+
+    End If
+
+    UnionNdgFormula = _
+        "=COUNTA(UNIQUE(FILTER(pxNDG," & Keep & _
+        "*ISNUMBER(MATCH(" & GeographyRef & ",$B$" & CStr(FirstRow) & _
+        ":$B$" & CStr(TotalRow - 1) & ",0)))))"
+
+End Function
+
+Private Function CategoryTotalFormula( _
+    ByVal AssetClass As String) As String
+
+    If UseGroupBy Then
+
+        CategoryTotalFormula = _
+            "=SUM(FILTER(pxValue,(pxClass=""" & AssetClass & _
+            """)*pxEntity,0))"
+
+    Else
+
+        CategoryTotalFormula = _
+            "=SUMIFS(pxValue,pxClass,""" & AssetClass & """," & _
+            FlagRange() & ",1)"
+
+    End If
+
+End Function
+
 Private Sub WriteBlockHeaders( _
     ByVal ws As Worksheet, _
     ByVal HeaderRow As Long)
@@ -390,8 +542,8 @@ Private Sub WriteBlockHeaders( _
     Dim i As Long
 
     Headers = Array( _
-        "#", "Country", "Value (formula)", "Share (formula)", _
-        "#NDG (formula)", "Country (VBA)", "Value (VBA)", "#NDG (VBA)", _
+        "#", "Country", "Value (formula)", "#NDG (formula)", _
+        "Share (formula)", "Country (VBA)", "Value (VBA)", "#NDG (VBA)", _
         "d Value", "d #NDG", "name")
 
     For i = LBound(Headers) To UBound(Headers)
@@ -415,7 +567,7 @@ Private Sub FormatBlock( _
     ws.Range(ws.Cells(FirstRow, 7), ws.Cells(TotalRow + 1, 7)) _
         .NumberFormat = "#,##0"
 
-    ws.Range(ws.Cells(FirstRow, 4), ws.Cells(TotalRow, 4)) _
+    ws.Range(ws.Cells(FirstRow, 5), ws.Cells(TotalRow, 5)) _
         .NumberFormat = "0.00%"
 
     ws.Range(ws.Cells(FirstRow, 9), ws.Cells(TotalRow + 1, 9)) _
