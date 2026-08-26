@@ -78,7 +78,7 @@ src/reference/  RefAssetMapping
 src/weekly/     WeeklyAnalysisGenerate, WeeklyAnalysisLayout, WeeklyAnalysisEmail
 src/journey/    Journey, JourneyFormatting, JourneyDashboardTable, JourneyPositionAnalysis
 src/delta/      DeltaCalculation, DeltaRevenue
-tools/          ToolsInstall (loads a folder of modules), ToolsCountryProbe
+tools/          ToolsInstall (loads a folder of modules), ToolsExposureProbe
                 (formula-vs-VBA experiment) — neither is part of the workbook
 archive/        JourneyVisualization (superseded)
 ```
@@ -206,19 +206,31 @@ file-format directive the importer reads and strips.
 
 ## Experiment: the concentration arithmetic as formulas
 
-`tools/ToolsCountryProbe.bas` builds the Country of Risk concentration, Full
-scope, twice over the same `RiskExposure` staging table — once with worksheet
-formulas and once with a VBA pass — and puts the difference between them in a
-column. Import it, run `BuildCountryConcentrationProbe`, and read the three
-numbers at the top of the *Country Probe* sheet: they should all be zero.
+`tools/ToolsExposureProbe.bas` rebuilds the whole exposure concentration
+section — all twenty-two subtables: three dimensions, the asset classes
+`BuildRiskSubtableVisibility` leaves visible in each, and both account scopes —
+twice over the same `RiskExposure` staging table, once with worksheet formulas
+and once with a VBA pass, and puts the difference between them in a column.
+Import it, run `BuildExposureProbe`, and read the three numbers at the top of
+the *Exposure Probe* sheet: they should all be zero.
 
 The staging table is already a fact table (one row per position × allocated
 exposure, with every dimension beside the measure), so the 432 lines of
-`AggregateUnifiedRiskStageData` are a hand-written `GROUP BY` that `SUMIFS`
-and `UNIQUE` do natively. What the probe tests is not whether that is possible
-but whether the *semantics* survive the translation — the three that are easy
-to lose being the share denominator, the union-not-sum `#NDG` on the total
-row, and the tie-break on equal values.
+`AggregateUnifiedRiskStageData` are a hand-written `GROUP BY` that `GROUPBY`
+does natively. What the probe tests is not whether that is possible but
+whether the *semantics* survive the translation. Four are easy to lose:
+
+- **Issuer's denominator is not its numerator.** A certificate component with
+  no resolved entity carries the `__CERTIFICATE_NON_ENTITY__|` prefix, which
+  keeps it out of the ranked list but not out of the share total. Country of
+  Risk and Sector aggregate entity rows only, so there the two filters match.
+- **The `#NDG` on a total row is a union, not a sum** of the ten counts above
+  it.
+- **Ties break on name ascending**, case-insensitively, after value descending.
+- **The class name in the table is not the label on the report.** Certificates
+  is stored as `Certificates (Excl. Protected)`, and
+  `RiskAssetIndexFromClass` accepts the bare name as well, so a block can
+  answer to more than one string.
 
 The whole ranked table — country, value and distinct NDG count, ordered and
 cut to ten — is one `GROUPBY` formula per asset class, with the distinct count
