@@ -569,7 +569,7 @@ Private Function FindNearestExistingDate(BasePath As String, TargetDate As Date,
     FindNearestExistingDate = 0
 End Function
 
-Public Sub BuildPositionDateDictionaries( _
+Private Sub BuildPositionDateDictionaries( _
     ByVal BasePath As String, _
     ByVal AnalysisStartDate As Date, _
     ByVal AnalysisEndDate As Date, _
@@ -674,7 +674,7 @@ NextPositionFile:
 
 End Sub
 
-Public Function GetSortedPositionFiles( _
+Private Function GetSortedPositionFiles( _
     ByVal BasePath As String, _
     ByVal AnalysisStartDate As Date, _
     ByVal AnalysisAnalysisEndDate As Date) As Variant

@@ -63,7 +63,7 @@ Public Function LoadPositionCache( _
 
 End Function
 
-Public Function BuildPositionKey( _
+Private Function BuildPositionKey( _
     ByVal PositionFields As Variant, _
     ByVal idxNDG As Long, _
     ByVal idxCO As Long, _

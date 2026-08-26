@@ -1134,7 +1134,7 @@ ErrorHandler:
 
 End Sub
 
-Public Sub WriteSectionTitle(ByVal ws As Worksheet, ByVal RowNo As Long, ByVal ColNo As Long, ByVal Width As Long, ByVal Title As String)
+Private Sub WriteSectionTitle(ByVal ws As Worksheet, ByVal RowNo As Long, ByVal ColNo As Long, ByVal Width As Long, ByVal Title As String)
 
     With ws.Range(ws.Cells(RowNo, ColNo), ws.Cells(RowNo, ColNo + Width - 1))
 
@@ -1149,7 +1149,7 @@ Public Sub WriteSectionTitle(ByVal ws As Worksheet, ByVal RowNo As Long, ByVal C
     
 End Sub
 
-Public Sub BuildHeader( _
+Private Sub BuildHeader( _
     ByVal ws As Worksheet, _
     ByVal ReportDate As Date)
 
@@ -1184,7 +1184,7 @@ Public Sub BuildHeader( _
 
 End Sub
 
-Public Sub BuildPortfolioSection( _
+Private Sub BuildPortfolioSection( _
     ByVal ws As Worksheet, _
     ByVal CurrentDate As Date, _
     ByVal ComparisonDate As Date)
@@ -1434,7 +1434,7 @@ Private Sub WriteCollateralChange( _
 
 End Sub
 
-Public Sub BuildCollateralBreakdown( _
+Private Sub BuildCollateralBreakdown( _
     ByVal ws As Worksheet, _
     ByRef CurrentPositions As Variant, _
     ByRef YTDPositions As Variant, _
@@ -1535,7 +1535,7 @@ Public Sub BuildCollateralBreakdown( _
 
 End Sub
 
-Public Sub BuildNewLoansSection( _
+Private Sub BuildNewLoansSection( _
     ByVal ws As Worksheet, _
     ByRef CurrentAccounts As Variant, _
     ByRef PreviousAccounts As Variant, _
@@ -1553,7 +1553,7 @@ Public Sub BuildNewLoansSection( _
 
 End Sub
 
-Public Sub BuildEndedLoansSection( _
+Private Sub BuildEndedLoansSection( _
     ByVal ws As Worksheet, _
     ByRef CurrentAccounts As Variant, _
     ByRef ComparisonAccounts As Variant, _
@@ -1708,6 +1708,11 @@ Private Function BuildCollateralDictionary( _
 
 End Function
 
+'
+' Left Public although only GenerateWeeklyAnalysis calls it.  It takes
+' no arguments, which is the one shape a worksheet button can be bound
+' to, and a binding in the workbook would not be visible from here.
+'
 Public Sub WriteAssetTypeMapping()
 
     Dim ws As Worksheet
@@ -1791,7 +1796,7 @@ Public Sub WriteAssetTypeMapping()
 
 End Sub
 
-Public Sub BuildEnteredCollateralSection( _
+Private Sub BuildEnteredCollateralSection( _
     ByVal ws As Worksheet, _
     ByRef CurrentAccounts As Variant, _
     ByRef PreviousAccounts As Variant, _
@@ -10436,7 +10441,7 @@ Private Sub AggregateUnifiedRiskStageData( _
 
 End Sub
 
-Public Sub BuildRiskGranularitySection( _
+Private Sub BuildRiskGranularitySection( _
     ByVal ws As Worksheet, _
     ByRef PositionData As Variant)
 
@@ -11638,7 +11643,7 @@ Private Function DictionaryTotal( _
 
 End Function
 
-Public Sub CreateCollateralPieChart( _
+Private Sub CreateCollateralPieChart( _
     ByVal ws As Worksheet, _
     ByVal DictCurrent As Object, _
     ByVal ReportDate As Date)
@@ -11903,6 +11908,11 @@ Public Sub CreateCollateralPieChart( _
 
 End Sub
 
+'
+' Public because nothing calls it by name: GenerateWeeklyAnalysis puts
+' "WriteNoteWeekly" into the NoteHandler global and Note reaches it
+' through Application.Run, which cannot see a Private procedure.
+'
 Public Sub WriteNoteWeekly( _
     ByVal Message As String)
 
@@ -11919,7 +11929,7 @@ Public Sub WriteNoteWeekly( _
 End Sub
 
 
-Public Sub BuildNotes( _
+Private Sub BuildNotes( _
     ByVal ws As Worksheet)
 
     Dim FirstRow As Long
