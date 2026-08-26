@@ -78,6 +78,7 @@ src/reference/  RefAssetMapping
 src/weekly/     WeeklyAnalysisGenerate, WeeklyAnalysisLayout, WeeklyAnalysisEmail
 src/journey/    Journey, JourneyFormatting, JourneyDashboardTable, JourneyPositionAnalysis
 src/delta/      DeltaCalculation, DeltaRevenue
+tools/          ToolsInstall (loads a folder of modules; not part of the workbook)
 archive/        JourneyVisualization (superseded)
 ```
 
@@ -182,14 +183,25 @@ the report's Notes box.
 
 ## Importing into the workbook
 
-File → Import File… (Ctrl+M) in the VBE, one `.bas` per module. Pasting the
-text into a new module instead leaves `Attribute VB_Name` in the body, where
-it is not valid VBA and shows as a syntax error — it is a file-format
-directive the importer reads and strips.
+`tools/ToolsInstall.bas` does it in one pass. Import that module once
+(Ctrl+M), tick **File → Options → Trust Center → Trust Center Settings →
+Macro Settings → Trust access to the VBA project object model**, then run
+`InstallModules` and point it at a folder of `.bas` files: it backs up every
+standard module to a timestamped folder, removes them, and imports the folder.
+It skips itself in both passes, and the confirmation names separately anything
+about to be removed that the folder does not replace. Remove `ToolsInstall`
+by hand when the modules are in — it loads the workbook, it is not part of it.
 
-When a module has been renamed, remove the old one before importing the new
-file. Both hold the same procedure names, and a project carrying two copies
-fails to compile with "Ambiguous name detected".
+By hand instead: File → Import File… (Ctrl+M), one `.bas` per module, and
+**remove the existing module first, every time**. Import does not overwrite —
+the VBE keeps the old module and names the new one `DeltaCalculation1`, and
+two modules holding the same procedures fail to compile with "Ambiguous name
+detected". That applies to a module whose contents changed just as much as to
+one that was renamed.
+
+Pasting the text into a new module instead leaves `Attribute VB_Name` in the
+body, where it is not valid VBA and shows as a syntax error — it is a
+file-format directive the importer reads and strips.
 
 ## Encoding
 
