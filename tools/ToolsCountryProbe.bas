@@ -103,7 +103,7 @@ Public Sub BuildCountryConcentrationProbe()
     PreviousUpdating = Application.ScreenUpdating
     Application.ScreenUpdating = False
 
-    DefineProbeNames
+    RemoveLegacyProbeNames
 
     Set ws = ReplaceSheet(PROBE_SHEET)
 
@@ -182,39 +182,83 @@ Unsupported:
 End Function
 
 '
-' Workbook names, so each formula below reads as the rule it implements
-' rather than as six repeated table references.  Rewritten on every run,
-' which is also how a rebuilt staging table gets picked up.
+' The staging table's columns, bound once for a LET.  These were workbook
+' names until Names.Add turned out to be what Excel was rejecting - and
+' inline is better anyway: every definition the formula depends on is
+' visible in the cell rather than in the name manager.
 '
-Private Sub DefineProbeNames()
+Private Function StageBindings( _
+    ByVal WantGeography As Boolean, _
+    ByVal WantNDG As Boolean, _
+    ByVal WantValue As Boolean) As String
 
-    AddName _
-        "pxGeography", _
-        "=IF(TRIM(" & STAGE_TABLE & "[Geography])=""""," & _
-        """" & OTHER_DIMENSION & """,TRIM(" & _
-        STAGE_TABLE & "[Geography]))"
+    '
+    ' cls, typ and nme are what KeepExpression reads, so they are always
+    ' bound.  The measures are asked for, because a LET that declares a name
+    ' the calculation never reads is not worth finding out about the hard
+    ' way.
+    '
+    StageBindings = _
+        "cls," & STAGE_TABLE & "[Risk Asset Class]," & _
+        "typ," & STAGE_TABLE & "[Exposure Type]," & _
+        "nme," & STAGE_TABLE & "[Exposure Name],"
 
-    AddName _
-        "pxEntity", _
-        "=--((" & STAGE_TABLE & "[Exposure Type]<>""" & NON_ENTITY_TYPE & _
-        """)*(LEFT(" & STAGE_TABLE & "[Exposure Name]," & _
-        CStr(Len(NON_ENTITY_PREFIX)) & ")<>""" & NON_ENTITY_PREFIX & """))"
+    If WantGeography Then
 
-    AddName "pxValue", "=" & STAGE_TABLE & "[Allocated Collateral Value]"
-    AddName "pxNDG", "=" & STAGE_TABLE & "[NDG]"
-    AddName "pxClass", "=" & STAGE_TABLE & "[Risk Asset Class]"
+        StageBindings = StageBindings & _
+            "geo,IF(TRIM(" & STAGE_TABLE & "[Geography])=""""," & _
+            """" & OTHER_DIMENSION & """,TRIM(" & _
+            STAGE_TABLE & "[Geography])),"
 
-End Sub
+    End If
 
-Private Sub AddName( _
-    ByVal NameText As String, _
-    ByVal RefersTo As String)
+    If WantNDG Then
+        StageBindings = StageBindings & "ndg," & STAGE_TABLE & "[NDG],"
+    End If
+
+    If WantValue Then
+
+        StageBindings = StageBindings & _
+            "val," & STAGE_TABLE & "[Allocated Collateral Value],"
+
+    End If
+
+End Function
+
+'
+' The rows of one asset class that reach the geography dimension: entity
+' exposures only, which is why the share denominator below uses this same
+' expression as the ranked list.
+'
+Private Function KeepExpression( _
+    ByVal AssetClass As String) As String
+
+    KeepExpression = _
+        "(cls=""" & AssetClass & """)*" & _
+        "(typ<>""" & NON_ENTITY_TYPE & """)*" & _
+        "(LEFT(nme," & CStr(Len(NON_ENTITY_PREFIX)) & ")<>""" & _
+        NON_ENTITY_PREFIX & """)"
+
+End Function
+
+'
+' Earlier versions of this probe left these in the workbook.
+'
+Private Sub RemoveLegacyProbeNames()
+
+    Dim Legacy As Variant
+    Dim NameText As Variant
+
+    Legacy = Array( _
+        "pxGeography", "pxEntity", "pxValue", "pxNDG", "pxClass")
 
     On Error Resume Next
-    ThisWorkbook.Names(NameText).Delete
-    On Error GoTo 0
 
-    ThisWorkbook.Names.Add Name:=NameText, RefersTo:=RefersTo
+    For Each NameText In Legacy
+        ThisWorkbook.Names(CStr(NameText)).Delete
+    Next NameText
+
+    On Error GoTo 0
 
 End Sub
 
@@ -296,8 +340,14 @@ Private Sub WriteHelperColumns( _
     ws.Cells(HELPER_ROW - 1, HELPER_COL).Value = "Geography (Others-filled)"
     ws.Cells(HELPER_ROW - 1, HELPER_FLAG_COL).Value = "Entity row"
 
-    SetFormula ws.Cells(HELPER_ROW, HELPER_COL), "=pxGeography"
-    SetFormula ws.Cells(HELPER_ROW, HELPER_FLAG_COL), "=pxEntity"
+    SetFormula ws.Cells(HELPER_ROW, HELPER_COL), _
+        "=IF(TRIM(" & STAGE_TABLE & "[Geography])=""""," & _
+        """" & OTHER_DIMENSION & """,TRIM(" & STAGE_TABLE & "[Geography]))"
+
+    SetFormula ws.Cells(HELPER_ROW, HELPER_FLAG_COL), _
+        "=--((" & STAGE_TABLE & "[Exposure Type]<>""" & NON_ENTITY_TYPE & _
+        """)*(LEFT(" & STAGE_TABLE & "[Exposure Name]," & _
+        CStr(Len(NON_ENTITY_PREFIX)) & ")<>""" & NON_ENTITY_PREFIX & """))"
 
     ws.Range( _
         ws.Cells(HELPER_ROW - 1, HELPER_COL), _
@@ -390,8 +440,7 @@ Private Sub WriteClassBlock( _
 
         On Error Resume Next
 
-        WriteGroupByList _
-            ws, FirstRow, "(pxClass=""" & AssetClass & """)*pxEntity"
+        WriteGroupByList ws, FirstRow, AssetClass
 
         If Err.Number <> 0 Then
 
@@ -407,11 +456,14 @@ Private Sub WriteClassBlock( _
 
     If UseGroupBy Then
 
-        Keep = "(pxClass=""" & AssetClass & """)*pxEntity"
+        Keep = ""
 
     Else
 
-        Keep = "(pxClass=""" & AssetClass & """)*" & FlagRange()
+        Keep = _
+            "(" & STAGE_TABLE & "[Risk Asset Class]=""" & AssetClass & _
+            """)*" & FlagRange()
+
         WriteSumIfsList ws, FirstRow, AssetClass, Keep
 
     End If
@@ -502,13 +554,14 @@ End Sub
 Private Sub WriteGroupByList( _
     ByVal ws As Worksheet, _
     ByVal FirstRow As Long, _
-    ByVal Keep As String)
+    ByVal AssetClass As String)
 
     SetFormula ws.Cells(FirstRow, 2), _
-        "=LET(k," & Keep & "," & _
-        "g,FILTER(pxGeography,k)," & _
-        "v,FILTER(pxValue,k)," & _
-        "n,FILTER(pxNDG,k)," & _
+        "=LET(" & _
+        StageBindings( _
+            WantGeography:=True, WantNDG:=True, WantValue:=True) & _
+        "k," & KeepExpression(AssetClass) & "," & _
+        "g,FILTER(geo,k),v,FILTER(val,k),n,FILTER(ndg,k)," & _
         "a,GROUPBY(g,HSTACK(v,n)," & _
         "HSTACK(SUM,LAMBDA(x,COUNTA(UNIQUE(x)))),0,0)," & _
         "IFERROR(TAKE(SORTBY(a,CHOOSECOLS(a,2),-1,CHOOSECOLS(a,1),1)," & _
@@ -530,11 +583,14 @@ Private Sub WriteSumIfsList( _
     Dim r As Long
     Dim i As Long
 
-    Criteria = "pxClass,""" & AssetClass & """," & FlagRange() & ",1"
+    Criteria = _
+        STAGE_TABLE & "[Risk Asset Class],""" & AssetClass & """," & _
+        FlagRange() & ",1"
 
     SetFormula ws.Cells(FirstRow, 2), _
         "=LET(u,UNIQUE(FILTER(" & GeoRange() & "," & Keep & "))," & _
-        "t,SUMIFS(pxValue," & GeoRange() & ",u," & Criteria & ")," & _
+        "t,SUMIFS(" & STAGE_TABLE & "[Allocated Collateral Value]," & _
+        GeoRange() & ",u," & Criteria & ")," & _
         "IFERROR(INDEX(SORTBY(u,t,-1,u,1),SEQUENCE(" & _
         CStr(TOP_COUNT) & ")),""""))"
 
@@ -544,12 +600,12 @@ Private Sub WriteSumIfsList( _
 
         SetFormula ws.Cells(r, 3), _
             "=IF($B" & CStr(r) & "="""",""""," & _
-            "SUMIFS(pxValue," & GeoRange() & ",$B" & CStr(r) & _
-            "," & Criteria & "))"
+            "SUMIFS(" & STAGE_TABLE & "[Allocated Collateral Value]," & _
+            GeoRange() & ",$B" & CStr(r) & "," & Criteria & "))"
 
         SetFormula ws.Cells(r, 4), _
             "=IF($B" & CStr(r) & "="""",""""," & _
-            "COUNTA(UNIQUE(FILTER(pxNDG," & Keep & _
+            "COUNTA(UNIQUE(FILTER(" & STAGE_TABLE & "[NDG]," & Keep & _
             "*(" & GeoRange() & "=$B" & CStr(r) & ")))))"
 
     Next i
@@ -561,25 +617,30 @@ Private Function UnionNdgFormula( _
     ByVal FirstRow As Long, _
     ByVal TotalRow As Long) As String
 
-    Dim Keep As String
-    Dim GeographyRef As String
+    Dim TopNames As String
+
+    TopNames = _
+        "$B$" & CStr(FirstRow) & ":$B$" & CStr(TotalRow - 1)
 
     If UseGroupBy Then
 
-        Keep = "(pxClass=""" & AssetClass & """)*pxEntity"
-        GeographyRef = "pxGeography"
+        UnionNdgFormula = _
+            "=LET(" & _
+            StageBindings( _
+                WantGeography:=True, WantNDG:=True, WantValue:=False) & _
+            "k," & KeepExpression(AssetClass) & "," & _
+            "COUNTA(UNIQUE(FILTER(ndg," & _
+            "k*ISNUMBER(MATCH(geo," & TopNames & ",0))))))"
 
     Else
 
-        Keep = "(pxClass=""" & AssetClass & """)*" & FlagRange()
-        GeographyRef = GeoRange()
+        UnionNdgFormula = _
+            "=COUNTA(UNIQUE(FILTER(" & STAGE_TABLE & "[NDG],(" & _
+            STAGE_TABLE & "[Risk Asset Class]=""" & AssetClass & """)*" & _
+            FlagRange() & "*ISNUMBER(MATCH(" & GeoRange() & "," & _
+            TopNames & ",0)))))"
 
     End If
-
-    UnionNdgFormula = _
-        "=COUNTA(UNIQUE(FILTER(pxNDG," & Keep & _
-        "*ISNUMBER(MATCH(" & GeographyRef & ",$B$" & CStr(FirstRow) & _
-        ":$B$" & CStr(TotalRow - 1) & ",0)))))"
 
 End Function
 
@@ -589,13 +650,16 @@ Private Function CategoryTotalFormula( _
     If UseGroupBy Then
 
         CategoryTotalFormula = _
-            "=SUM(FILTER(pxValue,(pxClass=""" & AssetClass & _
-            """)*pxEntity,0))"
+            "=LET(" & _
+            StageBindings( _
+                WantGeography:=False, WantNDG:=False, WantValue:=True) & _
+            "k," & KeepExpression(AssetClass) & ",SUM(FILTER(val,k,0)))"
 
     Else
 
         CategoryTotalFormula = _
-            "=SUMIFS(pxValue,pxClass,""" & AssetClass & """," & _
+            "=SUMIFS(" & STAGE_TABLE & "[Allocated Collateral Value]," & _
+            STAGE_TABLE & "[Risk Asset Class],""" & AssetClass & """," & _
             FlagRange() & ",1)"
 
     End If
