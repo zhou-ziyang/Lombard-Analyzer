@@ -113,6 +113,12 @@ Private Const GEO_ISIN_PRIORITY_UNDERLYING As Long = 2
 Private Const GEO_ISIN_PRIORITY_MANAGED_FUND As Long = 3
 Private Const TOP_NAME_COUNT As Long = 10
 Private Const OTHER_RISK_DIMENSION As String = "Others"
+Private Const NON_ENTITY_CERTIFICATE_TYPE As String = _
+    "Certificate non-entity component"
+Private Const NON_DPM_SCOPE As String = "Non-DPM"
+
+Private Const RISK_FORMULA_INDENT As String = "    "
+Private Const RISK_BIND_WIDTH As Long = 6
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
@@ -146,19 +152,6 @@ Private Enum RiskStageField
 End Enum
 
 Private Const RISK_STAGE_FIELD_COUNT As Long = 16
-
-Private Enum RiskAssetIndex
-
-    RiskAssetEquity = 1
-    RiskAssetCorporateBonds = 2
-    RiskAssetSovereignBonds = 3
-    RiskAssetCertificates = 4
-    RiskAssetFunds = 5
-    RiskAssetOverall = 6
-
-End Enum
-
-Private Const RISK_ASSET_COUNT As Long = 6
 
 Private Enum WeeklyPositionField
 
@@ -3001,46 +2994,6 @@ Private Function BuildTemporaryIssuerName( _
 
 End Function
 
-Private Function NewExposureDictionary() As Object
-
-    Dim Dict As Object
-
-    Set Dict = CreateObject("Scripting.Dictionary")
-    Dict.CompareMode = vbTextCompare
-
-    Set NewExposureDictionary = Dict
-
-End Function
-
-Private Sub AddExposure( _
-    ByVal Dict As Object, _
-    ByVal ExposureName As String, _
-    ByVal PositionValue As Double)
-
-    ExposureName = Trim(ExposureName)
-
-    ' Empty names must never be aggregated into one artificial issuer.
-    ' Equity, Bonds and Funds resolve missing names before this point.
-    If ExposureName = "" Then Exit Sub
-
-    If Dict.Exists(ExposureName) Then
-
-        Dict(ExposureName) = _
-            CDbl(Dict(ExposureName)) + PositionValue
-
-    Else
-
-        Dict.Add ExposureName, PositionValue
-
-    End If
-
-End Sub
-
-Private Function NewExposureNDGDictionary() As Object
-
-    Set NewExposureNDGDictionary = NewExposureDictionary()
-
-End Function
 
 Private Function NewNDGSet() As Object
 
@@ -3053,100 +3006,6 @@ Private Function NewNDGSet() As Object
 
 End Function
 
-Private Sub AddExposureNDG( _
-    ByVal ExposureNDGs As Object, _
-    ByVal ExposureName As String, _
-    ByVal NDG As String)
-
-    Dim NDGs As Object
-
-    If ExposureNDGs Is Nothing Then Exit Sub
-
-    ExposureName = Trim(ExposureName)
-    NDG = Trim(NDG)
-
-    If ExposureName = "" Or NDG = "" Then Exit Sub
-
-    If ExposureNDGs.Exists(ExposureName) Then
-
-        Set NDGs = ExposureNDGs(ExposureName)
-
-    Else
-
-        Set NDGs = NewNDGSet()
-        ExposureNDGs.Add ExposureName, NDGs
-
-    End If
-
-    NDGs(NDG) = True
-
-End Sub
-
-Private Sub MergeExposureNDGSet( _
-    ByVal SourceExposureNDGs As Object, _
-    ByVal SourceName As String, _
-    ByVal TargetExposureNDGs As Object, _
-    ByVal TargetName As String)
-
-    Dim NDGs As Object
-    Dim NDG As Variant
-
-    If SourceExposureNDGs Is Nothing Then Exit Sub
-    If TargetExposureNDGs Is Nothing Then Exit Sub
-
-    If Not SourceExposureNDGs.Exists(SourceName) Then Exit Sub
-
-    Set NDGs = SourceExposureNDGs(SourceName)
-
-    For Each NDG In NDGs.Keys
-
-        AddExposureNDG _
-            TargetExposureNDGs, _
-            TargetName, _
-            CStr(NDG)
-
-    Next NDG
-
-End Sub
-
-Private Sub MergeExposureNDGsIntoSet( _
-    ByVal SourceExposureNDGs As Object, _
-    ByVal ExposureName As String, _
-    ByVal TargetNDGs As Object)
-
-    Dim SourceNDGs As Object
-    Dim NDG As Variant
-
-    If SourceExposureNDGs Is Nothing Then Exit Sub
-    If TargetNDGs Is Nothing Then Exit Sub
-
-    If Not SourceExposureNDGs.Exists(ExposureName) Then Exit Sub
-
-    Set SourceNDGs = SourceExposureNDGs(ExposureName)
-
-    For Each NDG In SourceNDGs.Keys
-
-        TargetNDGs(CStr(NDG)) = True
-
-    Next NDG
-
-End Sub
-
-Private Function ExposureNDGCount( _
-    ByVal ExposureNDGs As Object, _
-    ByVal ExposureName As String) As Long
-
-    Dim NDGs As Object
-
-    If ExposureNDGs Is Nothing Then Exit Function
-
-    If Not ExposureNDGs.Exists(ExposureName) Then Exit Function
-
-    Set NDGs = ExposureNDGs(ExposureName)
-
-    ExposureNDGCount = NDGs.Count
-
-End Function
 
 Private Function GetDefinedNameText( _
     ByVal wb As Workbook, _
@@ -8570,118 +8429,612 @@ Private Function CanonicalizeGeographyUsingCompanies( _
 
 End Function
 
-Private Sub AddExposureDictionary( _
-    ByVal SourceExposure As Object, _
-    ByVal TargetExposure As Object)
 
-    Dim ExposureName As Variant
+'
+' Whether the Excl. DPM Certificate subtable would repeat the Full one.  Both
+' are formulas now, so the two are evaluated off to the side of the staging
+' sheet and what they produce is compared; the scratch is cleared before the
+' answer is returned.
+'
+Private Function CertificateResultsMatch( _
+    ByVal DimensionKey As String, _
+    ByVal Visibility As Object) As Boolean
 
-    If SourceExposure Is Nothing Then Exit Sub
-    If TargetExposure Is Nothing Then Exit Sub
+    Dim wsStage As Worksheet
+    Dim FullCell As Range
+    Dim ExDPMCell As Range
+    Dim ScratchCol As Long
 
-    For Each ExposureName In SourceExposure.Keys
+    If Not RiskSubtableIsVisible( _
+            Visibility, _
+            DimensionKey, _
+            "Certificates") Then
 
-        AddExposure _
-            TargetExposure, _
-            CStr(ExposureName), _
-            CDbl(SourceExposure(ExposureName))
+        Exit Function
 
-    Next ExposureName
+    End If
 
-End Sub
+    On Error Resume Next
+    Set wsStage = ThisWorkbook.Worksheets(RISK_STAGE_SHEET)
+    On Error GoTo 0
 
-Private Sub AddExposureNDGDictionary( _
-    ByVal SourceExposureNDGs As Object, _
-    ByVal TargetExposureNDGs As Object)
+    If wsStage Is Nothing Then Exit Function
 
-    Dim ExposureName As Variant
+    ScratchCol = RISK_STAGE_FIELD_COUNT + 4
 
-    If SourceExposureNDGs Is Nothing Then Exit Sub
-    If TargetExposureNDGs Is Nothing Then Exit Sub
+    Set FullCell = wsStage.Cells(1, ScratchCol)
+    Set ExDPMCell = wsStage.Cells(1, ScratchCol + 6)
 
-    For Each ExposureName In SourceExposureNDGs.Keys
+    FullCell.Formula2 = _
+        RiskRankedFormula(DimensionKey, "Certificates", False, Visibility)
 
-        MergeExposureNDGSet _
-            SourceExposureNDGs, _
-            CStr(ExposureName), _
-            TargetExposureNDGs, _
-            CStr(ExposureName)
+    ExDPMCell.Formula2 = _
+        RiskRankedFormula(DimensionKey, "Certificates", True, Visibility)
 
-    Next ExposureName
+    FullCell.Calculate
+    ExDPMCell.Calculate
 
-End Sub
+    CertificateResultsMatch = _
+        ExposureGroupsMatch( _
+            SpilledRange(FullCell), _
+            SpilledRange(ExDPMCell))
 
+    wsStage.Range( _
+        wsStage.Cells(1, ScratchCol), _
+        wsStage.Cells(TOP_NAME_COUNT + 2, ScratchCol + 11)).Clear
+
+End Function
+
+Private Function SpilledRange( _
+    ByVal AnchorCell As Range) As Range
+
+    On Error Resume Next
+    Set SpilledRange = AnchorCell.SpillingToRange
+    On Error GoTo 0
+
+End Function
+
+'
+' Two ranked tables are the same when they are the same shape and every cell
+' reads the same.  At most ten rows of four, so a cell at a time is fine.
+'
 Private Function ExposureGroupsMatch( _
-    ByVal LeftExposure As Object, _
-    ByVal LeftExposureNDGs As Object, _
-    ByVal RightExposure As Object, _
-    ByVal RightExposureNDGs As Object) As Boolean
+    ByVal LeftTable As Range, _
+    ByVal RightTable As Range) As Boolean
 
-    Dim ExposureName As Variant
-    Dim NDG As Variant
-    Dim LeftNDGs As Object
-    Dim RightNDGs As Object
+    Dim r As Long
+    Dim c As Long
 
-    If LeftExposure Is Nothing Then
+    If LeftTable Is Nothing Or RightTable Is Nothing Then
 
-        If RightExposure Is Nothing And _
-           LeftExposureNDGs Is Nothing And _
-           RightExposureNDGs Is Nothing Then
-
-            ExposureGroupsMatch = True
-
-        End If
+        ExposureGroupsMatch = _
+            (LeftTable Is Nothing) And (RightTable Is Nothing)
 
         Exit Function
 
     End If
 
-    If RightExposure Is Nothing Then Exit Function
-    If LeftExposure.Count <> RightExposure.Count Then Exit Function
+    If LeftTable.Rows.Count <> RightTable.Rows.Count Then Exit Function
+    If LeftTable.Columns.Count <> RightTable.Columns.Count Then Exit Function
 
-    For Each ExposureName In LeftExposure.Keys
+    For r = 1 To LeftTable.Rows.Count
+        For c = 1 To LeftTable.Columns.Count
 
-        If Not RightExposure.Exists(CStr(ExposureName)) Then Exit Function
+            If CStr(LeftTable.Cells(r, c).Value2) <> _
+               CStr(RightTable.Cells(r, c).Value2) Then
 
-        If CDbl(LeftExposure(ExposureName)) <> _
-           CDbl(RightExposure(CStr(ExposureName))) Then Exit Function
+                Exit Function
 
-    Next ExposureName
+            End If
 
-    If LeftExposureNDGs Is Nothing Then
-
-        If RightExposureNDGs Is Nothing Then
-
-            ExposureGroupsMatch = True
-
-        End If
-
-        Exit Function
-
-    End If
-
-    If RightExposureNDGs Is Nothing Then Exit Function
-    If LeftExposureNDGs.Count <> RightExposureNDGs.Count Then Exit Function
-
-    For Each ExposureName In LeftExposureNDGs.Keys
-
-        If Not RightExposureNDGs.Exists( _
-                CStr(ExposureName)) Then Exit Function
-
-        Set LeftNDGs = LeftExposureNDGs(ExposureName)
-        Set RightNDGs = RightExposureNDGs(CStr(ExposureName))
-
-        If LeftNDGs.Count <> RightNDGs.Count Then Exit Function
-
-        For Each NDG In LeftNDGs.Keys
-
-            If Not RightNDGs.Exists(CStr(NDG)) Then Exit Function
-
-        Next NDG
-
-    Next ExposureName
+        Next c
+    Next r
 
     ExposureGroupsMatch = True
+
+End Function
+
+'
+' A concentration subtable is three things: the dimension it groups by, the
+' asset class it covers, and the account scope it counts.  Every formula
+' below is built from those against the RiskExposure staging table, so a
+' number on the report and the rows behind it are one click apart.
+'
+' The rules are the ones the row-by-row aggregation used to apply.  Issuer
+' takes every row of a class, and a row that resolved to no entity is
+' aggregated under a prefixed name the ranked list skips and the share
+' denominator still counts - which is why Issuer builds two filters where
+' Geography and Sector build one.  Blank geography or sector reads as Others.
+'
+
+'
+' The order the subtables appear in, and the names printed above them.
+' Sovereign Bonds and Funds sit between Corporate Bonds and Certificates,
+' which is where v58 put them.
+'
+Private Function RiskDisplayedClasses() As Variant
+
+    RiskDisplayedClasses = Array( _
+        "Equity", _
+        CORPORATE_BONDS_CLASS, _
+        SOVEREIGN_BONDS_CLASS, _
+        "Funds", _
+        "Certificates", _
+        "Overall")
+
+End Function
+
+Private Function RiskClassDisplayName( _
+    ByVal AssetClassKey As String) As String
+
+    Select Case AssetClassKey
+
+        Case CORPORATE_BONDS_CLASS
+
+            RiskClassDisplayName = CORPORATE_BONDS_DISPLAY_NAME
+
+        Case "Certificates"
+
+            RiskClassDisplayName = "Certificates (Excl. Protected)"
+
+        Case Else
+
+            RiskClassDisplayName = AssetClassKey
+
+    End Select
+
+End Function
+
+Private Function RiskStageColumn( _
+    ByVal HeaderName As String) As String
+
+    RiskStageColumn = RISK_STAGE_TABLE & "[" & HeaderName & "]"
+
+End Function
+
+Private Function RiskDimensionHeader( _
+    ByVal DimensionKey As String) As String
+
+    Select Case DimensionKey
+
+        Case "Issuer"
+
+            RiskDimensionHeader = "Exposure Name"
+
+        Case "Country"
+
+            RiskDimensionHeader = "Geography"
+
+        Case "Sector"
+
+            RiskDimensionHeader = "Sector"
+
+    End Select
+
+End Function
+
+Private Function RiskDimensionBinding( _
+    ByVal DimensionKey As String) As String
+
+    Select Case DimensionKey
+
+        Case "Issuer"
+
+            RiskDimensionBinding = "nme"
+
+        Case "Country"
+
+            RiskDimensionBinding = "geo"
+
+        Case "Sector"
+
+            RiskDimensionBinding = "sec"
+
+    End Select
+
+End Function
+
+'
+' Only Issuer measures a share against rows it cannot rank.
+'
+Private Function RiskDimensionRanksEveryRow( _
+    ByVal DimensionKey As String) As Boolean
+
+    RiskDimensionRanksEveryRow = (DimensionKey <> "Issuer")
+
+End Function
+
+Private Function RiskRankedClasses() As Variant
+
+    RiskRankedClasses = Array( _
+        "Equity", _
+        CORPORATE_BONDS_CLASS, _
+        SOVEREIGN_BONDS_CLASS, _
+        "Certificates", _
+        "Funds")
+
+End Function
+
+'
+' The Risk Asset Class values a subtable answers to.  Certificates is written
+' into the staging table as "Certificates (Excl. Protected)"; the bare name is
+' matched as well, exactly as RiskAssetIndexFromClass used to accept both.
+'
+Private Function RiskClassStagingValues( _
+    ByVal AssetClassKey As String) As Variant
+
+    Select Case AssetClassKey
+
+        Case "Certificates"
+
+            RiskClassStagingValues = _
+                Array("Certificates", "Certificates (Excl. Protected)")
+
+        Case Else
+
+            RiskClassStagingValues = Array(AssetClassKey)
+
+    End Select
+
+End Function
+
+'
+' Overall covers whatever the dimension still shows, so hiding a class takes
+' it out of the Overall denominator too.
+'
+Private Function RiskClassTest( _
+    ByVal AssetClassKey As String, _
+    ByVal DimensionKey As String, _
+    ByVal Visibility As Object) As String
+
+    Dim Names As Collection
+    Dim ClassKey As Variant
+    Dim StagingValue As Variant
+    Dim List As String
+
+    Set Names = New Collection
+
+    If StrComp(AssetClassKey, "Overall", vbTextCompare) = 0 Then
+
+        For Each ClassKey In RiskRankedClasses()
+
+            If RiskSubtableIsVisible( _
+                    Visibility, _
+                    DimensionKey, _
+                    CStr(ClassKey)) Then
+
+                For Each StagingValue In RiskClassStagingValues(CStr(ClassKey))
+                    Names.Add CStr(StagingValue)
+                Next StagingValue
+
+            End If
+
+        Next ClassKey
+
+    Else
+
+        For Each StagingValue In RiskClassStagingValues(AssetClassKey)
+            Names.Add CStr(StagingValue)
+        Next StagingValue
+
+    End If
+
+    If Names.Count = 0 Then
+
+        RiskClassTest = "FALSE"
+
+    ElseIf Names.Count = 1 Then
+
+        RiskClassTest = "(cls = """ & Names(1) & """)"
+
+    Else
+
+        For Each StagingValue In Names
+
+            If List <> "" Then List = List & ", "
+            List = List & """" & CStr(StagingValue) & """"
+
+        Next StagingValue
+
+        RiskClassTest = "ISNUMBER(MATCH(cls, {" & List & "}, 0))"
+
+    End If
+
+End Function
+
+'
+' One LET binding, its name padded so the expressions line up under each
+' other in the formula bar.
+'
+Private Function RiskBindLine( _
+    ByVal BindName As String, _
+    ByVal Expression As String) As String
+
+    Dim Label As String
+
+    Label = BindName & ","
+
+    RiskBindLine = _
+        RISK_FORMULA_INDENT & Label & _
+        Space$(RISK_BIND_WIDTH - Len(Label)) & Expression
+
+End Function
+
+'
+' The LET preamble, emitting exactly the bindings the caller says it reads.
+' A LET that declares a name nothing reads is not worth finding out about the
+' hard way, and the denominators read fewer of these than the ranked table
+' does: no dimension column, and for Issuer no entity test either.
+'
+Private Function RiskBindings( _
+    ByVal DimensionKey As String, _
+    ByVal Wanted As String, _
+    ByVal ExcludeDPM As Boolean) As String
+
+    Dim DimensionName As String
+    Dim Header As String
+    Dim Lines As String
+
+    DimensionName = RiskDimensionBinding(DimensionKey)
+    Header = RiskStageColumn(RiskDimensionHeader(DimensionKey))
+
+    If InStr(1, Wanted, "cls") > 0 Then
+
+        Lines = Lines & _
+            RiskBindLine("cls", RiskStageColumn("Risk Asset Class") & ",") & _
+            vbLf
+
+    End If
+
+    If InStr(1, Wanted, "typ") > 0 Then
+
+        Lines = Lines & _
+            RiskBindLine("typ", RiskStageColumn("Exposure Type") & ",") & vbLf
+
+    End If
+
+    If InStr(1, Wanted, "nme") > 0 Then
+
+        Lines = Lines & _
+            RiskBindLine("nme", RiskStageColumn("Exposure Name") & ",") & vbLf
+
+    End If
+
+    If InStr(1, Wanted, "dim") > 0 And DimensionName <> "nme" Then
+
+        Lines = Lines & _
+            RiskBindLine( _
+                DimensionName, _
+                "IF(TRIM(" & Header & ") = """", """ & _
+                OTHER_RISK_DIMENSION & """, TRIM(" & Header & ")),") & vbLf
+
+    End If
+
+    If ExcludeDPM Then
+
+        Lines = Lines & _
+            RiskBindLine("scp", RiskStageColumn("Account Scope") & ",") & vbLf
+
+    End If
+
+    If InStr(1, Wanted, "ndg") > 0 Then
+
+        Lines = Lines & _
+            RiskBindLine("ndg", RiskStageColumn("NDG") & ",") & vbLf
+
+    End If
+
+    If InStr(1, Wanted, "val") > 0 Then
+
+        Lines = Lines & _
+            RiskBindLine( _
+                "val", _
+                RiskStageColumn("Allocated Collateral Value") & ",") & vbLf
+
+    End If
+
+    RiskBindings = Lines
+
+End Function
+
+'
+' The rows one subtable aggregates, a factor per line so the conditions read
+' as a list.  EntityOnly is False only for the Issuer share denominator.
+'
+Private Function RiskKeepExpression( _
+    ByVal DimensionKey As String, _
+    ByVal AssetClassKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal EntityOnly As Boolean, _
+    ByVal Visibility As Object) As String
+
+    Dim Factors As Collection
+    Dim Factor As Variant
+
+    Set Factors = New Collection
+
+    Factors.Add RiskClassTest(AssetClassKey, DimensionKey, Visibility)
+
+    If EntityOnly Then
+
+        Factors.Add "(typ <> """ & NON_ENTITY_CERTIFICATE_TYPE & """)"
+
+        Factors.Add _
+            "(LEFT(nme, " & CStr(Len(NON_ENTITY_CERTIFICATE_PREFIX)) & _
+            ") <> """ & NON_ENTITY_CERTIFICATE_PREFIX & """)"
+
+    End If
+
+    If ExcludeDPM Then
+        Factors.Add "(TRIM(scp) = """ & NON_DPM_SCOPE & """)"
+    End If
+
+    For Each Factor In Factors
+
+        If Len(RiskKeepExpression) = 0 Then
+
+            RiskKeepExpression = CStr(Factor)
+
+        Else
+
+            RiskKeepExpression = _
+                RiskKeepExpression & vbLf & RISK_FORMULA_INDENT & _
+                Space$(RISK_BIND_WIDTH - 2) & "* " & CStr(Factor)
+
+        End If
+
+    Next Factor
+
+End Function
+
+'
+' The ranked table in one formula: name, value, share and distinct NDG count
+' for the top ten, ordered by value descending with ties broken by name
+' ascending.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
+' distinct NDG count is written where SUM sits.
+'
+' GROUPBY names its value columns in a row of its own, and that row is text,
+' so sorting by value descending would carry it to the top and push the tenth
+' name out of the table.  DROP takes it off before the sort.
+'
+Private Function RiskRankedFormula( _
+    ByVal DimensionKey As String, _
+    ByVal AssetClassKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal Visibility As Object) As String
+
+    Dim RanksEveryRow As Boolean
+    Dim Formula As String
+
+    RanksEveryRow = RiskDimensionRanksEveryRow(DimensionKey)
+
+    Formula = _
+        "=LET(" & vbLf & _
+        RiskBindings(DimensionKey, "cls,typ,nme,dim,ndg,val", ExcludeDPM) & _
+        vbLf & _
+        RiskBindLine( _
+            "k", _
+            RiskKeepExpression( _
+                DimensionKey, AssetClassKey, ExcludeDPM, True, Visibility) & ",")
+
+    If Not RanksEveryRow Then
+
+        Formula = Formula & vbLf & _
+            RiskBindLine( _
+                "kAll", _
+                RiskKeepExpression( _
+                    DimensionKey, AssetClassKey, ExcludeDPM, False, Visibility) & ",")
+
+    End If
+
+    Formula = Formula & vbLf & vbLf & _
+        RiskBindLine( _
+            "g", _
+            "FILTER(" & RiskDimensionBinding(DimensionKey) & ", k),") & vbLf & _
+        RiskBindLine("v", "FILTER(val, k),") & vbLf & _
+        RiskBindLine("n", "FILTER(ndg, k),") & vbLf & vbLf & _
+        RiskBindLine( _
+            "a", _
+            "DROP(GROUPBY(g, HSTACK(v, n), " & _
+            "HSTACK(SUM, LAMBDA(x, COUNTA(UNIQUE(x)))), 0, 0), 1),") & vbLf & _
+        RiskBindLine( _
+            "s", _
+            "TAKE(SORTBY(a, CHOOSECOLS(a, 2), -1, CHOOSECOLS(a, 1), 1), " & _
+            CStr(TOP_NAME_COUNT) & "),") & vbLf & _
+        RiskBindLine( _
+            "d", _
+            IIf(RanksEveryRow, "SUM(v),", "SUM(FILTER(val, kAll, 0)),")) & _
+        vbLf & vbLf & _
+        RISK_FORMULA_INDENT & "IFERROR(" & vbLf & _
+        RISK_FORMULA_INDENT & RISK_FORMULA_INDENT & _
+        "HSTACK(CHOOSECOLS(s, 1), CHOOSECOLS(s, 2), " & _
+        "CHOOSECOLS(s, 2) / d, CHOOSECOLS(s, 3))," & vbLf & _
+        RISK_FORMULA_INDENT & RISK_FORMULA_INDENT & """"")" & vbLf & _
+        ")"
+
+    RiskRankedFormula = Formula
+
+End Function
+
+'
+' The share denominator: for Geography and Sector the total of the rows that
+' were ranked, for Issuer the larger total that includes the rows it cannot
+' rank.
+'
+Private Function RiskCategoryTotalFormula( _
+    ByVal DimensionKey As String, _
+    ByVal AssetClassKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal Visibility As Object) As String
+
+    Dim EntityOnly As Boolean
+
+    EntityOnly = RiskDimensionRanksEveryRow(DimensionKey)
+
+    RiskCategoryTotalFormula = _
+        "LET(" & vbLf & _
+        RiskBindings( _
+            DimensionKey, _
+            IIf(EntityOnly, "cls,typ,nme,val", "cls,val"), _
+            ExcludeDPM) & _
+        vbLf & _
+        RiskBindLine( _
+            "k", _
+            RiskKeepExpression( _
+                DimensionKey, AssetClassKey, ExcludeDPM, EntityOnly, _
+                Visibility) & ",") & _
+        vbLf & vbLf & _
+        RISK_FORMULA_INDENT & "SUM(FILTER(val, k, 0))" & vbLf & _
+        ")"
+
+End Function
+
+'
+' The distinct NDGs of the ten names taken together - a union, not the sum of
+' the ten counts above it.
+'
+Private Function RiskUnionNdgFormula( _
+    ByVal DimensionKey As String, _
+    ByVal AssetClassKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal Visibility As Object, _
+    ByVal NameRange As String) As String
+
+    RiskUnionNdgFormula = _
+        "=LET(" & vbLf & _
+        RiskBindings(DimensionKey, "cls,typ,nme,dim,ndg", ExcludeDPM) & _
+        vbLf & _
+        RiskBindLine( _
+            "k", _
+            RiskKeepExpression( _
+                DimensionKey, AssetClassKey, ExcludeDPM, True, Visibility) & ",") & _
+        vbLf & vbLf & _
+        RISK_FORMULA_INDENT & "IFERROR(COUNTA(UNIQUE(FILTER(ndg," & vbLf & _
+        RISK_FORMULA_INDENT & RISK_FORMULA_INDENT & "k * ISNUMBER(MATCH(" & _
+        RiskDimensionBinding(DimensionKey) & ", " & NameRange & ", 0))))), 0)" & _
+        vbLf & ")"
+
+End Function
+
+'
+' How many rows the ranked formula produced.  A class with nothing in it
+' answers with the empty string rather than an array, which is the None
+' case and the one reason this returns nought.
+'
+Private Function RiskSpilledRowCount( _
+    ByVal AnchorCell As Range) As Long
+
+    Dim Spill As Range
+
+    If Len(CStr(AnchorCell.Value2)) = 0 Then Exit Function
+
+    On Error Resume Next
+    Set Spill = AnchorCell.SpillingToRange
+    On Error GoTo 0
+
+    If Spill Is Nothing Then Exit Function
+
+    RiskSpilledRowCount = Spill.Rows.Count
 
 End Function
 
@@ -8751,28 +9104,25 @@ Private Function WriteSameAsLeftExposureGroup( _
 
 End Function
 
+'
+' One concentration table: a title, a header row, and a subtable for each
+' asset class the visibility list still shows.  Issuer, Geography and Sector
+' differ only in the column they group by and what the table is called, so
+' they share this - it used to be two copies, WriteRiskGranularityTable
+' being the Issuer one.
+'
 Private Function WriteRiskDimensionTable( _
     ByVal ws As Worksheet, _
     ByVal TopRow As Long, _
     ByVal LeftCol As Long, _
     ByVal SectionTitle As String, _
     ByVal DimensionLabel As String, _
-    ByVal EquityDimension As Object, _
-    ByVal EquityDimensionNDGs As Object, _
-    ByVal CorporateBondDimension As Object, _
-    ByVal CorporateBondDimensionNDGs As Object, _
-    ByVal SovereignBondDimension As Object, _
-    ByVal SovereignBondDimensionNDGs As Object, _
-    ByVal CertificateDimension As Object, _
-    ByVal CertificateDimensionNDGs As Object, _
-    ByVal FundDimension As Object, _
-    ByVal FundDimensionNDGs As Object, _
-    ByVal OverallDimension As Object, _
-    ByVal OverallDimensionNDGs As Object, _
-    ByVal Visibility As Object, _
     ByVal DimensionKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal Visibility As Object, _
     Optional ByVal CertificateSameAsLeft As Boolean = False) As Long
 
+    Dim ClassKey As Variant
     Dim CurrentRow As Long
 
     WriteSectionTitle _
@@ -8790,114 +9140,42 @@ Private Function WriteRiskDimensionTable( _
 
     CurrentRow = TopRow + 2
 
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            DimensionKey, _
-            "Equity") Then
+    For Each ClassKey In RiskDisplayedClasses()
 
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                "Equity", _
-                EquityDimension, _
-                EquityDimensionNDGs)
+        If RiskSubtableIsVisible( _
+                Visibility, _
+                DimensionKey, _
+                CStr(ClassKey)) Then
 
-    End If
+            If CertificateSameAsLeft _
+               And StrComp(CStr(ClassKey), "Certificates", _
+                           vbTextCompare) = 0 Then
 
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            DimensionKey, _
-            "Corporate Bonds") Then
+                CurrentRow = _
+                    WriteSameAsLeftExposureGroup( _
+                        ws, _
+                        CurrentRow, _
+                        LeftCol, _
+                        RiskClassDisplayName(CStr(ClassKey)))
 
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                CORPORATE_BONDS_DISPLAY_NAME, _
-                CorporateBondDimension, _
-                CorporateBondDimensionNDGs)
+            Else
 
-    End If
+                CurrentRow = _
+                    WriteTopExposureGroup( _
+                        ws, _
+                        CurrentRow, _
+                        LeftCol, _
+                        RiskClassDisplayName(CStr(ClassKey)), _
+                        DimensionKey, _
+                        CStr(ClassKey), _
+                        ExcludeDPM, _
+                        Visibility)
 
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            DimensionKey, _
-            "Sovereign Bonds") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                SOVEREIGN_BONDS_CLASS, _
-                SovereignBondDimension, _
-                SovereignBondDimensionNDGs)
-
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            DimensionKey, _
-            "Funds") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                "Funds", _
-                FundDimension, _
-                FundDimensionNDGs)
-
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            DimensionKey, _
-            "Certificates") Then
-
-        If CertificateSameAsLeft Then
-
-            CurrentRow = _
-                WriteSameAsLeftExposureGroup( _
-                    ws, _
-                    CurrentRow, _
-                    LeftCol, _
-                    "Certificates (Excl. Protected)")
-
-        Else
-
-            CurrentRow = _
-                WriteTopExposureGroup( _
-                    ws, _
-                    CurrentRow, _
-                    LeftCol, _
-                    "Certificates (Excl. Protected)", _
-                    CertificateDimension, _
-                    CertificateDimensionNDGs)
+            End If
 
         End If
 
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            DimensionKey, _
-            "Overall") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                "Overall", _
-                OverallDimension, _
-                OverallDimensionNDGs)
-
-    End If
+    Next ClassKey
 
     If CurrentRow > TopRow + 2 Then
 
@@ -9910,536 +10188,6 @@ Private Sub WriteRiskStageWorksheet( _
 
 End Sub
 
-Private Function RiskAssetIndexFromClass( _
-    ByVal RiskAssetClass As String) As Long
-
-    Select Case Trim(RiskAssetClass)
-
-        Case "Equity"
-
-            RiskAssetIndexFromClass = RiskAssetEquity
-
-        Case CORPORATE_BONDS_CLASS
-
-            RiskAssetIndexFromClass = RiskAssetCorporateBonds
-
-        Case SOVEREIGN_BONDS_CLASS
-
-            RiskAssetIndexFromClass = RiskAssetSovereignBonds
-
-        Case "Certificates", "Certificates (Excl. Protected)"
-
-            RiskAssetIndexFromClass = RiskAssetCertificates
-
-        Case "Funds"
-
-            RiskAssetIndexFromClass = RiskAssetFunds
-
-    End Select
-
-End Function
-
-Private Function RiskAssetVisibilityKey( _
-    ByVal AssetIndex As Long) As String
-
-    Select Case AssetIndex
-
-        Case RiskAssetEquity
-
-            RiskAssetVisibilityKey = "Equity"
-
-        Case RiskAssetCorporateBonds
-
-            RiskAssetVisibilityKey = "Corporate Bonds"
-
-        Case RiskAssetSovereignBonds
-
-            RiskAssetVisibilityKey = "Sovereign Bonds"
-
-        Case RiskAssetCertificates
-
-            RiskAssetVisibilityKey = "Certificates"
-
-        Case RiskAssetFunds
-
-            RiskAssetVisibilityKey = "Funds"
-
-    End Select
-
-End Function
-
-Private Sub InitialiseRiskAggregateSet( _
-    ByRef ExposureValues() As Object, _
-    ByRef ExposureNDGs() As Object)
-
-    Dim AssetIndex As Long
-
-    ReDim ExposureValues(1 To RISK_ASSET_COUNT)
-    ReDim ExposureNDGs(1 To RISK_ASSET_COUNT)
-
-    For AssetIndex = 1 To RISK_ASSET_COUNT
-
-        Set ExposureValues(AssetIndex) = NewExposureDictionary()
-        Set ExposureNDGs(AssetIndex) = NewExposureNDGDictionary()
-
-    Next AssetIndex
-
-End Sub
-
-Private Sub MergeRiskAggregateSet( _
-    ByRef SourceValues() As Object, _
-    ByRef SourceNDGs() As Object, _
-    ByRef TargetValues() As Object, _
-    ByRef TargetNDGs() As Object)
-
-    Dim AssetIndex As Long
-
-    For AssetIndex = 1 To RISK_ASSET_COUNT
-
-        AddExposureDictionary _
-            SourceValues(AssetIndex), _
-            TargetValues(AssetIndex)
-
-        AddExposureNDGDictionary _
-            SourceNDGs(AssetIndex), _
-            TargetNDGs(AssetIndex)
-
-    Next AssetIndex
-
-End Sub
-
-Private Sub AggregateUnifiedRiskStageData( _
-    ByRef StageData As Variant, _
-    ByRef FullNameValues() As Object, _
-    ByRef FullNameNDGs() As Object, _
-    ByRef FullGeographyValues() As Object, _
-    ByRef FullGeographyNDGs() As Object, _
-    ByRef FullSectorValues() As Object, _
-    ByRef FullSectorNDGs() As Object, _
-    ByRef ExDPMNameValues() As Object, _
-    ByRef ExDPMNameNDGs() As Object, _
-    ByRef ExDPMGeographyValues() As Object, _
-    ByRef ExDPMGeographyNDGs() As Object, _
-    ByRef ExDPMSectorValues() As Object, _
-    ByRef ExDPMSectorNDGs() As Object, _
-    ByVal Visibility As Object)
-
-    Dim RowNo As Long
-    Dim AssetIndex As Long
-    Dim NDG As String
-    Dim ExposureName As String
-    Dim ExposureType As String
-    Dim ExposureAggregationName As String
-    Dim AssetVisibilityKey As String
-    Dim GeographyName As String
-    Dim SectorName As String
-    Dim ExposureValue As Double
-    Dim IsDPMRow As Boolean
-    Dim IsEntityExposure As Boolean
-    Dim IncludeNameClass As Boolean
-    Dim IncludeGeographyClass As Boolean
-    Dim IncludeSectorClass As Boolean
-    Dim IncludeNameInOverall As Boolean
-    Dim IncludeGeographyInOverall As Boolean
-    Dim IncludeSectorInOverall As Boolean
-    Dim BuildNameOverall As Boolean
-    Dim BuildGeographyOverall As Boolean
-    Dim BuildSectorOverall As Boolean
-    Dim IncludeNameByAsset(1 To RiskAssetFunds) As Boolean
-    Dim IncludeGeographyByAsset(1 To RiskAssetFunds) As Boolean
-    Dim IncludeSectorByAsset(1 To RiskAssetFunds) As Boolean
-    Dim NonDPMStageRowCount As Long
-    Dim DPMStageRowCount As Long
-
-    If RiskStageRowCount(StageData) = 0 Then Exit Sub
-
-    If Visibility Is Nothing Then
-
-        BuildNameOverall = True
-        BuildGeographyOverall = True
-        BuildSectorOverall = True
-
-    Else
-
-        BuildNameOverall = _
-            RiskSubtableIsVisible( _
-                Visibility, _
-                "Issuer", _
-                "Overall")
-        BuildGeographyOverall = _
-            RiskSubtableIsVisible( _
-                Visibility, _
-                "Country", _
-                "Overall")
-        BuildSectorOverall = _
-            RiskSubtableIsVisible( _
-                Visibility, _
-                "Sector", _
-                "Overall")
-
-    End If
-
-    For AssetIndex = RiskAssetEquity To RiskAssetFunds
-
-        If Visibility Is Nothing Then
-
-            IncludeNameByAsset(AssetIndex) = True
-            IncludeGeographyByAsset(AssetIndex) = True
-            IncludeSectorByAsset(AssetIndex) = True
-
-        Else
-
-            AssetVisibilityKey = _
-                RiskAssetVisibilityKey(AssetIndex)
-            IncludeNameByAsset(AssetIndex) = _
-                RiskSubtableIsVisible( _
-                    Visibility, _
-                    "Issuer", _
-                    AssetVisibilityKey)
-            IncludeGeographyByAsset(AssetIndex) = _
-                RiskSubtableIsVisible( _
-                    Visibility, _
-                    "Country", _
-                    AssetVisibilityKey)
-            IncludeSectorByAsset(AssetIndex) = _
-                RiskSubtableIsVisible( _
-                    Visibility, _
-                    "Sector", _
-                    AssetVisibilityKey)
-
-        End If
-
-    Next AssetIndex
-
-    For RowNo = 1 To UBound(StageData, 1)
-
-        ' This read validates Account Scope exactly once for every row.
-        IsDPMRow = RiskStageRowIsDPM(StageData, RowNo)
-
-        If IsDPMRow Then
-
-            DPMStageRowCount = DPMStageRowCount + 1
-
-        Else
-
-            NonDPMStageRowCount = NonDPMStageRowCount + 1
-
-        End If
-
-        AssetIndex = _
-            RiskAssetIndexFromClass( _
-                CStr( _
-                    StageData( _
-                        RowNo, _
-                        RiskStageAssetClass)))
-
-        If AssetIndex > 0 Then
-
-            IncludeNameClass = _
-                IncludeNameByAsset(AssetIndex)
-            IncludeGeographyClass = _
-                IncludeGeographyByAsset(AssetIndex)
-            IncludeSectorClass = _
-                IncludeSectorByAsset(AssetIndex)
-
-            IncludeNameInOverall = _
-                (BuildNameOverall And IncludeNameClass)
-            IncludeGeographyInOverall = _
-                (BuildGeographyOverall And IncludeGeographyClass)
-            IncludeSectorInOverall = _
-                (BuildSectorOverall And IncludeSectorClass)
-
-            NDG = CStr(StageData(RowNo, RiskStageNDG))
-            ExposureName = _
-                CStr( _
-                    StageData( _
-                        RowNo, _
-                        RiskStageExposureName))
-            ExposureType = _
-                Trim( _
-                    CStr( _
-                        StageData( _
-                            RowNo, _
-                            RiskStageExposureType)))
-            ExposureValue = _
-                CDbl( _
-                    StageData( _
-                        RowNo, _
-                        RiskStageAllocatedValue))
-
-            IsEntityExposure = _
-                (StrComp( _
-                    ExposureType, _
-                    "Certificate non-entity component", _
-                    vbTextCompare) <> 0 And _
-                 Left( _
-                    ExposureName, _
-                    Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-                 NON_ENTITY_CERTIFICATE_PREFIX)
-
-            ExposureAggregationName = ExposureName
-
-            If Not IsEntityExposure And _
-               Left( _
-                    ExposureAggregationName, _
-                    Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-               NON_ENTITY_CERTIFICATE_PREFIX Then
-
-                ExposureAggregationName = _
-                    NON_ENTITY_CERTIFICATE_PREFIX & _
-                    ExposureAggregationName
-
-            End If
-
-            If IncludeNameClass Then
-
-                If IsDPMRow Then
-
-                    AddExposure _
-                        FullNameValues(AssetIndex), _
-                        ExposureAggregationName, _
-                        ExposureValue
-
-                    AddExposureNDG _
-                        FullNameNDGs(AssetIndex), _
-                        ExposureAggregationName, _
-                        NDG
-
-                Else
-
-                    AddExposure _
-                        ExDPMNameValues(AssetIndex), _
-                        ExposureAggregationName, _
-                        ExposureValue
-
-                    AddExposureNDG _
-                        ExDPMNameNDGs(AssetIndex), _
-                        ExposureAggregationName, _
-                        NDG
-
-                End If
-
-            End If
-
-            If IncludeNameInOverall Then
-
-                If IsDPMRow Then
-
-                    AddExposure _
-                        FullNameValues(RiskAssetOverall), _
-                        ExposureAggregationName, _
-                        ExposureValue
-
-                    AddExposureNDG _
-                        FullNameNDGs(RiskAssetOverall), _
-                        ExposureAggregationName, _
-                        NDG
-
-                Else
-
-                    AddExposure _
-                        ExDPMNameValues(RiskAssetOverall), _
-                        ExposureAggregationName, _
-                        ExposureValue
-
-                    AddExposureNDG _
-                        ExDPMNameNDGs(RiskAssetOverall), _
-                        ExposureAggregationName, _
-                        NDG
-
-                End If
-
-            End If
-
-            If IsEntityExposure Then
-
-                GeographyName = _
-                    Trim( _
-                        CStr( _
-                            StageData( _
-                                RowNo, _
-                                RiskStageGeography)))
-
-                If GeographyName = "" Then
-
-                    GeographyName = OTHER_RISK_DIMENSION
-
-                End If
-
-                SectorName = _
-                    Trim( _
-                        CStr( _
-                            StageData( _
-                                RowNo, _
-                                RiskStageSector)))
-
-                If SectorName = "" Then
-
-                    SectorName = OTHER_RISK_DIMENSION
-
-                End If
-
-                If IncludeGeographyClass Then
-
-                    If IsDPMRow Then
-
-                        AddExposure _
-                            FullGeographyValues(AssetIndex), _
-                            GeographyName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            FullGeographyNDGs(AssetIndex), _
-                            GeographyName, _
-                            NDG
-
-                    Else
-
-                        AddExposure _
-                            ExDPMGeographyValues(AssetIndex), _
-                            GeographyName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            ExDPMGeographyNDGs(AssetIndex), _
-                            GeographyName, _
-                            NDG
-
-                    End If
-
-                End If
-
-                If IncludeGeographyInOverall Then
-
-                    If IsDPMRow Then
-
-                        AddExposure _
-                            FullGeographyValues(RiskAssetOverall), _
-                            GeographyName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            FullGeographyNDGs(RiskAssetOverall), _
-                            GeographyName, _
-                            NDG
-
-                    Else
-
-                        AddExposure _
-                            ExDPMGeographyValues(RiskAssetOverall), _
-                            GeographyName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            ExDPMGeographyNDGs(RiskAssetOverall), _
-                            GeographyName, _
-                            NDG
-
-                    End If
-
-                End If
-
-                If IncludeSectorClass Then
-
-                    If IsDPMRow Then
-
-                        AddExposure _
-                            FullSectorValues(AssetIndex), _
-                            SectorName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            FullSectorNDGs(AssetIndex), _
-                            SectorName, _
-                            NDG
-
-                    Else
-
-                        AddExposure _
-                            ExDPMSectorValues(AssetIndex), _
-                            SectorName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            ExDPMSectorNDGs(AssetIndex), _
-                            SectorName, _
-                            NDG
-
-                    End If
-
-                End If
-
-                If IncludeSectorInOverall Then
-
-                    If IsDPMRow Then
-
-                        AddExposure _
-                            FullSectorValues(RiskAssetOverall), _
-                            SectorName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            FullSectorNDGs(RiskAssetOverall), _
-                            SectorName, _
-                            NDG
-
-                    Else
-
-                        AddExposure _
-                            ExDPMSectorValues(RiskAssetOverall), _
-                            SectorName, _
-                            ExposureValue
-
-                        AddExposureNDG _
-                            ExDPMSectorNDGs(RiskAssetOverall), _
-                            SectorName, _
-                            NDG
-
-                    End If
-
-                End If
-
-            End If
-
-        End If
-
-    Next RowNo
-
-
-    If NonDPMStageRowCount + DPMStageRowCount <> _
-       RiskStageRowCount(StageData) Then
-
-        Err.Raise _
-            vbObjectError + 9182, _
-            "AggregateUnifiedRiskStageData", _
-            "The Account Scope row counts do not reconcile to the " & _
-            "unified Risk Exposure staging table."
-
-    End If
-
-    ' Full currently contains DPM rows only. Merging the already aggregated
-    ' Non-DPM dictionaries avoids repeating row-level dictionary updates.
-    MergeRiskAggregateSet _
-        ExDPMNameValues, _
-        ExDPMNameNDGs, _
-        FullNameValues, _
-        FullNameNDGs
-    MergeRiskAggregateSet _
-        ExDPMGeographyValues, _
-        ExDPMGeographyNDGs, _
-        FullGeographyValues, _
-        FullGeographyNDGs
-    MergeRiskAggregateSet _
-        ExDPMSectorValues, _
-        ExDPMSectorNDGs, _
-        FullSectorValues, _
-        FullSectorNDGs
-
-
-
-
-
-End Sub
 
 Private Sub BuildRiskGranularitySection( _
     ByVal ws As Worksheet, _
@@ -10465,19 +10213,6 @@ Private Sub BuildRiskGranularitySection( _
     Dim StageFinalizationCache As Object
     Dim RiskSubtableVisibility As Object
 
-    Dim FullNameValues() As Object
-    Dim FullNameNDGs() As Object
-    Dim FullGeographyValues() As Object
-    Dim FullGeographyNDGs() As Object
-    Dim FullSectorValues() As Object
-    Dim FullSectorNDGs() As Object
-
-    Dim ExDPMNameValues() As Object
-    Dim ExDPMNameNDGs() As Object
-    Dim ExDPMGeographyValues() As Object
-    Dim ExDPMGeographyNDGs() As Object
-    Dim ExDPMSectorValues() As Object
-    Dim ExDPMSectorNDGs() As Object
 
     Dim CertificateMapReady As Boolean
     Dim EquityNameMapReady As Boolean
@@ -10948,99 +10683,44 @@ Private Sub BuildRiskGranularitySection( _
 
 AggregateUnifiedRiskStageDataLabel:
 
-    InitialiseRiskAggregateSet FullNameValues, FullNameNDGs
-    InitialiseRiskAggregateSet _
-        FullGeographyValues, _
-        FullGeographyNDGs
-    InitialiseRiskAggregateSet FullSectorValues, FullSectorNDGs
-
-    InitialiseRiskAggregateSet _
-        ExDPMNameValues, _
-        ExDPMNameNDGs
-    InitialiseRiskAggregateSet _
-        ExDPMGeographyValues, _
-        ExDPMGeographyNDGs
-    InitialiseRiskAggregateSet _
-        ExDPMSectorValues, _
-        ExDPMSectorNDGs
-
-    AggregateUnifiedRiskStageData _
-        StageData, _
-        FullNameValues, _
-        FullNameNDGs, _
-        FullGeographyValues, _
-        FullGeographyNDGs, _
-        FullSectorValues, _
-        FullSectorNDGs, _
-        ExDPMNameValues, _
-        ExDPMNameNDGs, _
-        ExDPMGeographyValues, _
-        ExDPMGeographyNDGs, _
-        ExDPMSectorValues, _
-        ExDPMSectorNDGs, _
-        RiskSubtableVisibility
-
+    '
+    ' Every table below reads the staging table through its own formulas, so
+    ' the only thing to settle first is whether a right-hand Certificate
+    ' subtable would repeat the left-hand one - the case
+    ' WriteSameAsLeftExposureGroup answers with a single row.
+    '
     CertificateNameSameAsLeft = _
-        ExposureGroupsMatch( _
-            FullNameValues(RiskAssetCertificates), _
-            FullNameNDGs(RiskAssetCertificates), _
-            ExDPMNameValues(RiskAssetCertificates), _
-            ExDPMNameNDGs(RiskAssetCertificates))
+        CertificateResultsMatch("Issuer", RiskSubtableVisibility)
 
     CertificateGeographySameAsLeft = _
-        ExposureGroupsMatch( _
-            FullGeographyValues(RiskAssetCertificates), _
-            FullGeographyNDGs(RiskAssetCertificates), _
-            ExDPMGeographyValues(RiskAssetCertificates), _
-            ExDPMGeographyNDGs(RiskAssetCertificates))
+        CertificateResultsMatch("Country", RiskSubtableVisibility)
 
     CertificateSectorSameAsLeft = _
-        ExposureGroupsMatch( _
-            FullSectorValues(RiskAssetCertificates), _
-            FullSectorNDGs(RiskAssetCertificates), _
-            ExDPMSectorValues(RiskAssetCertificates), _
-            ExDPMSectorNDGs(RiskAssetCertificates))
+        CertificateResultsMatch("Sector", RiskSubtableVisibility)
 
 
     RiskNextRow = _
-        WriteRiskGranularityTable( _
+        WriteRiskDimensionTable( _
             ws, _
             Layout.RiskRow, _
             Layout.RiskCol, _
-            FullNameValues(RiskAssetEquity), _
-            FullNameNDGs(RiskAssetEquity), _
-            FullNameValues(RiskAssetCorporateBonds), _
-            FullNameNDGs(RiskAssetCorporateBonds), _
-            FullNameValues(RiskAssetSovereignBonds), _
-            FullNameNDGs(RiskAssetSovereignBonds), _
-            FullNameValues(RiskAssetCertificates), _
-            FullNameNDGs(RiskAssetCertificates), _
-            FullNameValues(RiskAssetFunds), _
-            FullNameNDGs(RiskAssetFunds), _
-            FullNameValues(RiskAssetOverall), _
-            FullNameNDGs(RiskAssetOverall), _
+            "Name Concentration - Top 10", _
+            "Name", _
+            "Issuer", _
+            False, _
             RiskSubtableVisibility)
 
     RiskExDPMNextRow = _
-        WriteRiskGranularityTable( _
+        WriteRiskDimensionTable( _
             ws, _
             Layout.RiskExSegRow, _
             Layout.RiskExSegCol, _
-            ExDPMNameValues(RiskAssetEquity), _
-            ExDPMNameNDGs(RiskAssetEquity), _
-            ExDPMNameValues(RiskAssetCorporateBonds), _
-            ExDPMNameNDGs(RiskAssetCorporateBonds), _
-            ExDPMNameValues(RiskAssetSovereignBonds), _
-            ExDPMNameNDGs(RiskAssetSovereignBonds), _
-            ExDPMNameValues(RiskAssetCertificates), _
-            ExDPMNameNDGs(RiskAssetCertificates), _
-            ExDPMNameValues(RiskAssetFunds), _
-            ExDPMNameNDGs(RiskAssetFunds), _
-            ExDPMNameValues(RiskAssetOverall), _
-            ExDPMNameNDGs(RiskAssetOverall), _
-            RiskSubtableVisibility, _
             "Name Concentration - Top 10 " & _
             "(Excl. DPM)", _
+            "Name", _
+            "Issuer", _
+            True, _
+            RiskSubtableVisibility, _
             CertificateNameSameAsLeft)
 
     Layout.CountryRiskRow = _
@@ -11056,20 +10736,9 @@ AggregateUnifiedRiskStageDataLabel:
             Layout.CountryRiskCol, _
             "Geographic Concentration - Top 10", _
             "Geography", _
-            FullGeographyValues(RiskAssetEquity), _
-            FullGeographyNDGs(RiskAssetEquity), _
-            FullGeographyValues(RiskAssetCorporateBonds), _
-            FullGeographyNDGs(RiskAssetCorporateBonds), _
-            FullGeographyValues(RiskAssetSovereignBonds), _
-            FullGeographyNDGs(RiskAssetSovereignBonds), _
-            FullGeographyValues(RiskAssetCertificates), _
-            FullGeographyNDGs(RiskAssetCertificates), _
-            FullGeographyValues(RiskAssetFunds), _
-            FullGeographyNDGs(RiskAssetFunds), _
-            FullGeographyValues(RiskAssetOverall), _
-            FullGeographyNDGs(RiskAssetOverall), _
-            RiskSubtableVisibility, _
-            "Country")
+            "Country", _
+            False, _
+            RiskSubtableVisibility)
 
     GeographyExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11079,20 +10748,9 @@ AggregateUnifiedRiskStageDataLabel:
             "Geographic Concentration - Top 10 " & _
             "(Excl. DPM)", _
             "Geography", _
-            ExDPMGeographyValues(RiskAssetEquity), _
-            ExDPMGeographyNDGs(RiskAssetEquity), _
-            ExDPMGeographyValues(RiskAssetCorporateBonds), _
-            ExDPMGeographyNDGs(RiskAssetCorporateBonds), _
-            ExDPMGeographyValues(RiskAssetSovereignBonds), _
-            ExDPMGeographyNDGs(RiskAssetSovereignBonds), _
-            ExDPMGeographyValues(RiskAssetCertificates), _
-            ExDPMGeographyNDGs(RiskAssetCertificates), _
-            ExDPMGeographyValues(RiskAssetFunds), _
-            ExDPMGeographyNDGs(RiskAssetFunds), _
-            ExDPMGeographyValues(RiskAssetOverall), _
-            ExDPMGeographyNDGs(RiskAssetOverall), _
-            RiskSubtableVisibility, _
             "Country", _
+            True, _
+            RiskSubtableVisibility, _
             CertificateGeographySameAsLeft)
 
     Layout.SectorRiskRow = _
@@ -11108,20 +10766,9 @@ AggregateUnifiedRiskStageDataLabel:
             Layout.SectorRiskCol, _
             "Sector Concentration - Top 10", _
             "Sector", _
-            FullSectorValues(RiskAssetEquity), _
-            FullSectorNDGs(RiskAssetEquity), _
-            FullSectorValues(RiskAssetCorporateBonds), _
-            FullSectorNDGs(RiskAssetCorporateBonds), _
-            FullSectorValues(RiskAssetSovereignBonds), _
-            FullSectorNDGs(RiskAssetSovereignBonds), _
-            FullSectorValues(RiskAssetCertificates), _
-            FullSectorNDGs(RiskAssetCertificates), _
-            FullSectorValues(RiskAssetFunds), _
-            FullSectorNDGs(RiskAssetFunds), _
-            FullSectorValues(RiskAssetOverall), _
-            FullSectorNDGs(RiskAssetOverall), _
-            RiskSubtableVisibility, _
-            "Sector")
+            "Sector", _
+            False, _
+            RiskSubtableVisibility)
 
     SectorExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11131,20 +10778,9 @@ AggregateUnifiedRiskStageDataLabel:
             "Sector Concentration - Top 10 " & _
             "(Excl. DPM)", _
             "Sector", _
-            ExDPMSectorValues(RiskAssetEquity), _
-            ExDPMSectorNDGs(RiskAssetEquity), _
-            ExDPMSectorValues(RiskAssetCorporateBonds), _
-            ExDPMSectorNDGs(RiskAssetCorporateBonds), _
-            ExDPMSectorValues(RiskAssetSovereignBonds), _
-            ExDPMSectorNDGs(RiskAssetSovereignBonds), _
-            ExDPMSectorValues(RiskAssetCertificates), _
-            ExDPMSectorNDGs(RiskAssetCertificates), _
-            ExDPMSectorValues(RiskAssetFunds), _
-            ExDPMSectorNDGs(RiskAssetFunds), _
-            ExDPMSectorValues(RiskAssetOverall), _
-            ExDPMSectorNDGs(RiskAssetOverall), _
-            RiskSubtableVisibility, _
             "Sector", _
+            True, _
+            RiskSubtableVisibility, _
             CertificateSectorSameAsLeft)
 
 
@@ -11227,234 +10863,57 @@ Private Sub AddCertificateMappingNotes( _
 
 End Sub
 
-Private Function WriteRiskGranularityTable( _
-    ByVal ws As Worksheet, _
-    ByVal TopRow As Long, _
-    ByVal LeftCol As Long, _
-    ByVal EquityExposure As Object, _
-    ByVal EquityExposureNDGs As Object, _
-    ByVal CorporateBondExposure As Object, _
-    ByVal CorporateBondExposureNDGs As Object, _
-    ByVal SovereignBondExposure As Object, _
-    ByVal SovereignBondExposureNDGs As Object, _
-    ByVal CertificateExposure As Object, _
-    ByVal CertificateExposureNDGs As Object, _
-    ByVal FundExposure As Object, _
-    ByVal FundExposureNDGs As Object, _
-    ByVal OverallExposure As Object, _
-    ByVal OverallExposureNDGs As Object, _
-    ByVal Visibility As Object, _
-    Optional ByVal SectionTitle As String = _
-        "Name Concentration - Top 10", _
-    Optional ByVal CertificateSameAsLeft As Boolean = False) As Long
-
-    Dim CurrentRow As Long
-
-    WriteSectionTitle _
-        ws, _
-        TopRow, _
-        LeftCol, _
-        5, _
-        SectionTitle
-
-    ws.Cells(TopRow + 1, LeftCol).Value = "Rank"
-    ws.Cells(TopRow + 1, LeftCol + 1).Value = "Name"
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Collateral Value"
-    ws.Cells(TopRow + 1, LeftCol + 3).Value = "% of Category"
-    ws.Cells(TopRow + 1, LeftCol + 4).Value = "#NDG"
-
-    CurrentRow = TopRow + 2
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            "Issuer", _
-            "Equity") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                "Equity", _
-                EquityExposure, _
-                EquityExposureNDGs)
-
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            "Issuer", _
-            "Corporate Bonds") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                CORPORATE_BONDS_DISPLAY_NAME, _
-                CorporateBondExposure, _
-                CorporateBondExposureNDGs)
-
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            "Issuer", _
-            "Sovereign Bonds") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                SOVEREIGN_BONDS_CLASS, _
-                SovereignBondExposure, _
-                SovereignBondExposureNDGs)
-
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            "Issuer", _
-            "Funds") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                "Funds", _
-                FundExposure, _
-                FundExposureNDGs)
-
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            "Issuer", _
-            "Certificates") Then
-
-        If CertificateSameAsLeft Then
-
-            CurrentRow = _
-                WriteSameAsLeftExposureGroup( _
-                    ws, _
-                    CurrentRow, _
-                    LeftCol, _
-                    "Certificates (Excl. Protected)")
-
-        Else
-
-            CurrentRow = _
-                WriteTopExposureGroup( _
-                    ws, _
-                    CurrentRow, _
-                    LeftCol, _
-                    "Certificates (Excl. Protected)", _
-                    CertificateExposure, _
-                    CertificateExposureNDGs)
-
-        End If
-
-    End If
-
-    If RiskSubtableIsVisible( _
-            Visibility, _
-            "Issuer", _
-            "Overall") Then
-
-        CurrentRow = _
-            WriteTopExposureGroup( _
-                ws, _
-                CurrentRow, _
-                LeftCol, _
-                "Overall", _
-                OverallExposure, _
-                OverallExposureNDGs)
-
-    End If
-
-    If CurrentRow > TopRow + 2 Then
-
-        FormatReportTable _
-            ws.Range( _
-                ws.Cells(TopRow + 1, LeftCol), _
-                ws.Cells(TopRow + 1, LeftCol + 4)), _
-            1, _
-            ws.Range( _
-                ws.Cells(TopRow + 2, LeftCol), _
-                ws.Cells(CurrentRow - 1, LeftCol + 4))
-
-    Else
-
-        FormatReportTable _
-            ws.Range( _
-                ws.Cells(TopRow + 1, LeftCol), _
-                ws.Cells(TopRow + 1, LeftCol + 4)), _
-            1
-
-    End If
-
-    WriteRiskGranularityTable = CurrentRow
-
-End Function
 
 Private Function WriteTopExposureGroup( _
     ByVal ws As Worksheet, _
     ByVal StartRow As Long, _
     ByVal LeftCol As Long, _
-    ByVal AssetClass As String, _
-    ByVal ExposureDict As Object, _
-    ByVal ExposureNDGs As Object) As Long
+    ByVal DisplayName As String, _
+    ByVal DimensionKey As String, _
+    ByVal AssetClassKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal Visibility As Object) As Long
 
-    Dim Names() As String
-    Dim Values() As Double
+    Dim AnchorCell As Range
 
-    Dim Item As Variant
-    Dim TempName As String
-    Dim TempValue As Double
-
-    Dim ItemCount As Long
     Dim OutputCount As Long
-    Dim CategoryTotal As Double
-    Dim TopTenTotal As Double
-    Dim TopNDGs As Object
-
-    Dim i As Long
-    Dim j As Long
-    Dim BestIndex As Long
-    Dim TargetRow As Long
     Dim FirstDataRow As Long
     Dim TotalRow As Long
+    Dim i As Long
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
             ws.Cells(StartRow, LeftCol + 4))
 
         .Merge
-        .Value = AssetClass
+        .Value = DisplayName
 
     End With
 
     FirstDataRow = StartRow + 1
-    Set TopNDGs = NewNDGSet()
 
-    For Each Item In ExposureDict.Keys
+    '
+    ' One formula produces the whole ranked table - name, value, share and
+    ' distinct NDG count - and spills it across the four columns beside the
+    ' rank.  Its height is however many names the class has, up to ten, so
+    ' it is calculated here to find out where the total row goes.
+    '
+    Set AnchorCell = ws.Cells(FirstDataRow, LeftCol + 1)
 
-        If Left( _
-                CStr(Item), _
-                Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-           NON_ENTITY_CERTIFICATE_PREFIX Then
+    AnchorCell.Formula2 = _
+        RiskRankedFormula( _
+            DimensionKey, _
+            AssetClassKey, _
+            ExcludeDPM, _
+            Visibility)
 
-            ItemCount = ItemCount + 1
+    AnchorCell.Calculate
 
-        End If
+    OutputCount = RiskSpilledRowCount(AnchorCell)
 
-    Next Item
+    If OutputCount = 0 Then
 
-    CategoryTotal = DictionaryTotal(ExposureDict)
-
-    If ItemCount = 0 Then
+        AnchorCell.ClearContents
 
         OutputCount = 1
         ws.Cells(FirstDataRow, LeftCol + 1).Value = "None"
@@ -11462,101 +10921,9 @@ Private Function WriteTopExposureGroup( _
 
     Else
 
-        ReDim Names(1 To ItemCount)
-        ReDim Values(1 To ItemCount)
-
-        i = 1
-
-        For Each Item In ExposureDict.Keys
-
-            If Left( _
-                    CStr(Item), _
-                    Len(NON_ENTITY_CERTIFICATE_PREFIX)) <> _
-               NON_ENTITY_CERTIFICATE_PREFIX Then
-
-                Names(i) = CStr(Item)
-                Values(i) = CDbl(ExposureDict(Item))
-
-                i = i + 1
-
-            End If
-
-        Next Item
-
-        OutputCount = ItemCount
-
-        If OutputCount > TOP_NAME_COUNT Then
-
-            OutputCount = TOP_NAME_COUNT
-
-        End If
-
-        '
-        ' Only the first OutputCount rows are ever written, so this selects
-        ' them rather than ordering the whole set: one scan of what is left
-        ' per place, ten scans in total.  Ordering all of it costs the square
-        ' of the number of distinct names, which is a few dozen countries or
-        ' sectors but thousands of issuers, and the Issuer dimension has five
-        ' visible subtables in each of the two scopes.
-        '
-        ' The comparison is unchanged: value descending, name ascending on a
-        ' tie.  The first OutputCount names come out in the order a full sort
-        ' would have left them in.
-        '
         For i = 1 To OutputCount
 
-            BestIndex = i
-
-            For j = i + 1 To ItemCount
-
-                If Values(j) > Values(BestIndex) Or _
-                   (Values(j) = Values(BestIndex) And _
-                    StrComp(Names(j), Names(BestIndex), vbTextCompare) < 0) Then
-
-                    BestIndex = j
-
-                End If
-
-            Next j
-
-            If BestIndex <> i Then
-
-                TempValue = Values(i)
-                Values(i) = Values(BestIndex)
-                Values(BestIndex) = TempValue
-
-                TempName = Names(i)
-                Names(i) = Names(BestIndex)
-                Names(BestIndex) = TempName
-
-            End If
-
-        Next i
-
-        For i = 1 To OutputCount
-
-            TargetRow = FirstDataRow + i - 1
-
-            ws.Cells(TargetRow, LeftCol).Value = i
-            ws.Cells(TargetRow, LeftCol + 1).Value = Names(i)
-            ws.Cells(TargetRow, LeftCol + 2).Value = Values(i)
-            ws.Cells(TargetRow, LeftCol + 4).Value = _
-                ExposureNDGCount( _
-                    ExposureNDGs, _
-                    Names(i))
-            TopTenTotal = TopTenTotal + Values(i)
-
-            MergeExposureNDGsIntoSet _
-                ExposureNDGs, _
-                Names(i), _
-                TopNDGs
-
-            If CategoryTotal <> 0 Then
-
-                ws.Cells(TargetRow, LeftCol + 3).Value = _
-                    Values(i) / CategoryTotal
-
-            End If
+            ws.Cells(FirstDataRow + i - 1, LeftCol).Value = i
 
         Next i
 
@@ -11564,19 +10931,35 @@ Private Function WriteTopExposureGroup( _
 
     TotalRow = FirstDataRow + OutputCount
 
-    ws.Cells(TotalRow, LeftCol + 2).Value = TopTenTotal
-    ws.Cells(TotalRow, LeftCol + 4).Value = TopNDGs.Count
+    ws.Cells(TotalRow, LeftCol + 2).Formula2 = _
+        "=SUM(" & _
+        ws.Range( _
+            ws.Cells(FirstDataRow, LeftCol + 2), _
+            ws.Cells(TotalRow - 1, LeftCol + 2)).Address(True, True) & ")"
 
-    If CategoryTotal <> 0 Then
+    ws.Cells(TotalRow, LeftCol + 4).Formula2 = _
+        RiskUnionNdgFormula( _
+            DimensionKey, _
+            AssetClassKey, _
+            ExcludeDPM, _
+            Visibility, _
+            ws.Range( _
+                ws.Cells(FirstDataRow, LeftCol + 1), _
+                ws.Cells(TotalRow - 1, LeftCol + 1)).Address(True, True))
 
-        ws.Cells(TotalRow, LeftCol + 3).Value = _
-            TopTenTotal / CategoryTotal
-
-    Else
-
-        ws.Cells(TotalRow, LeftCol + 3).Value = 0
-
-    End If
+    '
+    ' The share the report has always shown: the top ten against the whole
+    ' category.  IFERROR keeps an empty category at nought rather than
+    ' #DIV/0!, which is what the division used to be guarded for.
+    '
+    ws.Cells(TotalRow, LeftCol + 3).Formula2 = _
+        "=IFERROR(" & _
+        ws.Cells(TotalRow, LeftCol + 2).Address(True, True) & " / " & _
+        RiskCategoryTotalFormula( _
+            DimensionKey, _
+            AssetClassKey, _
+            ExcludeDPM, _
+            Visibility) & ", 0)"
 
     FormatReportTable _
         ws.Range( _
@@ -11651,18 +11034,6 @@ Private Function WriteTopExposureGroup( _
 
 End Function
 
-Private Function DictionaryTotal( _
-    ByVal Dict As Object) As Double
-
-    Dim Item As Variant
-
-    For Each Item In Dict.Items
-
-        DictionaryTotal = DictionaryTotal + CDbl(Item)
-
-    Next Item
-
-End Function
 
 Private Sub CreateCollateralPieChart( _
     ByVal ws As Worksheet, _
@@ -12099,6 +11470,5 @@ Private Sub CreateWeeklyEmailButton(ByVal ws As Worksheet)
     Btn2.OnAction = "GenerateWeeklyAnalysis"
 
 End Sub
-
 
 
