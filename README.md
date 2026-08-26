@@ -15,7 +15,7 @@ configuration parameters (as defined names) and one button per entry point.
 | 01 Configuration | — | Clear Sheets | `Clean.Clean` |
 | 02 Date Range Analysis | `AnalysisStartDate`, `AnalysisEndDate` | Calculate Delta | `DeltaCalculation.BuildPositionMovements` |
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `RevenueTools.BuildRevenueSummary` |
-| 03 Weekly Analysis | `WeeklyEndDate` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
+| 03 Weekly Analysis | `WeeklyEndDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
@@ -23,6 +23,11 @@ configuration parameters (as defined names) and one button per entry point.
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
 buttons that `AddPositionAnalysisButtons` draws onto *NDG Journey* and the
 dashboard's history table.
+
+`EmailTo` and `EmailCc` hold the draft's recipients, semicolon-separated, and
+are read like any other Home parameter. A name that has not been created yet
+reads as empty: the draft still opens, and a message says which name to add.
+The addresses deliberately live in the workbook rather than in source.
 
 ## Source data
 
@@ -153,11 +158,6 @@ keeps the statements it replaced as a comment.
 - `ImportCsvByDate`'s `TextToColumns` call splits on `Chr(10)` where the rest
   of the codebase splits these files on `";"`. Left alone until the intent is
   known.
-- `DeltaCalculation`'s `ErrHandler` / `CleanExit` labels are unreachable
-  because `On Error GoTo ErrHandler` is commented out.
-- `RegisterUnknownAsset` takes an optional `NoteHandler` argument that shadows
-  the global of the same name and is never used.
 - `Journey.bas`'s header comment refers to `Code!journey_start` and
   `Code!report_path`; both parameters live on *Home*, which is what the code
   reads.
-- `WeeklyAnalysisEmail` hard-codes the recipient addresses in `.To` and `.CC`.

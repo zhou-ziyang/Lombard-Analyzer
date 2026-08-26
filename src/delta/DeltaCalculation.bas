@@ -108,7 +108,7 @@ Public Sub BuildPositionMovements()
 
     Application.ScreenUpdating = False
 
-'   On Error GoTo ErrHandler
+    On Error GoTo ErrHandler
 
     '=========================================================================
     ' Read settings

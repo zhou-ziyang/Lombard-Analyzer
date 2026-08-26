@@ -60,10 +60,15 @@ End Function
 ' Unknown Asset Registration
 '====================================================
 
+'
+' Records an asset type GetAssetClass could not place, once per run, and
+' routes it through Note so the weekly report picks it up. Do not add a
+' NoteHandler parameter here: Note reads the global of that name, and a
+' parameter would shadow it inside this procedure.
+'
 Public Sub RegisterUnknownAsset( _
     ByVal AssetType As String, _
-    ByRef UnknownAssets As Object, _
-    Optional ByVal NoteHandler As String = "")
+    ByRef UnknownAssets As Object)
 
     If AssetType = "" Then Exit Sub
 
