@@ -55,6 +55,9 @@ Private Const OTHER_DIMENSION As String = "Others"
 Private Const NON_DPM_SCOPE As String = "Non-DPM"
 Private Const TOP_COUNT As Long = 10
 
+Private Const FORMULA_INDENT As String = "    "
+Private Const BIND_LABEL_WIDTH As Long = 6
+
 Private Const BLOCK_HEIGHT As Long = 15
 Private Const FIRST_BLOCK_ROW As Long = 8
 
@@ -378,67 +381,70 @@ Private Sub WriteBlock( _
 
 End Sub
 
-'
-' The whole ranked table in one formula: name, total value and distinct NDG
-' count, ordered by value descending with ties broken by name ascending,
-' first ten.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
-' distinct count is written where SUM sits rather than assembled from UNIQUE
-' and COUNTA a row at a time.
-'
-' GROUPBY names its value columns in a row of its own - "SUM" and "CUSTOM"
-' for these two - and that row is text, so sorting by value descending
-' carries it to the top and pushes the tenth name out of the table.  DROP
-' takes it off before the sort.
-'
+\'
+\' The whole ranked table in one formula: name, value, share and distinct NDG
+\' count, ordered by value descending with ties broken by name ascending,
+\' first ten.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
+\' distinct count is written where SUM sits rather than assembled from UNIQUE
+\' and COUNTA a row at a time.
+\'
+\' GROUPBY names its value columns in a row of its own - "SUM" and "CUSTOM"
+\' for these two - and that row is text, so sorting by value descending
+\' carries it to the top and pushes the tenth name out of the table.  DROP
+\' takes it off before the sort.
+\'
+\' Issuer binds a second filter.  k is the rows that can be ranked; kAll is
+\' every row of the class, which is what its share is measured against,
+\' because a certificate component that resolved to no entity counts towards
+\' the total under a prefixed name it can never be listed under.  Country of
+\' Risk and Sector aggregate entity rows only, so there the denominator is
+\' just the total of what was filtered.
+\'
 Private Function RankedTableFormula( _
     ByVal DimensionSpec As Variant, _
     ByVal ClassSpecValue As Variant, _
     ByVal ScopeSpec As Variant) As String
 
-    RankedTableFormula = _
-        "=LET(" & _
+    Dim EntityOnly As Boolean
+    Dim Formula As String
+
+    EntityOnly = CBool(DimensionSpec(3))
+
+    Formula = _
+        "=LET(" & vbLf & _
         Bindings( _
             DimensionSpec, _
             "cls,typ,nme,dim,ndg,val" & ScopeBinding(ScopeSpec)) & _
-        "k," & KeepExpression(ClassSpecValue, ScopeSpec, True) & "," & _
-        "g,FILTER(" & CStr(DimensionSpec(2)) & ",k)," & _
-        "v,FILTER(val,k),n,FILTER(ndg,k)," & _
-        "a,DROP(GROUPBY(g,HSTACK(v,n)," & _
-        "HSTACK(SUM,LAMBDA(x,COUNTA(UNIQUE(x)))),0,0),1)," & _
-        "s,TAKE(SORTBY(a,CHOOSECOLS(a,2),-1,CHOOSECOLS(a,1),1)," & _
-        CStr(TOP_COUNT) & ")," & _
-        "d," & DenominatorExpression(ClassSpecValue, ScopeSpec, DimensionSpec) & _
-        ",IFERROR(HSTACK(CHOOSECOLS(s,1),CHOOSECOLS(s,2)," & _
-        "CHOOSECOLS(s,2)/d,CHOOSECOLS(s,3)),""""))"
+        vbLf & vbLf & _
+        BindLine("k", KeepExpression(ClassSpecValue, ScopeSpec, True) & ",")
 
-End Function
+    If Not EntityOnly Then
 
-'
-' The share denominator, inside the same formula as the ranked table so the
-' percentage does not depend on a cell elsewhere.
-'
-' For Country of Risk and Sector it is the total of the rows that were
-' ranked, which is SUM of the values already filtered.  For Issuer it is
-' larger: rows that are not entity exposures were aggregated under a
-' prefixed name, so they count towards the total but can never appear in
-' the list.
-'
-Private Function DenominatorExpression( _
-    ByVal ClassSpecValue As Variant, _
-    ByVal ScopeSpec As Variant, _
-    ByVal DimensionSpec As Variant) As String
-
-    If CBool(DimensionSpec(3)) Then
-
-        DenominatorExpression = "SUM(v)"
-
-    Else
-
-        DenominatorExpression = _
-            "SUM(FILTER(val," & _
-            KeepExpression(ClassSpecValue, ScopeSpec, False) & ",0))"
+        Formula = Formula & vbLf & _
+            BindLine("kAll", KeepExpression(ClassSpecValue, ScopeSpec, False) & ",")
 
     End If
+
+    Formula = Formula & vbLf & vbLf & _
+        BindLine("g", "FILTER(" & CStr(DimensionSpec(2)) & ", k),") & vbLf & _
+        BindLine("v", "FILTER(val, k),") & vbLf & _
+        BindLine("n", "FILTER(ndg, k),") & vbLf & vbLf & _
+        BindLine("a", "DROP(GROUPBY(g, HSTACK(v, n), " & _
+                      "HSTACK(SUM, LAMBDA(x, COUNTA(UNIQUE(x)))), 0, 0), 1),") & _
+        vbLf & _
+        BindLine("s", "TAKE(SORTBY(a, CHOOSECOLS(a, 2), -1, " & _
+                      "CHOOSECOLS(a, 1), 1), " & CStr(TOP_COUNT) & "),") & _
+        vbLf & _
+        BindLine("d", IIf(EntityOnly, "SUM(v),", "SUM(FILTER(val, kAll, 0)),")) & _
+        vbLf & vbLf & _
+        FORMULA_INDENT & "IFERROR(" & vbLf & _
+        FORMULA_INDENT & FORMULA_INDENT & _
+        "HSTACK(CHOOSECOLS(s, 1), CHOOSECOLS(s, 2), " & _
+        "CHOOSECOLS(s, 2) / d, CHOOSECOLS(s, 3))," & vbLf & _
+        FORMULA_INDENT & FORMULA_INDENT & """"")" & vbLf & _
+        ")"
+
+    RankedTableFormula = Formula
 
 End Function
 
@@ -450,12 +456,18 @@ Private Function UnionNdgFormula( _
     ByVal TotalRow As Long) As String
 
     UnionNdgFormula = _
-        "=LET(" & _
-        Bindings(DimensionSpec, "cls,typ,nme,dim,ndg" & ScopeBinding(ScopeSpec)) & _
-        "k," & KeepExpression(ClassSpecValue, ScopeSpec, True) & "," & _
-        "COUNTA(UNIQUE(FILTER(ndg,k*ISNUMBER(MATCH(" & _
-        CStr(DimensionSpec(2)) & ",$B$" & CStr(FirstRow) & ":$B$" & _
-        CStr(TotalRow - 1) & ",0))))))"
+        "=LET(" & vbLf & _
+        Bindings( _
+            DimensionSpec, _
+            "cls,typ,nme,dim,ndg" & ScopeBinding(ScopeSpec)) & _
+        vbLf & vbLf & _
+        BindLine("k", KeepExpression(ClassSpecValue, ScopeSpec, True) & ",") & _
+        vbLf & vbLf & _
+        FORMULA_INDENT & "COUNTA(UNIQUE(FILTER(ndg," & vbLf & _
+        FORMULA_INDENT & FORMULA_INDENT & "k * ISNUMBER(MATCH(" & _
+        CStr(DimensionSpec(2)) & ", $B$" & CStr(FirstRow) & ":$B$" & _
+        CStr(TotalRow - 1) & ", 0)))))" & vbLf & _
+        ")"
 
 End Function
 
@@ -469,73 +481,95 @@ Private Function CategoryTotalFormula( _
     EntityOnly = CBool(DimensionSpec(3))
 
     CategoryTotalFormula = _
-        "=LET(" & _
+        "=LET(" & vbLf & _
         Bindings( _
             DimensionSpec, _
             IIf(EntityOnly, "cls,typ,nme,val", "cls,val") & _
             ScopeBinding(ScopeSpec)) & _
-        "k," & KeepExpression(ClassSpecValue, ScopeSpec, EntityOnly) & "," & _
-        "SUM(FILTER(val,k,0)))"
+        vbLf & vbLf & _
+        BindLine("k", KeepExpression(ClassSpecValue, ScopeSpec, EntityOnly) & ",") & _
+        vbLf & vbLf & _
+        FORMULA_INDENT & "SUM(FILTER(val, k, 0))" & vbLf & _
+        ")"
 
 End Function
 
-'
-' The LET preamble, emitting exactly the bindings the caller says its
-' calculation reads.  A LET that declares a name nothing reads is not worth
-' finding out about the hard way, and the denominators read fewer of these
-' than the ranked table does: no dimension column, and for Issuer no entity
-' test either.
-'
-' "dim" stands for the dimension's own column.  For Issuer that is nme,
-' which is already in the list, so it is emitted once.
-'
+\'
+\' The LET preamble, one binding per line, emitting exactly what the caller
+\' says its calculation reads.  A LET that declares a name nothing reads is
+\' not worth finding out about the hard way, and the denominators read fewer
+\' of these than the ranked table does: no dimension column, and for Issuer no
+\' entity test either.
+\'
+\' "dim" stands for the dimension\'s own column.  For Issuer that is nme, which
+\' is already in the list, so it is emitted once.
+\'
 Private Function Bindings( _
     ByVal DimensionSpec As Variant, _
     ByVal Wanted As String) As String
 
     Dim DimensionName As String
-    Dim WantsDimension As Boolean
+    Dim Lines As String
 
     DimensionName = CStr(DimensionSpec(2))
-    WantsDimension = _
-        (InStr(1, Wanted, "dim") > 0) And (DimensionName <> "nme")
 
     If InStr(1, Wanted, "cls") > 0 Then
-        Bindings = Bindings & "cls," & StageColumn("Risk Asset Class") & ","
+        Lines = Lines & BindLine("cls", StageColumn("Risk Asset Class") & ",") & vbLf
     End If
 
     If InStr(1, Wanted, "typ") > 0 Then
-        Bindings = Bindings & "typ," & StageColumn("Exposure Type") & ","
+        Lines = Lines & BindLine("typ", StageColumn("Exposure Type") & ",") & vbLf
     End If
 
     If InStr(1, Wanted, "nme") > 0 Then
-        Bindings = Bindings & "nme," & StageColumn("Exposure Name") & ","
+        Lines = Lines & BindLine("nme", StageColumn("Exposure Name") & ",") & vbLf
     End If
 
-    If WantsDimension Then
+    If InStr(1, Wanted, "dim") > 0 And DimensionName <> "nme" Then
 
-        Bindings = Bindings & _
-            DimensionName & ",IF(TRIM(" & _
-            StageColumn(CStr(DimensionSpec(1))) & ")=""""," & _
-            """" & OTHER_DIMENSION & """,TRIM(" & _
-            StageColumn(CStr(DimensionSpec(1))) & ")),"
+        Lines = Lines & _
+            BindLine( _
+                DimensionName, _
+                "IF(TRIM(" & StageColumn(CStr(DimensionSpec(1))) & _
+                ") = """", """ & OTHER_DIMENSION & """, TRIM(" & _
+                StageColumn(CStr(DimensionSpec(1))) & ")),") & vbLf
 
     End If
 
     If InStr(1, Wanted, "scp") > 0 Then
-        Bindings = Bindings & "scp," & StageColumn("Account Scope") & ","
+        Lines = Lines & BindLine("scp", StageColumn("Account Scope") & ",") & vbLf
     End If
 
     If InStr(1, Wanted, "ndg") > 0 Then
-        Bindings = Bindings & "ndg," & StageColumn("NDG") & ","
+        Lines = Lines & BindLine("ndg", StageColumn("NDG") & ",") & vbLf
     End If
 
     If InStr(1, Wanted, "val") > 0 Then
 
-        Bindings = Bindings & _
-            "val," & StageColumn("Allocated Collateral Value") & ","
+        Lines = Lines & _
+            BindLine("val", StageColumn("Allocated Collateral Value") & ",") & vbLf
 
     End If
+
+    Bindings = Left$(Lines, Len(Lines) - Len(vbLf))
+
+End Function
+
+\'
+\' One LET binding, its name padded so the expressions line up under each
+\' other in the formula bar.
+\'
+Private Function BindLine( _
+    ByVal BindName As String, _
+    ByVal Expression As String) As String
+
+    Dim Label As String
+
+    Label = BindName & ","
+
+    BindLine = _
+        FORMULA_INDENT & Label & Space$(BIND_LABEL_WIDTH - Len(Label)) & _
+        Expression
 
 End Function
 
@@ -553,49 +587,67 @@ Private Function StageColumn( _
 
 End Function
 
-'
-' The rows one subtable aggregates.  EntityOnly is False only for the Issuer
-' share denominator, where a certificate component with no resolved entity
-' still counts towards the total.
-'
+\'
+\' The rows one subtable aggregates, a factor per line so the conditions read
+\' as a list.  EntityOnly is False only for the Issuer share denominator.
+\'
 Private Function KeepExpression( _
     ByVal ClassSpecValue As Variant, _
     ByVal ScopeSpec As Variant, _
     ByVal EntityOnly As Boolean) As String
 
+    Dim Factors As Collection
+    Dim Factor As Variant
+
+    Set Factors = New Collection
+
     If UBound(ClassSpecValue) = 1 Then
 
-        KeepExpression = "(cls=""" & CStr(ClassSpecValue(1)) & """)"
+        Factors.Add "(cls = """ & CStr(ClassSpecValue(1)) & """)"
 
     Else
 
-        KeepExpression = _
-            "ISNUMBER(MATCH(cls," & ClassNameArray(ClassSpecValue) & ",0))"
+        Factors.Add _
+            "ISNUMBER(MATCH(cls, " & ClassNameArray(ClassSpecValue) & ", 0))"
 
     End If
 
     If EntityOnly Then
 
-        KeepExpression = KeepExpression & _
-            "*(typ<>""" & NON_ENTITY_TYPE & """)" & _
-            "*(LEFT(nme," & CStr(Len(NON_ENTITY_PREFIX)) & ")<>""" & _
+        Factors.Add "(typ <> """ & NON_ENTITY_TYPE & """)"
+
+        Factors.Add _
+            "(LEFT(nme, " & CStr(Len(NON_ENTITY_PREFIX)) & ") <> """ & _
             NON_ENTITY_PREFIX & """)"
 
     End If
 
     If CBool(ScopeSpec(1)) Then
-
-        KeepExpression = KeepExpression & _
-            "*(TRIM(scp)=""" & NON_DPM_SCOPE & """)"
-
+        Factors.Add "(TRIM(scp) = """ & NON_DPM_SCOPE & """)"
     End If
+
+    For Each Factor In Factors
+
+        If Len(KeepExpression) = 0 Then
+
+            KeepExpression = CStr(Factor)
+
+        Else
+
+            KeepExpression = _
+                KeepExpression & vbLf & FORMULA_INDENT & _
+                Space$(BIND_LABEL_WIDTH - 2) & "* " & CStr(Factor)
+
+        End If
+
+    Next Factor
 
 End Function
 
-'
-' The class values as a formula array constant, so one block can match the
-' several strings the staging table uses for it.
-'
+\'
+\' The class values as a formula array constant, so one block can match the
+\' several strings the staging table uses for it.
+\'
 Private Function ClassNameArray( _
     ByVal ClassSpecValue As Variant) As String
 
@@ -603,7 +655,7 @@ Private Function ClassNameArray( _
 
     For i = 1 To UBound(ClassSpecValue)
 
-        If i > 1 Then ClassNameArray = ClassNameArray & ","
+        If i > 1 Then ClassNameArray = ClassNameArray & ", "
 
         ClassNameArray = _
             ClassNameArray & """" & CStr(ClassSpecValue(i)) & """"

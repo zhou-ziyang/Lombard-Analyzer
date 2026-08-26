@@ -11422,6 +11422,7 @@ Private Function WriteTopExposureGroup( _
 
     Dim i As Long
     Dim j As Long
+    Dim BestIndex As Long
     Dim TargetRow As Long
     Dim FirstDataRow As Long
     Dim TotalRow As Long
@@ -11482,28 +11483,6 @@ Private Function WriteTopExposureGroup( _
 
         Next Item
 
-        For i = 1 To ItemCount - 1
-
-            For j = i + 1 To ItemCount
-
-                If Values(j) > Values(i) Or _
-                   (Values(j) = Values(i) And _
-                    StrComp(Names(j), Names(i), vbTextCompare) < 0) Then
-
-                    TempValue = Values(i)
-                    Values(i) = Values(j)
-                    Values(j) = TempValue
-
-                    TempName = Names(i)
-                    Names(i) = Names(j)
-                    Names(j) = TempName
-
-                End If
-
-            Next j
-
-        Next i
-
         OutputCount = ItemCount
 
         If OutputCount > TOP_NAME_COUNT Then
@@ -11511,6 +11490,48 @@ Private Function WriteTopExposureGroup( _
             OutputCount = TOP_NAME_COUNT
 
         End If
+
+        '
+        ' Only the first OutputCount rows are ever written, so this selects
+        ' them rather than ordering the whole set: one scan of what is left
+        ' per place, ten scans in total.  Ordering all of it costs the square
+        ' of the number of distinct names, which is a few dozen countries or
+        ' sectors but thousands of issuers, and the Issuer dimension has five
+        ' visible subtables in each of the two scopes.
+        '
+        ' The comparison is unchanged: value descending, name ascending on a
+        ' tie.  The first OutputCount names come out in the order a full sort
+        ' would have left them in.
+        '
+        For i = 1 To OutputCount
+
+            BestIndex = i
+
+            For j = i + 1 To ItemCount
+
+                If Values(j) > Values(BestIndex) Or _
+                   (Values(j) = Values(BestIndex) And _
+                    StrComp(Names(j), Names(BestIndex), vbTextCompare) < 0) Then
+
+                    BestIndex = j
+
+                End If
+
+            Next j
+
+            If BestIndex <> i Then
+
+                TempValue = Values(i)
+                Values(i) = Values(BestIndex)
+                Values(BestIndex) = TempValue
+
+                TempName = Names(i)
+                Names(i) = Names(BestIndex)
+                Names(BestIndex) = TempName
+
+            End If
+
+        Next i
 
         For i = 1 To OutputCount
 
