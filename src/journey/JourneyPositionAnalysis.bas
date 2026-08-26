@@ -32,89 +32,6 @@ Private Const POS_ABOVE_LIMIT As Long = 13
 Private Const POS_COMMENT As Long = 14
 Private Const POS_FIELD_COUNT As Long = 15
 
-Public Sub ApplyUnifiedReportTitle(ByVal TargetRange As Range)
-    With TargetRange
-        .Interior.Pattern = xlSolid
-        .Interior.Color = RGB(31, 78, 121)
-        .Font.name = "Arial"
-        .Font.Color = RGB(255, 255, 255)
-        .Font.Bold = True
-        .Font.Size = 16
-        .HorizontalAlignment = xlLeft
-        .VerticalAlignment = xlCenter
-        .RowHeight = 26
-    End With
-End Sub
-
-Public Sub ApplyUnifiedReportSubtitle(ByVal TargetRange As Range)
-    With TargetRange
-        .Interior.Pattern = xlSolid
-        .Interior.Color = RGB(221, 235, 247)
-        .Font.name = "Arial"
-        .Font.Color = RGB(31, 78, 121)
-        .Font.Bold = True
-        .HorizontalAlignment = xlLeft
-        .VerticalAlignment = xlCenter
-        .RowHeight = 20
-    End With
-End Sub
-
-Public Sub ApplyUnifiedSectionTitle(ByVal TargetRange As Range, _
-                                    Optional ByVal TitleText As String = "")
-    With TargetRange
-        If TitleText <> "" Then .Value = TitleText
-        .Interior.Pattern = xlSolid
-        .Interior.Color = RGB(68, 114, 196)
-        .Font.name = "Arial"
-        .Font.Color = RGB(255, 255, 255)
-        .Font.Bold = True
-        .HorizontalAlignment = xlLeft
-        .VerticalAlignment = xlCenter
-    End With
-End Sub
-
-Public Sub ApplyUnifiedSignalCell(ByVal TargetCell As Range, _
-                                  ByVal FillColor As Long, _
-                                  ByVal FontColor As Long)
-    With TargetCell
-        .Interior.Pattern = xlSolid
-        .Interior.Color = FillColor
-        .Font.Color = FontColor
-        .Font.Bold = True
-    End With
-End Sub
-
-Public Sub ApplyUnifiedStatusHighlight(ByVal TargetCell As Range, _
-                                       ByVal StatusText As String)
-    TargetCell.HorizontalAlignment = xlCenter
-
-    Select Case StatusText
-        Case "Ended"
-            ApplyUnifiedSignalCell _
-                TargetCell, RGB(217, 217, 217), RGB(89, 89, 89)
-        Case "Shortfall"
-            ApplyUnifiedSignalCell _
-                TargetCell, RGB(255, 120, 120), RGB(150, 0, 0)
-        Case "Margin Call"
-            ApplyUnifiedSignalCell _
-                TargetCell, RGB(255, 205, 80), RGB(120, 65, 0)
-        Case Else
-            ApplyUnifiedSignalCell _
-                TargetCell, RGB(198, 239, 206), RGB(84, 130, 53)
-    End Select
-End Sub
-
-Public Sub ApplyUnifiedDeltaHighlight(ByVal TargetCell As Range, _
-                                      ByVal DeltaValue As Double)
-    If DeltaValue > 0 Then
-        ApplyUnifiedSignalCell _
-            TargetCell, RGB(198, 239, 206), RGB(84, 130, 53)
-    ElseIf DeltaValue < 0 Then
-        ApplyUnifiedSignalCell _
-            TargetCell, RGB(255, 199, 206), RGB(156, 0, 6)
-    End If
-End Sub
-
 Public Sub AddPositionAnalysisButtons(ByVal ws As Worksheet)
     Dim SourceTable As ListObject
     Dim ButtonColumn As ListColumn
@@ -1517,16 +1434,16 @@ Private Sub WriteAccountSummary(ByVal ws As Worksheet, _
     ws.Range("B9").Value = IIf(Metrics("PreviousSF") > 0, "Yes", "No")
     ws.Range("C9").Value = IIf(Metrics("CurrentSF") > 0, "Yes", "No")
 
-    ApplyUnifiedDeltaHighlight ws.Range("D4"), CDbl(ws.Range("D4").Value2)
-    ApplyUnifiedDeltaHighlight ws.Range("D5"), CDbl(ws.Range("D5").Value2)
-    ApplyUnifiedDeltaHighlight ws.Range("D6"), CDbl(ws.Range("D6").Value2)
-    ApplyUnifiedStatusHighlight ws.Range("B8"), _
+    ApplyJourneyDeltaHighlight ws.Range("D4"), CDbl(ws.Range("D4").Value2)
+    ApplyJourneyDeltaHighlight ws.Range("D5"), CDbl(ws.Range("D5").Value2)
+    ApplyJourneyDeltaHighlight ws.Range("D6"), CDbl(ws.Range("D6").Value2)
+    ApplyJourneyStatusHighlight ws.Range("B8"), _
         IIf(Metrics("PreviousMC") > 0, "Margin Call", "Normal")
-    ApplyUnifiedStatusHighlight ws.Range("C8"), _
+    ApplyJourneyStatusHighlight ws.Range("C8"), _
         IIf(Metrics("CurrentMC") > 0, "Margin Call", "Normal")
-    ApplyUnifiedStatusHighlight ws.Range("B9"), _
+    ApplyJourneyStatusHighlight ws.Range("B9"), _
         IIf(Metrics("PreviousSF") > 0, "Shortfall", "Normal")
-    ApplyUnifiedStatusHighlight ws.Range("C9"), _
+    ApplyJourneyStatusHighlight ws.Range("C9"), _
         IIf(Metrics("CurrentSF") > 0, "Shortfall", "Normal")
 End Sub
 
@@ -1841,12 +1758,12 @@ Private Sub FormatPositionChangeAnalysis(ByVal ws As Worksheet, _
     LastColumn = DetailFirstColumn + DetailColumnCount - 1
     ws.Cells.Font.name = "Arial"
 
-    ApplyUnifiedReportTitle _
+    ApplyJourneyReportTitle _
         ws.Range(ws.Cells(1, 1), ws.Cells(1, LastColumn))
-    ApplyUnifiedReportSubtitle _
+    ApplyJourneyReportSubtitle _
         ws.Range(ws.Cells(2, 1), ws.Cells(2, LastColumn))
-    ApplyUnifiedSectionTitle ws.Range("A3:D3")
-    ApplyUnifiedSectionTitle ws.Range("A11:D11")
+    ApplyJourneySectionTitle ws.Range("A3:D3")
+    ApplyJourneySectionTitle ws.Range("A11:D11")
 
     ws.Range("B3:C3").NumberFormat = "dd/mm/yyyy"
     ws.Range("B4:D6").NumberFormat = "#,##0.00;[Red]-#,##0.00;-"
@@ -1964,7 +1881,3 @@ Private Sub FormatPositionChangeAnalysis(ByVal ws As Worksheet, _
     ActiveWindow.FreezePanes = True
     ws.Range("A1").Select
 End Sub
-
-
-
-

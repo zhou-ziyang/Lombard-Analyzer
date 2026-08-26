@@ -143,7 +143,7 @@ Public Sub BuildJourneyDashboardTables(ByVal ActivateDashboard As Boolean)
         .Merge
         .Value = "Lombard Loan Client Dashboard"
     End With
-    ApplyUnifiedReportTitle wsDashboard.Range( _
+    ApplyJourneyReportTitle wsDashboard.Range( _
         wsDashboard.Cells(1, OVERVIEW_LEFT_COL), _
         wsDashboard.Cells(1, EVENT_LEFT_COL + EVENT_COLUMN_COUNT - 1))
 
@@ -157,7 +157,7 @@ Public Sub BuildJourneyDashboardTables(ByVal ActivateDashboard As Boolean)
                          "dd/mm/yyyy") & _
                  " | " & StatusText
     End With
-    ApplyUnifiedReportSubtitle wsDashboard.Range( _
+    ApplyJourneyReportSubtitle wsDashboard.Range( _
         wsDashboard.Cells(2, OVERVIEW_LEFT_COL), _
         wsDashboard.Cells(2, EVENT_LEFT_COL + EVENT_COLUMN_COUNT - 1))
 
@@ -288,7 +288,7 @@ Private Sub BuildCustomerOverviewTable(ByVal wsJourney As Worksheet, _
         "Account Metric"
     wsDashboard.Cells(OVERVIEW_TOP_ROW, OVERVIEW_LEFT_COL + 3).Value = _
         "Value"
-    ApplyUnifiedSectionTitle TitleRange
+    ApplyJourneySectionTitle TitleRange
     TitleRange.RowHeight = 18
     wsDashboard.Cells(OVERVIEW_TOP_ROW, OVERVIEW_LEFT_COL + 1) _
         .HorizontalAlignment = xlCenter
@@ -488,7 +488,7 @@ Private Function BuildHistoricalEventTable(ByVal wsJourney As Worksheet, _
                 .Font.Color = RGB(89, 89, 89)
                 .Font.Bold = False
             End With
-            ApplyUnifiedSignalCell _
+            ApplyJourneySignalCell _
                 wsDashboard.Cells(OutputRow, EVENT_LEFT_COL + 2), _
                 RGB(217, 217, 217), RGB(89, 89, 89)
         Else
@@ -496,13 +496,13 @@ Private Function BuildHistoricalEventTable(ByVal wsJourney As Worksheet, _
                 wsJourney.Cells(SourceRow, DeltaApprovedCol).Value2)
             DrawnDelta = ParseCsvDouble( _
                 wsJourney.Cells(SourceRow, DeltaDrawnCol).Value2)
-            ApplyUnifiedDeltaHighlight _
+            ApplyJourneyDeltaHighlight _
                 wsDashboard.Cells(OutputRow, EVENT_LEFT_COL + 3), ApprovedDelta
-            ApplyUnifiedDeltaHighlight _
+            ApplyJourneyDeltaHighlight _
                 wsDashboard.Cells(OutputRow, EVENT_LEFT_COL + 4), DrawnDelta
 
             If IsLoanRestartedEvent(EventText) Then
-                ApplyUnifiedSignalCell _
+                ApplyJourneySignalCell _
                     wsDashboard.Cells(OutputRow, EVENT_LEFT_COL + 2), _
                     RGB(221, 235, 247), RGB(31, 78, 121)
             End If
@@ -638,7 +638,7 @@ Private Function FindLatestJourneyRow(ByVal ws As Worksheet, _
 End Function
 
 Private Sub FormatStatusCell(ByVal TargetCell As Range, ByVal StatusText As String)
-    ApplyUnifiedStatusHighlight TargetCell, StatusText
+    ApplyJourneyStatusHighlight TargetCell, StatusText
 End Sub
 
 Private Function GetLoanStatusAtRow(ByVal wsJourney As Worksheet, _

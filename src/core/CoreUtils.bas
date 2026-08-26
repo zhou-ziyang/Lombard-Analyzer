@@ -197,6 +197,12 @@ Public Sub ResetExcel()
 
 End Sub
 
+'
+' The two ways a number reaches this workbook.  ParseCsvDouble takes
+' the raw text of a CSV field; WorksheetDouble takes a cell value that
+' Excel has already typed, and which may be an error, empty or text.
+' Both answer 0 rather than raising, because every caller is summing.
+'
 Public Function ParseCsvDouble( _
     ByVal ValueIn As Variant) As Double
 
@@ -205,12 +211,6 @@ Public Function ParseCsvDouble( _
 
 End Function
 
-'
-' The two ways a number reaches this workbook.  ParseCsvDouble takes
-' the raw text of a CSV field; WorksheetDouble takes a cell value that
-' Excel has already typed, and which may be an error, empty or text.
-' Both answer 0 rather than raising, because every caller is summing.
-'
 Public Function WorksheetDouble( _
     ByVal ValueIn As Variant) As Double
 
