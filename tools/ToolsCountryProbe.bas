@@ -110,7 +110,7 @@ Public Sub BuildCountryConcentrationProbe()
     UseGroupBy = SupportsGroupBy(ws)
 
     WriteProbeHeader ws, StageTable
-    If Not UseGroupBy Then WriteHelperColumns ws
+    WriteHelperColumns ws
 
     Classes = Array("Equity", "Corporate Bonds", "Certificates")
     BlockRow = FIRST_BLOCK_ROW
@@ -126,6 +126,7 @@ Public Sub BuildCountryConcentrationProbe()
     LastRow = BlockRow
 
     WriteSummaryFormulas ws, LastRow
+    WritePathNote ws
 
     ws.Calculate
     ws.Columns("A:K").AutoFit
@@ -163,7 +164,8 @@ Private Function SupportsGroupBy( _
 
     On Error GoTo Unsupported
 
-    Probe.Formula = "=ISERROR(GROUPBY({""a"";""b""},{1;2},SUM))"
+    SetFormula Probe, _
+        "=ISERROR(INDEX(GROUPBY({""a"";""b""},{1;2},SUM),1,1))"
     Probe.Calculate
     Answer = Probe.Value
 
@@ -227,28 +229,34 @@ Private Sub WriteProbeHeader( _
         Format$(StageTable.ListRows.Count, "#,##0") & _
         " rows) against a VBA pass over the same table"
 
-    If UseGroupBy Then
-
-        ws.Range("A3").Value = _
-            "ranked table: one GROUPBY per asset class, no helper columns"
-
-    Else
-
-        ws.Range("A3").Value = _
-            "ranked table: SUMIFS, with helper columns in N and O " & _
-            "(GROUPBY not available in this build)"
-
-    End If
-
     ws.Range("A5").Value = "largest value difference"
     ws.Range("A6").Value = "largest #NDG difference"
     ws.Range("A7").Value = "country lists that differ"
 
     ws.Range("A1").Font.Bold = True
-    ws.Range("A3").Font.Italic = True
     ws.Range("A5:A7").Font.Bold = True
     ws.Range("B5").NumberFormat = "#,##0.0000"
     ws.Range("B6:B7").NumberFormat = "0"
+
+End Sub
+
+Private Sub WritePathNote( _
+    ByVal ws As Worksheet)
+
+    If UseGroupBy Then
+
+        ws.Range("A3").Value = _
+            "ranked table: one GROUPBY per asset class"
+
+    Else
+
+        ws.Range("A3").Value = _
+            "ranked table: SUMIFS against the helper columns in N and O " & _
+            "(GROUPBY unavailable or rejected)"
+
+    End If
+
+    ws.Range("A3").Font.Italic = True
 
 End Sub
 
@@ -262,15 +270,15 @@ Private Sub WriteSummaryFormulas( _
     FirstText = CStr(FIRST_BLOCK_ROW)
     LastText = CStr(LastRow)
 
-    ws.Range("B5").Formula = _
+    SetFormula ws.Range("B5"), _
         "=MAX(IF(ISNUMBER(I" & FirstText & ":I" & LastText & _
         "),ABS(I" & FirstText & ":I" & LastText & "),0))"
 
-    ws.Range("B6").Formula = _
+    SetFormula ws.Range("B6"), _
         "=MAX(IF(ISNUMBER(J" & FirstText & ":J" & LastText & _
         "),ABS(J" & FirstText & ":J" & LastText & "),0))"
 
-    ws.Range("B7").Formula = _
+    SetFormula ws.Range("B7"), _
         "=COUNTIF(K" & FirstText & ":K" & LastText & ",""different"")"
 
 End Sub
@@ -288,12 +296,54 @@ Private Sub WriteHelperColumns( _
     ws.Cells(HELPER_ROW - 1, HELPER_COL).Value = "Geography (Others-filled)"
     ws.Cells(HELPER_ROW - 1, HELPER_FLAG_COL).Value = "Entity row"
 
-    ws.Cells(HELPER_ROW, HELPER_COL).Formula = "=pxGeography"
-    ws.Cells(HELPER_ROW, HELPER_FLAG_COL).Formula = "=pxEntity"
+    SetFormula ws.Cells(HELPER_ROW, HELPER_COL), "=pxGeography"
+    SetFormula ws.Cells(HELPER_ROW, HELPER_FLAG_COL), "=pxEntity"
 
     ws.Range( _
         ws.Cells(HELPER_ROW - 1, HELPER_COL), _
         ws.Cells(HELPER_ROW - 1, HELPER_FLAG_COL)).Font.Italic = True
+
+End Sub
+
+'
+' Every formula on the probe sheet goes through here, for two reasons.
+'
+' Formula2 is the property that means what it says: Formula keeps the
+' implicit intersection Excel carried for compatibility, and rejects some
+' formulas that can only be dynamic arrays - a LAMBDA inside GROUPBY among
+' them.  Formula2 is Excel 2019 and later, so Formula remains the fallback.
+'
+' And when Excel refuses a formula it says only "there is a problem with this
+' formula", naming neither the cell nor the formula.  This raises an error
+' that names both, so the next run starts from the answer instead of from a
+' search.
+'
+Private Sub SetFormula( _
+    ByVal Target As Range, _
+    ByVal FormulaText As String)
+
+    On Error GoTo TryLegacy
+
+    Target.Formula2 = FormulaText
+
+    Exit Sub
+
+TryLegacy:
+
+    On Error GoTo Rejected
+
+    Target.Formula = FormulaText
+
+    Exit Sub
+
+Rejected:
+
+    Err.Raise _
+        vbObjectError + 9200, _
+        "SetFormula", _
+        "Excel rejected the formula for cell " & _
+        Target.Address(False, False) & ":" & vbCrLf & vbCrLf & _
+        FormulaText
 
 End Sub
 
@@ -338,8 +388,26 @@ Private Sub WriteClassBlock( _
 
     If UseGroupBy Then
 
+        On Error Resume Next
+
+        WriteGroupByList _
+            ws, FirstRow, "(pxClass=""" & AssetClass & """)*pxEntity"
+
+        If Err.Number <> 0 Then
+
+            Err.Clear
+            ws.Cells(FirstRow, 2).ClearContents
+            UseGroupBy = False
+
+        End If
+
+        On Error GoTo 0
+
+    End If
+
+    If UseGroupBy Then
+
         Keep = "(pxClass=""" & AssetClass & """)*pxEntity"
-        WriteGroupByList ws, FirstRow, Keep
 
     Else
 
@@ -354,19 +422,19 @@ Private Sub WriteClassBlock( _
 
         ws.Cells(r, 1).Value = i
 
-        ws.Cells(r, 5).Formula = _
+        SetFormula ws.Cells(r, 5), _
             "=IF($B" & CStr(r) & "="""",""""," & _
             "C" & CStr(r) & "/" & TotalCell & ")"
 
-        ws.Cells(r, 9).Formula = _
+        SetFormula ws.Cells(r, 9), _
             "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
             "C" & CStr(r) & "-G" & CStr(r) & ")"
 
-        ws.Cells(r, 10).Formula = _
+        SetFormula ws.Cells(r, 10), _
             "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
             "D" & CStr(r) & "-H" & CStr(r) & ")"
 
-        ws.Cells(r, 11).Formula = _
+        SetFormula ws.Cells(r, 11), _
             "=IF($B" & CStr(r) & "=$F" & CStr(r) & ",""same"",""different"")"
 
     Next i
@@ -377,20 +445,20 @@ Private Sub WriteClassBlock( _
     '
     ws.Cells(TotalRow, 2).Value = "Top " & CStr(TOP_COUNT)
 
-    ws.Cells(TotalRow, 3).Formula = _
+    SetFormula ws.Cells(TotalRow, 3), _
         "=SUM(C" & CStr(FirstRow) & ":C" & CStr(TotalRow - 1) & ")"
 
-    ws.Cells(TotalRow, 4).Formula = UnionNdgFormula(AssetClass, FirstRow, TotalRow)
+    SetFormula ws.Cells(TotalRow, 4), UnionNdgFormula(AssetClass, FirstRow, TotalRow)
 
-    ws.Cells(TotalRow, 5).Formula = "=C" & CStr(TotalRow) & "/" & TotalCell
+    SetFormula ws.Cells(TotalRow, 5), "=C" & CStr(TotalRow) & "/" & TotalCell
 
-    ws.Cells(TotalRow, 7).Formula = _
+    SetFormula ws.Cells(TotalRow, 7), _
         "=SUM(G" & CStr(FirstRow) & ":G" & CStr(TotalRow - 1) & ")"
 
-    ws.Cells(TotalRow, 9).Formula = _
+    SetFormula ws.Cells(TotalRow, 9), _
         "=C" & CStr(TotalRow) & "-G" & CStr(TotalRow)
 
-    ws.Cells(TotalRow, 10).Formula = _
+    SetFormula ws.Cells(TotalRow, 10), _
         "=D" & CStr(TotalRow) & "-H" & CStr(TotalRow)
 
     '
@@ -398,9 +466,9 @@ Private Sub WriteClassBlock( _
     ' reached the dimension, ranked or not.
     '
     ws.Cells(TotalRow + 1, 2).Value = "Category total"
-    ws.Cells(TotalRow + 1, 3).Formula = CategoryTotalFormula(AssetClass)
+    SetFormula ws.Cells(TotalRow + 1, 3), CategoryTotalFormula(AssetClass)
 
-    ws.Cells(TotalRow + 1, 9).Formula = _
+    SetFormula ws.Cells(TotalRow + 1, 9), _
         "=C" & CStr(TotalRow + 1) & "-G" & CStr(TotalRow + 1)
 
     ReferenceTopTen _
@@ -436,7 +504,7 @@ Private Sub WriteGroupByList( _
     ByVal FirstRow As Long, _
     ByVal Keep As String)
 
-    ws.Cells(FirstRow, 2).Formula = _
+    SetFormula ws.Cells(FirstRow, 2), _
         "=LET(k," & Keep & "," & _
         "g,FILTER(pxGeography,k)," & _
         "v,FILTER(pxValue,k)," & _
@@ -464,7 +532,7 @@ Private Sub WriteSumIfsList( _
 
     Criteria = "pxClass,""" & AssetClass & """," & FlagRange() & ",1"
 
-    ws.Cells(FirstRow, 2).Formula = _
+    SetFormula ws.Cells(FirstRow, 2), _
         "=LET(u,UNIQUE(FILTER(" & GeoRange() & "," & Keep & "))," & _
         "t,SUMIFS(pxValue," & GeoRange() & ",u," & Criteria & ")," & _
         "IFERROR(INDEX(SORTBY(u,t,-1,u,1),SEQUENCE(" & _
@@ -474,12 +542,12 @@ Private Sub WriteSumIfsList( _
 
         r = FirstRow + i - 1
 
-        ws.Cells(r, 3).Formula = _
+        SetFormula ws.Cells(r, 3), _
             "=IF($B" & CStr(r) & "="""",""""," & _
             "SUMIFS(pxValue," & GeoRange() & ",$B" & CStr(r) & _
             "," & Criteria & "))"
 
-        ws.Cells(r, 4).Formula = _
+        SetFormula ws.Cells(r, 4), _
             "=IF($B" & CStr(r) & "="""",""""," & _
             "COUNTA(UNIQUE(FILTER(pxNDG," & Keep & _
             "*(" & GeoRange() & "=$B" & CStr(r) & ")))))"
