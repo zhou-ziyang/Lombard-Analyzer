@@ -1,6 +1,16 @@
 Attribute VB_Name = "CoreUtils"
 Option Explicit
 
+'
+' Helpers with no Lombard knowledge in them.  Every pipeline in this
+' workbook - weekly, journey, delta - calls into here; nothing in here
+' calls back out.
+'
+
+'====================================================================
+' Worksheets in this workbook
+'====================================================================
+
 Public Function CreateOrReplaceSheet( _
     ByVal SheetName As String) As Worksheet
 
@@ -113,7 +123,6 @@ CleanExit:
 
     Exit Function
 
-
 ErrorHandler:
 
     ErrorNumber = Err.Number
@@ -153,15 +162,18 @@ Public Function GetLastRow( _
 
 End Function
 
-Public Function GetYTDDate( _
-    ByVal ReferenceDate As Date) As Date
+'====================================================================
+' Application state, and how a run talks back to the user
+'====================================================================
 
-    GetYTDDate = DateSerial( _
-        Year(ReferenceDate) - 1, _
-        12, _
-        31)
+Public Sub ResetExcel()
 
-End Function
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.CutCopyMode = False
+
+End Sub
 
 Public Sub Note( _
     ByVal Message As String)
@@ -188,14 +200,44 @@ Public Sub Fatal( _
 
 End Sub
 
-Public Sub ResetExcel()
+'====================================================================
+' Dates as this workbook writes and reads them
+'====================================================================
 
-    Application.ScreenUpdating = True
-    Application.EnableEvents = True
-    Application.Calculation = xlCalculationAutomatic
-    Application.CutCopyMode = False
+Public Function GetDateCode( _
+    ByVal InputDate As Date) As String
 
-End Sub
+    GetDateCode = Format(InputDate, "yyyymmdd")
+
+End Function
+
+Public Function GetYTDDate( _
+    ByVal ReferenceDate As Date) As Date
+
+    GetYTDDate = DateSerial( _
+        Year(ReferenceDate) - 1, _
+        12, _
+        31)
+
+End Function
+
+'====================================================================
+' Values that arrive untrusted: from a cell, a CSV field or an array
+'====================================================================
+
+Public Function Nz(ValueIn As Variant, Optional DefaultValue As Variant = 0) As Variant
+
+    If IsError(ValueIn) Then
+        Nz = DefaultValue
+    ElseIf IsEmpty(ValueIn) Then
+        Nz = DefaultValue
+    ElseIf Trim(CStr(ValueIn)) = "" Then
+        Nz = DefaultValue
+    Else
+        Nz = ValueIn
+    End If
+
+End Function
 
 '
 ' The two ways a number reaches this workbook.  ParseCsvDouble takes
@@ -233,6 +275,34 @@ Public Function WorksheetDouble( _
     End If
 
 End Function
+
+Public Function SafeCellText( _
+    ByVal TargetCell As Range) As String
+
+    If IsError(TargetCell.Value) Then
+
+        SafeCellText = ""
+
+    Else
+
+        SafeCellText = _
+            Trim$(CStr(TargetCell.Value2))
+
+    End If
+
+End Function
+
+Public Function SafeField(Arr As Variant, idx As Long) As String
+    If idx >= 0 And idx <= UBound(Arr) Then
+        SafeField = Trim(Arr(idx))
+    Else
+        SafeField = ""
+    End If
+End Function
+
+'====================================================================
+' Columns, by the name in their header
+'====================================================================
 
 Public Function FindColumnByHeader( _
     ByVal ws As Worksheet, _
@@ -283,59 +353,6 @@ Public Sub RenameHeader( _
 
 End Sub
 
-Public Function GetDateCode( _
-    ByVal InputDate As Date) As String
-
-    GetDateCode = Format(InputDate, "yyyymmdd")
-
-End Function
-
-Public Function Nz(ValueIn As Variant, Optional DefaultValue As Variant = 0) As Variant
-
-    If IsError(ValueIn) Then
-        Nz = DefaultValue
-    ElseIf IsEmpty(ValueIn) Then
-        Nz = DefaultValue
-    ElseIf Trim(CStr(ValueIn)) = "" Then
-        Nz = DefaultValue
-    Else
-        Nz = ValueIn
-    End If
-
-End Function
-
-Public Function ReadAllLines(FilePath As String) As Variant
-
-    Dim FileNumber As Integer
-    Dim FileSize As Long
-    Dim FileText As String
-
-    FileNumber = FreeFile
-
-    Open FilePath For Binary Access Read As #FileNumber
-
-    FileSize = LOF(FileNumber)
-
-    If FileSize > 0 Then
-
-        FileText = Space$(FileSize)
-        Get #FileNumber, , FileText
-
-    End If
-
-    Close #FileNumber
-
-    '
-    ' Accept CRLF, LF and CR line endings.  An LF-terminated extract
-    ' used to parse as a single line and yield no data at all.
-    '
-    FileText = Replace(FileText, vbCrLf, vbLf)
-    FileText = Replace(FileText, vbCr, vbLf)
-
-    ReadAllLines = Split(FileText, vbLf)
-
-End Function
-
 Public Function FindHeaderIndex(hdr As Variant, name As String) As Long
     Dim i As Long
     For i = LBound(hdr) To UBound(hdr)
@@ -373,26 +390,38 @@ Public Function RequiredHeaderIndex( _
 
 End Function
 
-Public Function SafeCellText( _
-    ByVal TargetCell As Range) As String
+'====================================================================
+' Files
+'====================================================================
 
-    If IsError(TargetCell.Value) Then
+Public Function ReadAllLines(FilePath As String) As Variant
 
-        SafeCellText = ""
+    Dim FileNumber As Integer
+    Dim FileSize As Long
+    Dim FileText As String
 
-    Else
+    FileNumber = FreeFile
 
-        SafeCellText = _
-            Trim$(CStr(TargetCell.Value2))
+    Open FilePath For Binary Access Read As #FileNumber
+
+    FileSize = LOF(FileNumber)
+
+    If FileSize > 0 Then
+
+        FileText = Space$(FileSize)
+        Get #FileNumber, , FileText
 
     End If
 
-End Function
+    Close #FileNumber
 
-Public Function SafeField(Arr As Variant, idx As Long) As String
-    If idx >= 0 And idx <= UBound(Arr) Then
-        SafeField = Trim(Arr(idx))
-    Else
-        SafeField = ""
-    End If
+    '
+    ' Accept CRLF, LF and CR line endings.  An LF-terminated extract
+    ' used to parse as a single line and yield no data at all.
+    '
+    FileText = Replace(FileText, vbCrLf, vbLf)
+    FileText = Replace(FileText, vbCr, vbLf)
+
+    ReadAllLines = Split(FileText, vbLf)
+
 End Function
