@@ -381,25 +381,25 @@ Private Sub WriteBlock( _
 
 End Sub
 
-\'
-\' The whole ranked table in one formula: name, value, share and distinct NDG
-\' count, ordered by value descending with ties broken by name ascending,
-\' first ten.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
-\' distinct count is written where SUM sits rather than assembled from UNIQUE
-\' and COUNTA a row at a time.
-\'
-\' GROUPBY names its value columns in a row of its own - "SUM" and "CUSTOM"
-\' for these two - and that row is text, so sorting by value descending
-\' carries it to the top and pushes the tenth name out of the table.  DROP
-\' takes it off before the sort.
-\'
-\' Issuer binds a second filter.  k is the rows that can be ranked; kAll is
-\' every row of the class, which is what its share is measured against,
-\' because a certificate component that resolved to no entity counts towards
-\' the total under a prefixed name it can never be listed under.  Country of
-\' Risk and Sector aggregate entity rows only, so there the denominator is
-\' just the total of what was filtered.
-\'
+'
+' The whole ranked table in one formula: name, value, share and distinct NDG
+' count, ordered by value descending with ties broken by name ascending,
+' first ten.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
+' distinct count is written where SUM sits rather than assembled from UNIQUE
+' and COUNTA a row at a time.
+'
+' GROUPBY names its value columns in a row of its own - "SUM" and "CUSTOM"
+' for these two - and that row is text, so sorting by value descending
+' carries it to the top and pushes the tenth name out of the table.  DROP
+' takes it off before the sort.
+'
+' Issuer binds a second filter.  k is the rows that can be ranked; kAll is
+' every row of the class, which is what its share is measured against,
+' because a certificate component that resolved to no entity counts towards
+' the total under a prefixed name it can never be listed under.  Country of
+' Risk and Sector aggregate entity rows only, so there the denominator is
+' just the total of what was filtered.
+'
 Private Function RankedTableFormula( _
     ByVal DimensionSpec As Variant, _
     ByVal ClassSpecValue As Variant, _
@@ -494,16 +494,16 @@ Private Function CategoryTotalFormula( _
 
 End Function
 
-\'
-\' The LET preamble, one binding per line, emitting exactly what the caller
-\' says its calculation reads.  A LET that declares a name nothing reads is
-\' not worth finding out about the hard way, and the denominators read fewer
-\' of these than the ranked table does: no dimension column, and for Issuer no
-\' entity test either.
-\'
-\' "dim" stands for the dimension\'s own column.  For Issuer that is nme, which
-\' is already in the list, so it is emitted once.
-\'
+'
+' The LET preamble, one binding per line, emitting exactly what the caller
+' says its calculation reads.  A LET that declares a name nothing reads is
+' not worth finding out about the hard way, and the denominators read fewer
+' of these than the ranked table does: no dimension column, and for Issuer no
+' entity test either.
+'
+' "dim" stands for the dimension's own column.  For Issuer that is nme, which
+' is already in the list, so it is emitted once.
+'
 Private Function Bindings( _
     ByVal DimensionSpec As Variant, _
     ByVal Wanted As String) As String
@@ -555,10 +555,10 @@ Private Function Bindings( _
 
 End Function
 
-\'
-\' One LET binding, its name padded so the expressions line up under each
-\' other in the formula bar.
-\'
+'
+' One LET binding, its name padded so the expressions line up under each
+' other in the formula bar.
+'
 Private Function BindLine( _
     ByVal BindName As String, _
     ByVal Expression As String) As String
@@ -587,10 +587,10 @@ Private Function StageColumn( _
 
 End Function
 
-\'
-\' The rows one subtable aggregates, a factor per line so the conditions read
-\' as a list.  EntityOnly is False only for the Issuer share denominator.
-\'
+'
+' The rows one subtable aggregates, a factor per line so the conditions read
+' as a list.  EntityOnly is False only for the Issuer share denominator.
+'
 Private Function KeepExpression( _
     ByVal ClassSpecValue As Variant, _
     ByVal ScopeSpec As Variant, _
@@ -644,10 +644,10 @@ Private Function KeepExpression( _
 
 End Function
 
-\'
-\' The class values as a formula array constant, so one block can match the
-\' several strings the staging table uses for it.
-\'
+'
+' The class values as a formula array constant, so one block can match the
+' several strings the staging table uses for it.
+'
 Private Function ClassNameArray( _
     ByVal ClassSpecValue As Variant) As String
 
