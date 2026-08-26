@@ -121,15 +121,6 @@ Private Const TOP_NAME_COUNT As Long = 10
 Private Const OTHER_RISK_DIMENSION As String = "Others"
 Private Const UNKNOWN_UNDERLYING_TYPE As String = _
     "Unknown certificate underlying"
-
-'
-' The spelling this exposure type carried before the rename.  A staging table
-' built by the previous version stays on the sheet until the next rebuild,
-' and reading those rows as entity exposures would put unresolved certificate
-' text into the Issuer table under its own name.
-'
-Private Const LEGACY_UNKNOWN_UNDERLYING_TYPE As String = _
-    "Certificate non-entity component"
 Private Const NON_DPM_SCOPE As String = "Non-DPM"
 
 Private Const UNKNOWN_UNDERLYING_NOTE_LIMIT As Long = 10
@@ -8874,9 +8865,7 @@ Private Function RiskKeepExpression( _
 
     If EntityOnly Then
 
-        Factors.Add _
-            "ISNA(MATCH(typ, {""" & UNKNOWN_UNDERLYING_TYPE & """, """ & _
-            LEGACY_UNKNOWN_UNDERLYING_TYPE & """}, 0))"
+        Factors.Add "(typ <> """ & UNKNOWN_UNDERLYING_TYPE & """)"
 
         Factors.Add _
             "(LEFT(nme, " & CStr(Len(UNKNOWN_UNDERLYING_PREFIX)) & _
@@ -10839,19 +10828,16 @@ AggregateUnifiedRiskStageDataLabel:
 End Sub
 
 '
-' An exposure the certificate expansion could not name, under either the
-' current spelling or the one used before the rename.
+' An exposure the certificate expansion could not name.
 '
 Private Function IsUnknownUnderlyingType( _
     ByVal ExposureType As String) As Boolean
 
-    Dim Trimmed As String
-
-    Trimmed = Trim$(ExposureType)
-
     IsUnknownUnderlyingType = _
-        StrComp(Trimmed, UNKNOWN_UNDERLYING_TYPE, vbTextCompare) = 0 Or _
-        StrComp(Trimmed, LEGACY_UNKNOWN_UNDERLYING_TYPE, vbTextCompare) = 0
+        StrComp( _
+            Trim$(ExposureType), _
+            UNKNOWN_UNDERLYING_TYPE, _
+            vbTextCompare) = 0
 
 End Function
 
