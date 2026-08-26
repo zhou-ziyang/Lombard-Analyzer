@@ -16,7 +16,12 @@ files, or persist anything.
 The figures are the published benchmark medians (5 everyday tasks: email
 validator, debounce, CSV sum, countdown timer, rate limiter; three models:
 Haiku, Sonnet, Opus). They are measured, not computed from the current repo.
-Source: `benchmarks/` and the README.
+
+Source: the upstream ponytail project,
+https://github.com/DietrichGebert/ponytail - its `benchmarks/` directory and
+README. Those files are NOT in this repository; only the six SKILL.md files
+were vendored in. Say so when rendering the card, and never present the
+numbers as anything this repository measured.
 
 ## Scoreboard
 

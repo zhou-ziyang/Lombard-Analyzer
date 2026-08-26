@@ -32,39 +32,26 @@ Level sticks until changed or session end.
 | **ponytail-gain** | `/ponytail-gain` | Measured-impact scoreboard: less code, less cost, more speed. |
 | **ponytail-help** | `/ponytail-help` | This card. |
 
-Codex uses `@ponytail`, `@ponytail-review`, and `@ponytail-help`; Claude Code
-and OpenCode use the slash-command forms above (OpenCode ships all six as
-slash commands).
-
 ## Deactivate
 
 Say "stop ponytail" or "normal mode". Resume anytime with `/ponytail`.
 `/ponytail off` also works.
 
-## Configure Default Mode
+## How this copy is installed
 
-Default mode = `full`, auto-active every session. Change it:
+These six skills are vendored into this repository at `.claude/skills/`, not
+installed as a plugin. There is no marketplace entry, no `PONYTAIL_DEFAULT_MODE`
+environment variable and no `~/.config/ponytail/config.json` behind them - the
+files in this repo are the whole installation, and editing one is how you
+change its behaviour.
 
-**Environment variable** (highest priority):
-```bash
-export PONYTAIL_DEFAULT_MODE=ultra
-```
+Two consequences worth knowing:
 
-**Config file** (`~/.config/ponytail/config.json`, Windows: `%APPDATA%\ponytail\config.json`):
-```json
-{ "defaultMode": "lite" }
-```
-
-Set `"off"` to disable auto-activation on session start, activate manually
-with `/ponytail` when wanted.
-
-Resolution: env var > config file > `full`.
-
-## Update
-
-Enable auto-update once: open `/plugin`, go to Marketplaces, pick ponytail, Enable auto-update. Claude Code then pulls new versions at startup (run `/reload-plugins` when it prompts). Manual refresh: `/plugin marketplace update ponytail` then `/reload-plugins`.
-
-If `/plugin` is not recognized, your Claude Code is out of date. Update it (`npm install -g @anthropic-ai/claude-code@latest`, or `brew upgrade claude-code`) and restart. Other hosts use their own update flow.
+- Nothing auto-activates at session start. A skill loads when it is invoked by
+  name or when a request matches its description.
+- Updating means copying newer files in from upstream by hand. The local copies
+  have been edited to fit this repository (see the git history for
+  `.claude/skills/`), so a straight overwrite drops those edits.
 
 ## More
 
