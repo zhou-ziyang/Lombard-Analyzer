@@ -220,12 +220,16 @@ but whether the *semantics* survive the translation — the three that are easy
 to lose being the share denominator, the union-not-sum `#NDG` on the total
 row, and the tie-break on equal values.
 
-Where `GROUPBY` is available the whole ranked table — country, value and
-distinct NDG count, ordered and cut to ten — is one formula per asset class,
-and no helper column is needed because `GROUPBY` aggregates arrays. The probe
-asks Excel whether it has `GROUPBY` rather than assuming, and falls back to a
-`SUMIFS` formulation (which needs two spilled helper columns, since `SUMIFS`
-matches on ranges) on a build that does not. The sheet says which path ran.
+The whole ranked table — country, value and distinct NDG count, ordered and
+cut to ten — is one `GROUPBY` formula per asset class, with the distinct count
+written as `LAMBDA(x, COUNTA(UNIQUE(x)))` where the aggregate goes.
+
+**It answers yes.** Against the VBA pass the values agree to the cent, the
+per-country and union `#NDG` counts agree, and the category totals are equal.
+One wrinkle worth keeping in mind for a real implementation: `GROUPBY` names
+its value columns in a row of its own, that row is text, and sorting by value
+descending therefore carries it to the top and pushes the tenth country out of
+the table — `DROP(…, 1)` takes it off before the sort.
 
 ## Encoding
 

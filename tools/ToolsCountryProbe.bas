@@ -36,11 +36,9 @@ Option Explicit
 ' Full scope is every row, DPM and Non-DPM alike, which is what the report''s
 ' left-hand table shows.
 '
-' Where GROUPBY is available the ranked table - country, value and distinct
-' NDG count - is one formula per asset class, and no helper column is needed
-' because GROUPBY aggregates arrays.  Where it is not, the probe falls back
-' to SUMIFS, which wants real ranges rather than computed arrays and so needs
-' two spilled helper columns.  Which path ran is stated on the sheet.
+' The ranked table is one formula per asset class.  Nothing is defensive
+' about it: a wrong formula shows up as a non-zero difference against the
+' VBA column beside it, which is what the sheet is for.
 '
 
 Private Const PROBE_SHEET As String = "Country Probe"
@@ -52,13 +50,7 @@ Private Const OTHER_DIMENSION As String = "Others"
 Private Const TOP_COUNT As Long = 10
 
 Private Const BLOCK_HEIGHT As Long = 15
-Private Const FIRST_BLOCK_ROW As Long = 9
-
-Private Const HELPER_COL As Long = 14         ' N, the cleaned geography
-Private Const HELPER_FLAG_COL As Long = 15    ' O, the entity flag
-Private Const HELPER_ROW As Long = 2
-
-Private UseGroupBy As Boolean
+Private Const FIRST_BLOCK_ROW As Long = 8
 
 Public Sub BuildCountryConcentrationProbe()
 
@@ -70,7 +62,6 @@ Public Sub BuildCountryConcentrationProbe()
     Dim Classes As Variant
     Dim ClassIndex As Long
     Dim BlockRow As Long
-    Dim LastRow As Long
 
     Dim PreviousUpdating As Boolean
 
@@ -107,10 +98,7 @@ Public Sub BuildCountryConcentrationProbe()
 
     Set ws = ReplaceSheet(PROBE_SHEET)
 
-    UseGroupBy = SupportsGroupBy(ws)
-
     WriteProbeHeader ws, StageTable
-    WriteHelperColumns ws
 
     Classes = Array("Equity", "Corporate Bonds", "Certificates")
     BlockRow = FIRST_BLOCK_ROW
@@ -123,10 +111,7 @@ Public Sub BuildCountryConcentrationProbe()
 
     Next ClassIndex
 
-    LastRow = BlockRow
-
-    WriteSummaryFormulas ws, LastRow
-    WritePathNote ws
+    WriteSummaryFormulas ws, BlockRow
 
     ws.Calculate
     ws.Columns("A:K").AutoFit
@@ -150,54 +135,216 @@ Failed:
 End Sub
 
 '
-' GROUPBY reached Excel in 2024, so a workbook on a slower update channel
-' may not have it.  Asking Excel rather than assuming: an unknown function
-' name evaluates to #NAME?, which ISERROR reports as True.
+' An earlier version of this probe defined workbook names for the staging
+' columns.  Names.Add was what Excel had been rejecting, and the bindings
+' live in each formula's LET now, so any left behind are removed.
 '
-Private Function SupportsGroupBy( _
-    ByVal ws As Worksheet) As Boolean
+Private Sub RemoveLegacyProbeNames()
 
-    Dim Probe As Range
-    Dim Answer As Variant
+    Dim Legacy As Variant
+    Dim NameText As Variant
 
-    Set Probe = ws.Cells(1, 30)
+    Legacy = Array("pxGeography", "pxEntity", "pxValue", "pxNDG", "pxClass")
 
-    On Error GoTo Unsupported
+    On Error Resume Next
 
-    SetFormula Probe, _
-        "=ISERROR(INDEX(GROUPBY({""a"";""b""},{1;2},SUM),1,1))"
-    Probe.Calculate
-    Answer = Probe.Value
+    For Each NameText In Legacy
+        ThisWorkbook.Names(CStr(NameText)).Delete
+    Next NameText
 
-    Probe.ClearContents
+End Sub
 
-    SupportsGroupBy = (Answer = False)
+Private Sub WriteProbeHeader( _
+    ByVal ws As Worksheet, _
+    ByVal StageTable As ListObject)
 
-    Exit Function
+    ws.Range("A1").Value = "Country of Risk concentration, Full scope"
 
-Unsupported:
+    ws.Range("A2").Value = _
+        "formulas over " & STAGE_TABLE & " (" & _
+        Format$(StageTable.ListRows.Count, "#,##0") & _
+        " rows) against a VBA pass over the same table"
 
-    Probe.ClearContents
+    ws.Range("A4").Value = "largest value difference"
+    ws.Range("A5").Value = "largest #NDG difference"
+    ws.Range("A6").Value = "country lists that differ"
 
-End Function
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A4:A6").Font.Bold = True
+    ws.Range("B4").NumberFormat = "#,##0.0000"
+    ws.Range("B5:B6").NumberFormat = "0"
+
+End Sub
+
+Private Sub WriteSummaryFormulas( _
+    ByVal ws As Worksheet, _
+    ByVal LastRow As Long)
+
+    Dim Span As String
+
+    Span = CStr(FIRST_BLOCK_ROW) & ":I" & CStr(LastRow)
+
+    ws.Range("B4").Formula2 = _
+        "=MAX(IF(ISNUMBER(I" & Span & "),ABS(I" & Span & "),0))"
+
+    Span = CStr(FIRST_BLOCK_ROW) & ":J" & CStr(LastRow)
+
+    ws.Range("B5").Formula2 = _
+        "=MAX(IF(ISNUMBER(J" & Span & "),ABS(J" & Span & "),0))"
+
+    ws.Range("B6").Formula2 = _
+        "=COUNTIF(K" & CStr(FIRST_BLOCK_ROW) & ":K" & CStr(LastRow) & _
+        ",""different"")"
+
+End Sub
+
+Private Sub WriteClassBlock( _
+    ByVal ws As Worksheet, _
+    ByVal TopRow As Long, _
+    ByVal AssetClass As String, _
+    ByRef StageData As Variant, _
+    ByVal Col As Object)
+
+    Dim RefNames() As String
+    Dim RefValues() As Double
+    Dim RefNDGs() As Long
+    Dim RefCount As Long
+    Dim RefTotal As Double
+    Dim RefUnionNDG As Long
+
+    Dim FirstRow As Long
+    Dim TotalRow As Long
+    Dim TotalCell As String
+    Dim r As Long
+    Dim i As Long
+
+    FirstRow = TopRow + 2
+    TotalRow = FirstRow + TOP_COUNT
+    TotalCell = "$C$" & CStr(TotalRow + 1)
+
+    ws.Cells(TopRow, 1).Value = AssetClass
+    ws.Cells(TopRow, 1).Font.Bold = True
+
+    WriteBlockHeaders ws, TopRow + 1
+
+    WriteRankedTable ws, FirstRow, AssetClass
+
+    For i = 1 To TOP_COUNT
+
+        r = FirstRow + i - 1
+
+        ws.Cells(r, 1).Value = i
+
+        ws.Cells(r, 5).Formula2 = _
+            "=IF($B" & CStr(r) & "="""",""""," & _
+            "C" & CStr(r) & "/" & TotalCell & ")"
+
+        ws.Cells(r, 9).Formula2 = _
+            "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
+            "C" & CStr(r) & "-G" & CStr(r) & ")"
+
+        ws.Cells(r, 10).Formula2 = _
+            "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
+            "D" & CStr(r) & "-H" & CStr(r) & ")"
+
+        ws.Cells(r, 11).Formula2 = _
+            "=IF($B" & CStr(r) & "=$F" & CStr(r) & ",""same"",""different"")"
+
+    Next i
+
+    '
+    ' Total row.  The #NDG here is the distinct NDGs of the ten countries
+    ' together, which is why it is not a sum of the column above it.
+    '
+    ws.Cells(TotalRow, 2).Value = "Top " & CStr(TOP_COUNT)
+
+    ws.Cells(TotalRow, 3).Formula2 = _
+        "=SUM(C" & CStr(FirstRow) & ":C" & CStr(TotalRow - 1) & ")"
+
+    ws.Cells(TotalRow, 4).Formula2 = _
+        UnionNdgFormula(AssetClass, FirstRow, TotalRow)
+
+    ws.Cells(TotalRow, 5).Formula2 = "=C" & CStr(TotalRow) & "/" & TotalCell
+
+    ws.Cells(TotalRow, 7).Formula2 = _
+        "=SUM(G" & CStr(FirstRow) & ":G" & CStr(TotalRow - 1) & ")"
+
+    ws.Cells(TotalRow, 9).Formula2 = _
+        "=C" & CStr(TotalRow) & "-G" & CStr(TotalRow)
+
+    ws.Cells(TotalRow, 10).Formula2 = _
+        "=D" & CStr(TotalRow) & "-H" & CStr(TotalRow)
+
+    '
+    ' Category total, the share denominator: every row of the class that
+    ' reached the dimension, ranked or not.
+    '
+    ws.Cells(TotalRow + 1, 2).Value = "Category total"
+    ws.Cells(TotalRow + 1, 3).Formula2 = CategoryTotalFormula(AssetClass)
+
+    ws.Cells(TotalRow + 1, 9).Formula2 = _
+        "=C" & CStr(TotalRow + 1) & "-G" & CStr(TotalRow + 1)
+
+    ReferenceTopTen _
+        StageData, AssetClass, Col, _
+        RefNames, RefValues, RefNDGs, RefCount, RefTotal, RefUnionNDG
+
+    For i = 1 To RefCount
+
+        r = FirstRow + i - 1
+
+        ws.Cells(r, 6).Value = RefNames(i)
+        ws.Cells(r, 7).Value = RefValues(i)
+        ws.Cells(r, 8).Value = RefNDGs(i)
+
+    Next i
+
+    ws.Cells(TotalRow, 8).Value = RefUnionNDG
+    ws.Cells(TotalRow + 1, 7).Value = RefTotal
+
+    FormatBlock ws, FirstRow, TotalRow
+
+End Sub
 
 '
-' The staging table's columns, bound once for a LET.  These were workbook
-' names until Names.Add turned out to be what Excel was rejecting - and
-' inline is better anyway: every definition the formula depends on is
-' visible in the cell rather than in the name manager.
+' The whole ranked table in one formula: country, total value and distinct
+' NDG count, ordered by value descending with ties broken by name ascending,
+' first ten.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
+' distinct count is written where SUM sits rather than assembled from UNIQUE
+' and COUNTA a row at a time.
+'
+' GROUPBY names its value columns in a row of its own - "SUM" and "CUSTOM"
+' for these two - and that row is text, so sorting by value descending
+' carries it to the top and pushes the tenth country out of the table.  DROP
+' takes it off before the sort.
+'
+Private Sub WriteRankedTable( _
+    ByVal ws As Worksheet, _
+    ByVal FirstRow As Long, _
+    ByVal AssetClass As String)
+
+    ws.Cells(FirstRow, 2).Formula2 = _
+        "=LET(" & _
+        StageBindings(WantGeography:=True, WantNDG:=True, WantValue:=True) & _
+        "k," & KeepExpression(AssetClass) & "," & _
+        "g,FILTER(geo,k),v,FILTER(val,k),n,FILTER(ndg,k)," & _
+        "a,DROP(GROUPBY(g,HSTACK(v,n)," & _
+        "HSTACK(SUM,LAMBDA(x,COUNTA(UNIQUE(x)))),0,0),1)," & _
+        "IFERROR(TAKE(SORTBY(a,CHOOSECOLS(a,2),-1,CHOOSECOLS(a,1),1)," & _
+        CStr(TOP_COUNT) & "),""""))"
+
+End Sub
+
+'
+' The staging table''s columns, bound for a LET.  Each formula asks for the
+' measures it goes on to read; cls, typ and nme are what KeepExpression
+' needs, so they are always bound.
 '
 Private Function StageBindings( _
     ByVal WantGeography As Boolean, _
     ByVal WantNDG As Boolean, _
     ByVal WantValue As Boolean) As String
 
-    '
-    ' cls, typ and nme are what KeepExpression reads, so they are always
-    ' bound.  The measures are asked for, because a LET that declares a name
-    ' the calculation never reads is not worth finding out about the hard
-    ' way.
-    '
     StageBindings = _
         "cls," & STAGE_TABLE & "[Risk Asset Class]," & _
         "typ," & STAGE_TABLE & "[Exposure Type]," & _
@@ -241,428 +388,27 @@ Private Function KeepExpression( _
 
 End Function
 
-'
-' Earlier versions of this probe left these in the workbook.
-'
-Private Sub RemoveLegacyProbeNames()
-
-    Dim Legacy As Variant
-    Dim NameText As Variant
-
-    Legacy = Array( _
-        "pxGeography", "pxEntity", "pxValue", "pxNDG", "pxClass")
-
-    On Error Resume Next
-
-    For Each NameText In Legacy
-        ThisWorkbook.Names(CStr(NameText)).Delete
-    Next NameText
-
-    On Error GoTo 0
-
-End Sub
-
-Private Sub WriteProbeHeader( _
-    ByVal ws As Worksheet, _
-    ByVal StageTable As ListObject)
-
-    ws.Range("A1").Value = "Country of Risk concentration, Full scope"
-
-    ws.Range("A2").Value = _
-        "formulas over " & STAGE_TABLE & " (" & _
-        Format$(StageTable.ListRows.Count, "#,##0") & _
-        " rows) against a VBA pass over the same table"
-
-    ws.Range("A5").Value = "largest value difference"
-    ws.Range("A6").Value = "largest #NDG difference"
-    ws.Range("A7").Value = "country lists that differ"
-
-    ws.Range("A1").Font.Bold = True
-    ws.Range("A5:A7").Font.Bold = True
-    ws.Range("B5").NumberFormat = "#,##0.0000"
-    ws.Range("B6:B7").NumberFormat = "0"
-
-End Sub
-
-Private Sub WritePathNote( _
-    ByVal ws As Worksheet)
-
-    If UseGroupBy Then
-
-        ws.Range("A3").Value = _
-            "ranked table: one GROUPBY per asset class"
-
-    Else
-
-        ws.Range("A3").Value = _
-            "ranked table: SUMIFS against the helper columns in N and O " & _
-            "(GROUPBY unavailable or rejected)"
-
-    End If
-
-    ws.Range("A3").Font.Italic = True
-
-End Sub
-
-Private Sub WriteSummaryFormulas( _
-    ByVal ws As Worksheet, _
-    ByVal LastRow As Long)
-
-    Dim FirstText As String
-    Dim LastText As String
-
-    FirstText = CStr(FIRST_BLOCK_ROW)
-    LastText = CStr(LastRow)
-
-    SetFormula ws.Range("B5"), _
-        "=MAX(IF(ISNUMBER(I" & FirstText & ":I" & LastText & _
-        "),ABS(I" & FirstText & ":I" & LastText & "),0))"
-
-    SetFormula ws.Range("B6"), _
-        "=MAX(IF(ISNUMBER(J" & FirstText & ":J" & LastText & _
-        "),ABS(J" & FirstText & ":J" & LastText & "),0))"
-
-    SetFormula ws.Range("B7"), _
-        "=COUNTIF(K" & FirstText & ":K" & LastText & ",""different"")"
-
-End Sub
-
-'
-' Only the SUMIFS path needs these: it matches on ranges, and neither the
-' Others-filled geography nor the entity flag is a column of the staging
-' table.  If the formula approach is adopted, both belong in that table,
-' written once by the pass that builds it - and then this sheet needs
-' neither helper nor GROUPBY.
-'
-Private Sub WriteHelperColumns( _
-    ByVal ws As Worksheet)
-
-    ws.Cells(HELPER_ROW - 1, HELPER_COL).Value = "Geography (Others-filled)"
-    ws.Cells(HELPER_ROW - 1, HELPER_FLAG_COL).Value = "Entity row"
-
-    SetFormula ws.Cells(HELPER_ROW, HELPER_COL), _
-        "=IF(TRIM(" & STAGE_TABLE & "[Geography])=""""," & _
-        """" & OTHER_DIMENSION & """,TRIM(" & STAGE_TABLE & "[Geography]))"
-
-    SetFormula ws.Cells(HELPER_ROW, HELPER_FLAG_COL), _
-        "=--((" & STAGE_TABLE & "[Exposure Type]<>""" & NON_ENTITY_TYPE & _
-        """)*(LEFT(" & STAGE_TABLE & "[Exposure Name]," & _
-        CStr(Len(NON_ENTITY_PREFIX)) & ")<>""" & NON_ENTITY_PREFIX & """))"
-
-    ws.Range( _
-        ws.Cells(HELPER_ROW - 1, HELPER_COL), _
-        ws.Cells(HELPER_ROW - 1, HELPER_FLAG_COL)).Font.Italic = True
-
-End Sub
-
-'
-' Every formula on the probe sheet goes through here, for two reasons.
-'
-' Formula2 is the property that means what it says: Formula keeps the
-' implicit intersection Excel carried for compatibility, and rejects some
-' formulas that can only be dynamic arrays - a LAMBDA inside GROUPBY among
-' them.  Formula2 is Excel 2019 and later, so Formula remains the fallback.
-'
-' And when Excel refuses a formula it says only "there is a problem with this
-' formula", naming neither the cell nor the formula.  This raises an error
-' that names both, so the next run starts from the answer instead of from a
-' search.
-'
-Private Sub SetFormula( _
-    ByVal Target As Range, _
-    ByVal FormulaText As String)
-
-    On Error GoTo TryLegacy
-
-    Target.Formula2 = FormulaText
-
-    Exit Sub
-
-TryLegacy:
-
-    On Error GoTo Rejected
-
-    Target.Formula = FormulaText
-
-    Exit Sub
-
-Rejected:
-
-    Err.Raise _
-        vbObjectError + 9200, _
-        "SetFormula", _
-        "Excel rejected the formula for cell " & _
-        Target.Address(False, False) & ":" & vbCrLf & vbCrLf & _
-        FormulaText
-
-End Sub
-
-Private Function GeoRange() As String
-    GeoRange = "$" & ColumnLetter(HELPER_COL) & "$" & CStr(HELPER_ROW) & "#"
-End Function
-
-Private Function FlagRange() As String
-    FlagRange = _
-        "$" & ColumnLetter(HELPER_FLAG_COL) & "$" & CStr(HELPER_ROW) & "#"
-End Function
-
-Private Sub WriteClassBlock( _
-    ByVal ws As Worksheet, _
-    ByVal TopRow As Long, _
-    ByVal AssetClass As String, _
-    ByRef StageData As Variant, _
-    ByVal Col As Object)
-
-    Dim RefNames() As String
-    Dim RefValues() As Double
-    Dim RefNDGs() As Long
-    Dim RefCount As Long
-    Dim RefTotal As Double
-    Dim RefUnionNDG As Long
-
-    Dim Keep As String
-    Dim FirstRow As Long
-    Dim TotalRow As Long
-    Dim TotalCell As String
-    Dim r As Long
-    Dim i As Long
-
-    FirstRow = TopRow + 2
-    TotalRow = FirstRow + TOP_COUNT
-    TotalCell = "$C$" & CStr(TotalRow + 1)
-
-    ws.Cells(TopRow, 1).Value = AssetClass
-    ws.Cells(TopRow, 1).Font.Bold = True
-
-    WriteBlockHeaders ws, TopRow + 1
-
-    If UseGroupBy Then
-
-        On Error Resume Next
-
-        WriteGroupByList ws, FirstRow, AssetClass
-
-        If Err.Number <> 0 Then
-
-            Err.Clear
-            ws.Cells(FirstRow, 2).ClearContents
-            UseGroupBy = False
-
-        End If
-
-        On Error GoTo 0
-
-    End If
-
-    If UseGroupBy Then
-
-        Keep = ""
-
-    Else
-
-        Keep = _
-            "(" & STAGE_TABLE & "[Risk Asset Class]=""" & AssetClass & _
-            """)*" & FlagRange()
-
-        WriteSumIfsList ws, FirstRow, AssetClass, Keep
-
-    End If
-
-    For i = 1 To TOP_COUNT
-
-        r = FirstRow + i - 1
-
-        ws.Cells(r, 1).Value = i
-
-        SetFormula ws.Cells(r, 5), _
-            "=IF($B" & CStr(r) & "="""",""""," & _
-            "C" & CStr(r) & "/" & TotalCell & ")"
-
-        SetFormula ws.Cells(r, 9), _
-            "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
-            "C" & CStr(r) & "-G" & CStr(r) & ")"
-
-        SetFormula ws.Cells(r, 10), _
-            "=IF(OR($B" & CStr(r) & "="""",$F" & CStr(r) & "=""""),""""," & _
-            "D" & CStr(r) & "-H" & CStr(r) & ")"
-
-        SetFormula ws.Cells(r, 11), _
-            "=IF($B" & CStr(r) & "=$F" & CStr(r) & ",""same"",""different"")"
-
-    Next i
-
-    '
-    ' Total row.  The #NDG here is the distinct NDGs of the ten countries
-    ' together, which is why it is not a sum of the column above it.
-    '
-    ws.Cells(TotalRow, 2).Value = "Top " & CStr(TOP_COUNT)
-
-    SetFormula ws.Cells(TotalRow, 3), _
-        "=SUM(C" & CStr(FirstRow) & ":C" & CStr(TotalRow - 1) & ")"
-
-    SetFormula ws.Cells(TotalRow, 4), UnionNdgFormula(AssetClass, FirstRow, TotalRow)
-
-    SetFormula ws.Cells(TotalRow, 5), "=C" & CStr(TotalRow) & "/" & TotalCell
-
-    SetFormula ws.Cells(TotalRow, 7), _
-        "=SUM(G" & CStr(FirstRow) & ":G" & CStr(TotalRow - 1) & ")"
-
-    SetFormula ws.Cells(TotalRow, 9), _
-        "=C" & CStr(TotalRow) & "-G" & CStr(TotalRow)
-
-    SetFormula ws.Cells(TotalRow, 10), _
-        "=D" & CStr(TotalRow) & "-H" & CStr(TotalRow)
-
-    '
-    ' Category total, the share denominator: every row of the class that
-    ' reached the dimension, ranked or not.
-    '
-    ws.Cells(TotalRow + 1, 2).Value = "Category total"
-    SetFormula ws.Cells(TotalRow + 1, 3), CategoryTotalFormula(AssetClass)
-
-    SetFormula ws.Cells(TotalRow + 1, 9), _
-        "=C" & CStr(TotalRow + 1) & "-G" & CStr(TotalRow + 1)
-
-    ReferenceTopTen _
-        StageData, AssetClass, Col, _
-        RefNames, RefValues, RefNDGs, RefCount, RefTotal, RefUnionNDG
-
-    For i = 1 To RefCount
-
-        r = FirstRow + i - 1
-
-        ws.Cells(r, 6).Value = RefNames(i)
-        ws.Cells(r, 7).Value = RefValues(i)
-        ws.Cells(r, 8).Value = RefNDGs(i)
-
-    Next i
-
-    ws.Cells(TotalRow, 8).Value = RefUnionNDG
-    ws.Cells(TotalRow + 1, 7).Value = RefTotal
-
-    FormatBlock ws, FirstRow, TotalRow
-
-End Sub
-
-'
-' The whole ranked table in one formula: country, total value and distinct
-' NDG count, ordered by value descending with ties broken by name ascending,
-' first ten.  GROUPBY takes a LAMBDA where an aggregate is wanted, so the
-' distinct count is written where SUM sits rather than assembled from
-' UNIQUE and COUNTA per row.
-'
-Private Sub WriteGroupByList( _
-    ByVal ws As Worksheet, _
-    ByVal FirstRow As Long, _
-    ByVal AssetClass As String)
-
-    SetFormula ws.Cells(FirstRow, 2), _
-        "=LET(" & _
-        StageBindings( _
-            WantGeography:=True, WantNDG:=True, WantValue:=True) & _
-        "k," & KeepExpression(AssetClass) & "," & _
-        "g,FILTER(geo,k),v,FILTER(val,k),n,FILTER(ndg,k)," & _
-        "a,GROUPBY(g,HSTACK(v,n)," & _
-        "HSTACK(SUM,LAMBDA(x,COUNTA(UNIQUE(x)))),0,0)," & _
-        "IFERROR(TAKE(SORTBY(a,CHOOSECOLS(a,2),-1,CHOOSECOLS(a,1),1)," & _
-        CStr(TOP_COUNT) & "),""""))"
-
-End Sub
-
-'
-' The same table without GROUPBY: the names rank in one formula, and the two
-' measures are then looked up a row at a time.
-'
-Private Sub WriteSumIfsList( _
-    ByVal ws As Worksheet, _
-    ByVal FirstRow As Long, _
-    ByVal AssetClass As String, _
-    ByVal Keep As String)
-
-    Dim Criteria As String
-    Dim r As Long
-    Dim i As Long
-
-    Criteria = _
-        STAGE_TABLE & "[Risk Asset Class],""" & AssetClass & """," & _
-        FlagRange() & ",1"
-
-    SetFormula ws.Cells(FirstRow, 2), _
-        "=LET(u,UNIQUE(FILTER(" & GeoRange() & "," & Keep & "))," & _
-        "t,SUMIFS(" & STAGE_TABLE & "[Allocated Collateral Value]," & _
-        GeoRange() & ",u," & Criteria & ")," & _
-        "IFERROR(INDEX(SORTBY(u,t,-1,u,1),SEQUENCE(" & _
-        CStr(TOP_COUNT) & ")),""""))"
-
-    For i = 1 To TOP_COUNT
-
-        r = FirstRow + i - 1
-
-        SetFormula ws.Cells(r, 3), _
-            "=IF($B" & CStr(r) & "="""",""""," & _
-            "SUMIFS(" & STAGE_TABLE & "[Allocated Collateral Value]," & _
-            GeoRange() & ",$B" & CStr(r) & "," & Criteria & "))"
-
-        SetFormula ws.Cells(r, 4), _
-            "=IF($B" & CStr(r) & "="""",""""," & _
-            "COUNTA(UNIQUE(FILTER(" & STAGE_TABLE & "[NDG]," & Keep & _
-            "*(" & GeoRange() & "=$B" & CStr(r) & ")))))"
-
-    Next i
-
-End Sub
-
 Private Function UnionNdgFormula( _
     ByVal AssetClass As String, _
     ByVal FirstRow As Long, _
     ByVal TotalRow As Long) As String
 
-    Dim TopNames As String
-
-    TopNames = _
-        "$B$" & CStr(FirstRow) & ":$B$" & CStr(TotalRow - 1)
-
-    If UseGroupBy Then
-
-        UnionNdgFormula = _
-            "=LET(" & _
-            StageBindings( _
-                WantGeography:=True, WantNDG:=True, WantValue:=False) & _
-            "k," & KeepExpression(AssetClass) & "," & _
-            "COUNTA(UNIQUE(FILTER(ndg," & _
-            "k*ISNUMBER(MATCH(geo," & TopNames & ",0))))))"
-
-    Else
-
-        UnionNdgFormula = _
-            "=COUNTA(UNIQUE(FILTER(" & STAGE_TABLE & "[NDG],(" & _
-            STAGE_TABLE & "[Risk Asset Class]=""" & AssetClass & """)*" & _
-            FlagRange() & "*ISNUMBER(MATCH(" & GeoRange() & "," & _
-            TopNames & ",0)))))"
-
-    End If
+    UnionNdgFormula = _
+        "=LET(" & _
+        StageBindings(WantGeography:=True, WantNDG:=True, WantValue:=False) & _
+        "k," & KeepExpression(AssetClass) & "," & _
+        "COUNTA(UNIQUE(FILTER(ndg,k*ISNUMBER(MATCH(geo,$B$" & _
+        CStr(FirstRow) & ":$B$" & CStr(TotalRow - 1) & ",0))))))"
 
 End Function
 
 Private Function CategoryTotalFormula( _
     ByVal AssetClass As String) As String
 
-    If UseGroupBy Then
-
-        CategoryTotalFormula = _
-            "=LET(" & _
-            StageBindings( _
-                WantGeography:=False, WantNDG:=False, WantValue:=True) & _
-            "k," & KeepExpression(AssetClass) & ",SUM(FILTER(val,k,0)))"
-
-    Else
-
-        CategoryTotalFormula = _
-            "=SUMIFS(" & STAGE_TABLE & "[Allocated Collateral Value]," & _
-            STAGE_TABLE & "[Risk Asset Class],""" & AssetClass & """," & _
-            FlagRange() & ",1)"
-
-    End If
+    CategoryTotalFormula = _
+        "=LET(" & _
+        StageBindings(WantGeography:=False, WantNDG:=False, WantValue:=True) & _
+        "k," & KeepExpression(AssetClass) & ",SUM(FILTER(val,k,0)))"
 
 End Function
 
@@ -912,16 +658,5 @@ Private Function ReplaceSheet( _
     ws.Name = SheetName
 
     Set ReplaceSheet = ws
-
-End Function
-
-Private Function ColumnLetter( _
-    ByVal ColumnNumber As Long) As String
-
-    ColumnLetter = _
-        Split( _
-            ThisWorkbook.Worksheets(1).Cells(1, ColumnNumber) _
-            .Address(True, False), _
-            "$")(0)
 
 End Function
