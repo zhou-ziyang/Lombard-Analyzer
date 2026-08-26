@@ -263,7 +263,7 @@ Private Sub FormatMCJourneyBands( _
         '
         If Not InBand Then
 
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, MCCol).Value2) > 0 Then
 
                 StartRow = r
@@ -279,7 +279,7 @@ Private Sub FormatMCJourneyBands( _
         '
         If InBand Then
 
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, MCClearedCol).Value2) = 1 Then
 
                 EndRow = r
@@ -367,7 +367,7 @@ Private Sub FormatSFJourneyBands( _
 
         If Not InBand Then
 
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, SFCol).Value2) > 0 Then
 
                 StartRow = r
@@ -381,7 +381,7 @@ Private Sub FormatSFJourneyBands( _
             ' First SF = 0 row is the cleared row.
             ' The cleared row itself is not formatted.
             '
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, SFCol).Value2) = 0 Then
 
                 LastActiveRow = r - 1

@@ -205,6 +205,12 @@ Public Function ParseCsvDouble( _
 
 End Function
 
+'
+' The two ways a number reaches this workbook.  ParseCsvDouble takes
+' the raw text of a CSV field; WorksheetDouble takes a cell value that
+' Excel has already typed, and which may be an error, empty or text.
+' Both answer 0 rather than raising, because every caller is summing.
+'
 Public Function WorksheetDouble( _
     ByVal ValueIn As Variant) As Double
 
@@ -276,33 +282,6 @@ Public Sub RenameHeader( _
     End If
 
 End Sub
-
-Public Function GetNumericValue( _
-    ByVal v As Variant) As Double
-
-    If IsError(v) Then
-        GetNumericValue = 0
-        Exit Function
-    End If
-
-    If IsEmpty(v) Then
-        GetNumericValue = 0
-        Exit Function
-    End If
-
-    If Len(Trim$(CStr(v))) = 0 Then
-        GetNumericValue = 0
-        Exit Function
-    End If
-
-    If Not IsNumeric(v) Then
-        GetNumericValue = 0
-        Exit Function
-    End If
-
-    GetNumericValue = CDbl(v)
-
-End Function
 
 Public Function GetDateCode( _
     ByVal InputDate As Date) As String

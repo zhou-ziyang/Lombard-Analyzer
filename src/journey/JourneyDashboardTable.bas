@@ -1779,7 +1779,7 @@ Private Function GetStatusEpisodes( _
 
     For r = FIRST_DATA_ROW To LastRow
         If Not InBand Then
-            If GetNumericValue(wsData.Cells(r, ActiveCol).Value2) > 0 Then
+            If WorksheetDouble(wsData.Cells(r, ActiveCol).Value2) > 0 Then
                 StartRow = r
                 InBand = True
             End If
@@ -1803,10 +1803,10 @@ Private Function StatusEpisodeClosed( _
 
     If CloseCol > 0 Then
         StatusEpisodeClosed = _
-            (GetNumericValue(wsData.Cells(RowNumber, CloseCol).Value2) = 1)
+            (WorksheetDouble(wsData.Cells(RowNumber, CloseCol).Value2) = 1)
     Else
         StatusEpisodeClosed = _
-            (GetNumericValue(wsData.Cells(RowNumber, ActiveCol).Value2) = 0)
+            (WorksheetDouble(wsData.Cells(RowNumber, ActiveCol).Value2) = 0)
     End If
 End Function
 
