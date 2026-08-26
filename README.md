@@ -139,15 +139,20 @@ the euro signs in `RevenueTools` are the ones that bite first.
 Open items. Anything fixed has been removed from this list; see the commit
 history for what changed.
 
+**Kept on purpose**
+
+`ImportAccountsByDate` and `ImportPositionsByDate` have had no caller since
+`PortfolioDataTools` was removed, and `ImportCsvByDate`, `SourceFileExists` and
+`ResolveAvailableDate` sit behind them. They are retained for future use — a
+dead-code sweep should skip them rather than take half of `ImportTools` with
+them. Because nothing exercises that path, the write loop's simplification
+keeps the statements it replaced as a comment.
+
 **Tidying**
 
-- `ImportCsvByDate` recomputes `LastRow = ws.Range("A2").End(xlUp).Row` inside
-  its write loop. It is 1 on every iteration whatever the sheet holds, because
-  the search starts at row 2 and the only cell it can reach going up is A1.
-  The write target is therefore `B(2 + i)` and the output is correct, but the
-  lookup is a constant dressed as a search. Its `TextToColumns` call also
-  splits on `Chr(10)` where the rest of the codebase splits these files on
-  `";"`.
+- `ImportCsvByDate`'s `TextToColumns` call splits on `Chr(10)` where the rest
+  of the codebase splits these files on `";"`. Left alone until the intent is
+  known.
 - `DeltaCalculation`'s `ErrHandler` / `CleanExit` labels are unreachable
   because `On Error GoTo ErrHandler` is commented out.
 - `RegisterUnknownAsset` takes an optional `NoteHandler` argument that shadows
