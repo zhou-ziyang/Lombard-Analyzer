@@ -607,22 +607,6 @@ Public Function IsTechnicalReason( _
 
 End Function
 
-Public Function SafeCellText( _
-    ByVal TargetCell As Range) As String
-
-    If IsError(TargetCell.Value) Then
-
-        SafeCellText = ""
-
-    Else
-
-        SafeCellText = _
-            Trim$(CStr(TargetCell.Value2))
-
-    End If
-
-End Function
-
 Private Sub FormatMCByApprovedRatio( _
     ByVal ws As Worksheet, _
     ByVal LastRow As Long, _
@@ -1053,5 +1037,3 @@ Private Sub ApplyLTVTrendHighlight( _
     End With
 
 End Sub
-
-
