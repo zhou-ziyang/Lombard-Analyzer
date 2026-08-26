@@ -100,12 +100,22 @@ Public Sub BuildCountryConcentrationProbe()
 
     WriteProbeHeader ws, StageTable
 
-    Classes = Array("Equity", "Corporate Bonds", "Certificates")
+    '
+    ' Element 0 labels the block; the rest are the Risk Asset Class values
+    ' that belong to it.  Certificates is written into the staging table as
+    ' "Certificates (Excl. Protected)", and RiskAssetIndexFromClass accepts
+    ' the bare name too, so both are matched here.
+    '
+    Classes = Array( _
+        Array("Equity", "Equity"), _
+        Array("Corporate Bonds", "Corporate Bonds"), _
+        Array("Certificates", "Certificates", _
+              "Certificates (Excl. Protected)"))
     BlockRow = FIRST_BLOCK_ROW
 
     For ClassIndex = LBound(Classes) To UBound(Classes)
 
-        WriteClassBlock ws, BlockRow, CStr(Classes(ClassIndex)), StageData, Col
+        WriteClassBlock ws, BlockRow, Classes(ClassIndex), StageData, Col
 
         BlockRow = BlockRow + BLOCK_HEIGHT
 
@@ -201,7 +211,7 @@ End Sub
 Private Sub WriteClassBlock( _
     ByVal ws As Worksheet, _
     ByVal TopRow As Long, _
-    ByVal AssetClass As String, _
+    ByVal ClassSpec As Variant, _
     ByRef StageData As Variant, _
     ByVal Col As Object)
 
@@ -222,12 +232,12 @@ Private Sub WriteClassBlock( _
     TotalRow = FirstRow + TOP_COUNT
     TotalCell = "$C$" & CStr(TotalRow + 1)
 
-    ws.Cells(TopRow, 1).Value = AssetClass
+    ws.Cells(TopRow, 1).Value = CStr(ClassSpec(0))
     ws.Cells(TopRow, 1).Font.Bold = True
 
     WriteBlockHeaders ws, TopRow + 1
 
-    WriteRankedTable ws, FirstRow, AssetClass
+    WriteRankedTable ws, FirstRow, ClassSpec
 
     For i = 1 To TOP_COUNT
 
@@ -262,7 +272,7 @@ Private Sub WriteClassBlock( _
         "=SUM(C" & CStr(FirstRow) & ":C" & CStr(TotalRow - 1) & ")"
 
     ws.Cells(TotalRow, 4).Formula2 = _
-        UnionNdgFormula(AssetClass, FirstRow, TotalRow)
+        UnionNdgFormula(ClassSpec, FirstRow, TotalRow)
 
     ws.Cells(TotalRow, 5).Formula2 = "=C" & CStr(TotalRow) & "/" & TotalCell
 
@@ -280,13 +290,13 @@ Private Sub WriteClassBlock( _
     ' reached the dimension, ranked or not.
     '
     ws.Cells(TotalRow + 1, 2).Value = "Category total"
-    ws.Cells(TotalRow + 1, 3).Formula2 = CategoryTotalFormula(AssetClass)
+    ws.Cells(TotalRow + 1, 3).Formula2 = CategoryTotalFormula(ClassSpec)
 
     ws.Cells(TotalRow + 1, 9).Formula2 = _
         "=C" & CStr(TotalRow + 1) & "-G" & CStr(TotalRow + 1)
 
     ReferenceTopTen _
-        StageData, AssetClass, Col, _
+        StageData, ClassSpec, Col, _
         RefNames, RefValues, RefNDGs, RefCount, RefTotal, RefUnionNDG
 
     For i = 1 To RefCount
@@ -321,12 +331,12 @@ End Sub
 Private Sub WriteRankedTable( _
     ByVal ws As Worksheet, _
     ByVal FirstRow As Long, _
-    ByVal AssetClass As String)
+    ByVal ClassSpec As Variant)
 
     ws.Cells(FirstRow, 2).Formula2 = _
         "=LET(" & _
         StageBindings(WantGeography:=True, WantNDG:=True, WantValue:=True) & _
-        "k," & KeepExpression(AssetClass) & "," & _
+        "k," & KeepExpression(ClassSpec) & "," & _
         "g,FILTER(geo,k),v,FILTER(val,k),n,FILTER(ndg,k)," & _
         "a,DROP(GROUPBY(g,HSTACK(v,n)," & _
         "HSTACK(SUM,LAMBDA(x,COUNTA(UNIQUE(x)))),0,0),1)," & _
@@ -378,37 +388,59 @@ End Function
 ' expression as the ranked list.
 '
 Private Function KeepExpression( _
-    ByVal AssetClass As String) As String
+    ByVal ClassSpec As Variant) As String
 
     KeepExpression = _
-        "(cls=""" & AssetClass & """)*" & _
+        "ISNUMBER(MATCH(cls," & ClassNameArray(ClassSpec) & ",0))*" & _
         "(typ<>""" & NON_ENTITY_TYPE & """)*" & _
         "(LEFT(nme," & CStr(Len(NON_ENTITY_PREFIX)) & ")<>""" & _
         NON_ENTITY_PREFIX & """)"
 
 End Function
 
+'
+' The class values as a formula array constant, so one block can match the
+' several strings the staging table uses for it.
+'
+Private Function ClassNameArray( _
+    ByVal ClassSpec As Variant) As String
+
+    Dim i As Long
+
+    For i = 1 To UBound(ClassSpec)
+
+        If i > 1 Then ClassNameArray = ClassNameArray & ","
+
+        ClassNameArray = _
+            ClassNameArray & """" & CStr(ClassSpec(i)) & """"
+
+    Next i
+
+    ClassNameArray = "{" & ClassNameArray & "}"
+
+End Function
+
 Private Function UnionNdgFormula( _
-    ByVal AssetClass As String, _
+    ByVal ClassSpec As Variant, _
     ByVal FirstRow As Long, _
     ByVal TotalRow As Long) As String
 
     UnionNdgFormula = _
         "=LET(" & _
         StageBindings(WantGeography:=True, WantNDG:=True, WantValue:=False) & _
-        "k," & KeepExpression(AssetClass) & "," & _
+        "k," & KeepExpression(ClassSpec) & "," & _
         "COUNTA(UNIQUE(FILTER(ndg,k*ISNUMBER(MATCH(geo,$B$" & _
         CStr(FirstRow) & ":$B$" & CStr(TotalRow - 1) & ",0))))))"
 
 End Function
 
 Private Function CategoryTotalFormula( _
-    ByVal AssetClass As String) As String
+    ByVal ClassSpec As Variant) As String
 
     CategoryTotalFormula = _
         "=LET(" & _
         StageBindings(WantGeography:=False, WantNDG:=False, WantValue:=True) & _
-        "k," & KeepExpression(AssetClass) & ",SUM(FILTER(val,k,0)))"
+        "k," & KeepExpression(ClassSpec) & ",SUM(FILTER(val,k,0)))"
 
 End Function
 
@@ -460,7 +492,7 @@ End Sub
 '
 Private Sub ReferenceTopTen( _
     ByRef StageData As Variant, _
-    ByVal AssetClass As String, _
+    ByVal ClassSpec As Variant, _
     ByVal Col As Object, _
     ByRef OutNames() As String, _
     ByRef OutValues() As Double, _
@@ -498,8 +530,9 @@ Private Sub ReferenceTopTen( _
 
     For RowNo = 1 To UBound(StageData, 1)
 
-        If StrComp(Trim$(CStr(StageData(RowNo, Col("Risk Asset Class")))), _
-                   AssetClass, vbTextCompare) = 0 Then
+        If ClassMatches( _
+               ClassSpec, _
+               CStr(StageData(RowNo, Col("Risk Asset Class")))) Then
 
             ExposureType = Trim$(CStr(StageData(RowNo, Col("Exposure Type"))))
             ExposureName = CStr(StageData(RowNo, Col("Exposure Name")))
@@ -596,6 +629,26 @@ End Sub
 ' Header name to column number, so a reordered staging table does not
 ' silently read the wrong column.
 '
+Private Function ClassMatches( _
+    ByVal ClassSpec As Variant, _
+    ByVal RiskAssetClass As String) As Boolean
+
+    Dim i As Long
+
+    For i = 1 To UBound(ClassSpec)
+
+        If StrComp(Trim$(RiskAssetClass), _
+                   CStr(ClassSpec(i)), vbTextCompare) = 0 Then
+
+            ClassMatches = True
+            Exit Function
+
+        End If
+
+    Next i
+
+End Function
+
 Private Function ColumnIndexes( _
     ByVal StageTable As ListObject) As Object
 
