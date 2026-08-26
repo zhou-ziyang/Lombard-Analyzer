@@ -78,7 +78,8 @@ src/reference/  RefAssetMapping
 src/weekly/     WeeklyAnalysisGenerate, WeeklyAnalysisLayout, WeeklyAnalysisEmail
 src/journey/    Journey, JourneyFormatting, JourneyDashboardTable, JourneyPositionAnalysis
 src/delta/      DeltaCalculation, DeltaRevenue
-tools/          ToolsInstall (loads a folder of modules; not part of the workbook)
+tools/          ToolsInstall (loads a folder of modules), ToolsCountryProbe
+                (formula-vs-VBA experiment) — neither is part of the workbook
 archive/        JourneyVisualization (superseded)
 ```
 
@@ -202,6 +203,25 @@ one that was renamed.
 Pasting the text into a new module instead leaves `Attribute VB_Name` in the
 body, where it is not valid VBA and shows as a syntax error — it is a
 file-format directive the importer reads and strips.
+
+## Experiment: the concentration arithmetic as formulas
+
+`tools/ToolsCountryProbe.bas` builds the Country of Risk concentration, Full
+scope, twice over the same `RiskExposure` staging table — once with worksheet
+formulas and once with a VBA pass — and puts the difference between them in a
+column. Import it, run `BuildCountryConcentrationProbe`, and read the three
+numbers at the top of the *Country Probe* sheet: they should all be zero.
+
+The staging table is already a fact table (one row per position × allocated
+exposure, with every dimension beside the measure), so the 432 lines of
+`AggregateUnifiedRiskStageData` are a hand-written `GROUP BY` that `SUMIFS`
+and `UNIQUE` do natively. What the probe tests is not whether that is possible
+but whether the *semantics* survive the translation — the three that are easy
+to lose being the share denominator, the union-not-sum `#NDG` on the total
+row, and the tie-break on equal values.
+
+It needs `LET`, `FILTER`, `UNIQUE`, `SORTBY` and `SEQUENCE`: Excel 2021 or
+365. Nothing newer — `LAMBDA`, `BYROW` and `TAKE` are deliberately avoided.
 
 ## Encoding
 
