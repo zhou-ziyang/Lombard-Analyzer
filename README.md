@@ -11,10 +11,10 @@ configuration parameters (as defined names) and one button per entry point.
 
 | Home section | Defined names | Button | Entry point |
 | --- | --- | --- | --- |
-| 01 Configuration | `path`, `report_path`, `Certificate_Path` | Text-to-Column Settings | `TextToCol.text_to_col1` |
-| 01 Configuration | — | Clear Sheets | `Clean.Clean` |
+| 01 Configuration | `path`, `report_path`, `Certificate_Path` | Text-to-Column Settings | `CoreTextToCol.text_to_col1` |
+| 01 Configuration | — | Clear Sheets | `CoreClean.Clean` |
 | 02 Date Range Analysis | `AnalysisStartDate`, `AnalysisEndDate` | Calculate Delta | `DeltaCalculation.BuildPositionMovements` |
-| 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `RevenueTools.BuildRevenueSummary` |
+| 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `DeltaRevenue.BuildRevenueSummary` |
 | 03 Weekly Analysis | `WeeklyEndDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
 
@@ -62,7 +62,7 @@ Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
 
-`Clean` keeps only the sheets on its own list and deletes everything else,
+`CoreClean` keeps only the sheets on its own list and deletes everything else,
 *Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and
 rebuilding them is the intended behaviour. The list also names sheets that
 are not in this workbook (`Code`, `DateRange`, `PEC List`, `Database`,
@@ -72,13 +72,61 @@ other Lombard workbooks without editing it.
 ## Layout
 
 ```
-src/core/       Utils, DataTools, GlobalVariables, Cache, ImportTools, Clean, TextToCol
+src/core/       CoreUtils, CoreReportFormat, CoreImport, CoreCache,
+                CoreClean, CoreTextToCol, CoreGlobals
+src/reference/  RefAssetMapping
 src/weekly/     WeeklyAnalysisGenerate, WeeklyAnalysisLayout, WeeklyAnalysisEmail
 src/journey/    Journey, JourneyFormatting, JourneyDashboardTable, JourneyPositionAnalysis
-src/delta/      DeltaCalculation, RevenueTools
-src/reference/  AssetMapping
+src/delta/      DeltaCalculation, DeltaRevenue
 archive/        JourneyVisualization (superseded)
 ```
+
+### Module names carry the folder
+
+Git has folders; the VBE does not — every module imported into the
+workbook lands in one flat list. So each module name starts with the folder
+it comes from, and the file name is that module name, which is also what the
+VBE writes when it exports. `Journey*`, `Weekly*` and `DeltaCalculation`
+already read that way and were left alone.
+
+The layers are strict, and the call graph has no edge going the other way:
+
+```
+weekly, journey, delta   →   reference   →   core
+```
+
+`core` knows nothing about Lombard loans: sheets, values, headers, files,
+table formatting. `reference` knows the asset taxonomy. Each pipeline knows
+its own report and nothing about the other two — the shared helpers they used
+to reach across for (`ReadAllLines`, `FindHeaderIndex`, `FormatReportTable`,
+`SafeCellText`) now live in `core`.
+
+`Public` is the whole namespace in VBA: any Public procedure in any standard
+module is callable from every other, and two of the same name stop the project
+compiling. So Public means "something outside this module calls this", and the
+only Public procedures with no caller in the source are the eight zero-argument
+entry points the Home buttons name. Two exceptions carry a comment saying why
+they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches by
+name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to a
+button that would not be visible from the source.
+
+### Why WeeklyAnalysisGenerate stays one module
+
+It is 12,000 lines and 188 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 175 of those procedures are
+Private, along with six Enums and forty-odd Consts. The module is the only
+encapsulation boundary the language has — there are no namespaces, and
+`Private` means "private to this module", not "private to this concern". Cut
+it into five, and every helper the pieces share has to become Public, which
+means global: several hundred new names in the one namespace the whole project
+shares, including enum members like `RiskStageNDG`.
+
+So the boundary earns its size. What splitting would have bought — being able
+to find things — the file order already gives, and the sections run in the
+order the report is built: source loading and CSV parsing, the report
+sections, risk reference data, certificate basket expansion, entity-name
+normalisation, the staging table and its aggregation, then the chart and the
+notes. `docs/weekly-analysis-generate.md` walks through them.
 
 `archive/JourneyVisualization.bas` is commented out in full. Its charting
 procedures were revived inside `JourneyDashboardTable`, which now carries the
@@ -132,12 +180,23 @@ Breakdown has no such column, so an unmatched string would vanish silently;
 that path calls `RegisterUnknownAsset` instead, which writes the string into
 the report's Notes box.
 
+## Importing into the workbook
+
+File → Import File… (Ctrl+M) in the VBE, one `.bas` per module. Pasting the
+text into a new module instead leaves `Attribute VB_Name` in the body, where
+it is not valid VBA and shows as a syntax error — it is a file-format
+directive the importer reads and strips.
+
+When a module has been renamed, remove the old one before importing the new
+file. Both hold the same procedure names, and a project carrying two copies
+fails to compile with "Ambiguous name detected".
+
 ## Encoding
 
 The `.bas` files are exported by the VBE as Windows-1252 with CRLF line
 endings, and `.gitattributes` marks them `-text` so Git does not normalise
 either. Editing them with a UTF-8 tool will corrupt single-byte characters —
-the euro signs in `RevenueTools` are the ones that bite first.
+the euro signs in `DeltaRevenue` are the ones that bite first.
 
 ## Known issues
 
@@ -149,7 +208,7 @@ history for what changed.
 `ImportAccountsByDate` and `ImportPositionsByDate` have had no caller since
 `PortfolioDataTools` was removed, and `ImportCsvByDate`, `SourceFileExists` and
 `ResolveAvailableDate` sit behind them. They are retained for future use — a
-dead-code sweep should skip them rather than take half of `ImportTools` with
+dead-code sweep should skip them rather than take half of `CoreImport` with
 them. Because nothing exercises that path, the write loop's simplification
 keeps the statements it replaced as a comment.
 
