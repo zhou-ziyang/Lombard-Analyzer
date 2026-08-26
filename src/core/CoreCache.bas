@@ -1,4 +1,4 @@
-Attribute VB_Name = "Cache"
+Attribute VB_Name = "CoreCache"
 Option Explicit
 
 Public Type PositionCache

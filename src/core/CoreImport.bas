@@ -1,4 +1,4 @@
-Attribute VB_Name = "ImportTools"
+Attribute VB_Name = "CoreImport"
 Option Explicit
 
 Public MissingFiles As String

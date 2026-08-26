@@ -1,4 +1,4 @@
-Attribute VB_Name = "Clean"
+Attribute VB_Name = "CoreClean"
 Option Explicit
 
 Public Sub Clean()

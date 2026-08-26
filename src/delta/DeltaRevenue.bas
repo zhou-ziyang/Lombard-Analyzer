@@ -1,4 +1,4 @@
-Attribute VB_Name = "RevenueTools"
+Attribute VB_Name = "DeltaRevenue"
 Option Explicit
 
 Public Sub BuildRevenueSummary()

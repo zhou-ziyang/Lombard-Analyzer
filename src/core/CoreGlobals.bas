@@ -1,4 +1,4 @@
-Attribute VB_Name = "GlobalVariables"
+Attribute VB_Name = "CoreGlobals"
 Option Explicit
 
 Public NoteHandler As String

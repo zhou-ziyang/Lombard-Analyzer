@@ -12065,7 +12065,7 @@ Private Sub CreateWeeklyEmailButton(ByVal ws As Worksheet)
     Set Btn2 = ws.Buttons.Add(455, 16, 50, 26)
     Btn2.name = "btnWeeklyRerun"
     Btn2.Characters.Text = "Rerun"
-    Btn2.OnAction = "WeeklyAnalysisGenerate.GenerateWeeklyAnalysis"
+    Btn2.OnAction = "GenerateWeeklyAnalysis"
 
 End Sub
 

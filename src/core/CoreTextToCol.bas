@@ -1,4 +1,4 @@
-Attribute VB_Name = "TextToCol"
+Attribute VB_Name = "CoreTextToCol"
 Sub text_to_col1()
 
     ThisWorkbook.Worksheets("Home").Range("AnalysisEndDate").TextToColumns _
