@@ -987,8 +987,15 @@ Public Sub GenerateWeeklyAnalysis()
     Set UnknownAssets = CreateObject("Scripting.Dictionary")
     Set AssetTypeMapping = CreateObject("Scripting.Dictionary")
 
-CurrentDate = _
-    Worksheets("Home").Range("WeeklyEndDate").Value
+    '
+    ' ThisWorkbook, not the active one.  This process opens the certificate
+    ' reference workbook, and the same modules are dropped into the other
+    ' Lombard workbooks, so whichever workbook happens to be active is not
+    ' reliably this one.  CurrentRiskStageAnalysisDate already reads it this
+    ' way, and the two dates have to agree.
+    '
+    CurrentDate = _
+        ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
 
 If Not SourceFileExists(CurrentDate, "POSITIONS") _
    Or Not SourceFileExists(CurrentDate, "ACCOUNTS") Then
@@ -1467,7 +1474,8 @@ Private Sub BuildCollateralBreakdown( _
     c = Layout.BreakdownCol
     LastCol = c + CollateralCategoryCount()
 
-    ReportDate = Worksheets("Home").Range("WeeklyEndDate").Value
+    ReportDate = _
+        ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
 
     Set DictCurrent = _
         BuildCollateralDictionary(CurrentPositions, UnknownAssets)
