@@ -87,9 +87,11 @@ Public Sub InitializeLayout()
         Layout.ReportCol + 5
 
     ' Entered (middle bottom)
+    ' The breakdown above it is ten rows now that it carries a week block and
+    ' a week-on-week change, so this starts three rows lower than it did.
 
     Layout.EnteredRow = _
-        Layout.ReportRow + 12
+        Layout.ReportRow + 14
 
     Layout.EnteredCol = _
         Layout.ReportCol + 5
@@ -111,9 +113,11 @@ Public Sub InitializeLayout()
         Layout.ReportCol + 15
 
     ' Pie Chart
+    ' Below the entered table, which is six rows now that it carries a window
+    ' each for the week and the month.
 
     Layout.PieRow = _
-        Layout.ReportRow + 18
+        Layout.ReportRow + 21
 
     Layout.PieCol = _
         Layout.ReportCol + 5

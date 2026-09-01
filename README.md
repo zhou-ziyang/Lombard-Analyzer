@@ -147,9 +147,10 @@ Historical Events tables. It is kept only for reference.
 and year-end snapshots, then builds the report sections in place on one sheet
 using the coordinates in `WeeklyAnalysisLayout.Layout`: portfolio overview,
 collateral breakdown, new/ended loans, entered collateral, the pie chart, and
-the exposure concentration block. The overview carries a row a week back as
-well as the monthly history, and each loan-movement table carries a row per
-window, so both read week on week and month on month at once. The concentration block is the bulk of the
+the exposure concentration block. Every section that measures change carries
+the week beside the month: the overview gains a row seven days back, the
+collateral breakdown a week snapshot and a `% Change WoW` row, the two
+loan-movement tables and the entered-collateral table a block per window. The concentration block is the bulk of the
 module: certificate baskets are expanded recursively into their underlyings,
 entity names are normalised and merged (diacritics, legal suffixes, share
 class suffixes, prefix matching, manual variants), resolved against the

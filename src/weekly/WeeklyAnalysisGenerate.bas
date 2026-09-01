@@ -1051,7 +1051,9 @@ YTDDate = _
         BuildCollateralBreakdown _
             ws, _
             PositionsCurrent, _
+            PositionsWeek, _
             PositionsYTD, _
+            WeekDate, _
             UnknownAssets
 
         WriteAssetTypeMapping
@@ -1097,6 +1099,7 @@ YTDDate = _
         BuildEnteredCollateralSection _
             ws, _
             AccountsCurrent, _
+            AccountsWeek, _
             AccountsCompare, _
             PositionsCurrent, _
             UnknownAssets
@@ -1487,13 +1490,17 @@ End Sub
 Private Sub BuildCollateralBreakdown( _
     ByVal ws As Worksheet, _
     ByRef CurrentPositions As Variant, _
+    ByRef WeekPositions As Variant, _
     ByRef YTDPositions As Variant, _
+    ByVal WeekDate As Date, _
     ByRef UnknownAssets As Object)
 
     Dim DictCurrent As Object
+    Dim DictWeek As Object
     Dim DictYTD As Object
 
     Dim TotalCurrent As Double
+    Dim TotalWeek As Double
     Dim TotalYTD As Double
 
     Dim ReportDate As Date
@@ -1514,10 +1521,13 @@ Private Sub BuildCollateralBreakdown( _
 
     Set DictCurrent = _
         BuildCollateralDictionary(CurrentPositions, UnknownAssets)
+    Set DictWeek = _
+        BuildCollateralDictionary(WeekPositions, UnknownAssets)
     Set DictYTD = _
         BuildCollateralDictionary(YTDPositions, UnknownAssets)
 
     TotalCurrent = CollateralTotal(DictCurrent)
+    TotalWeek = CollateralTotal(DictWeek)
     TotalYTD = CollateralTotal(DictYTD)
 
     WriteSectionTitle _
@@ -1528,31 +1538,49 @@ Private Sub BuildCollateralBreakdown( _
     ws.Cells(r + 1, c).Value = "Date"
     WriteCollateralHeaders ws, r + 1, c
 
+    '
+    ' Oldest to newest, each snapshot followed by its shares, then the two
+    ' changes.  The week row carries the date it resolved to rather than a
+    ' label: when the snapshots are sparse it can land on the current date,
+    ' and repeating the date says so plainly.
+    '
     ws.Cells(r + 2, c).Value = "YE " & Year(ReportDate) - 1
     WriteCollateralAmounts ws, r + 2, c, DictYTD
 
     ws.Cells(r + 3, c).Value = "% of Portfolio"
     WriteCollateralShares ws, r + 3, c, DictYTD, TotalYTD
 
-    ws.Cells(r + 4, c).Value = ReportDate
-    WriteCollateralAmounts ws, r + 4, c, DictCurrent
+    ws.Cells(r + 4, c).Value = WeekDate
+    WriteCollateralAmounts ws, r + 4, c, DictWeek
 
     ws.Cells(r + 5, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 5, c, DictCurrent, TotalCurrent
+    WriteCollateralShares ws, r + 5, c, DictWeek, TotalWeek
 
-    ws.Cells(r + 6, c).Value = "% Change YTD"
-    WriteCollateralChange ws, r + 6, c, DictCurrent, DictYTD
+    ws.Cells(r + 6, c).Value = ReportDate
+    WriteCollateralAmounts ws, r + 6, c, DictCurrent
+
+    ws.Cells(r + 7, c).Value = "% of Portfolio"
+    WriteCollateralShares ws, r + 7, c, DictCurrent, TotalCurrent
+
+    ws.Cells(r + 8, c).Value = "% Change WoW"
+    WriteCollateralChange ws, r + 8, c, DictCurrent, DictWeek
+
+    ws.Cells(r + 9, c).Value = "% Change YTD"
+    WriteCollateralChange ws, r + 9, c, DictCurrent, DictYTD
 
     '
     ' Formatting
     '
 
-    ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 4, c)).NumberFormat = "dd/mm/yyyy"
+    ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 6, c)).NumberFormat = "dd/mm/yyyy"
 
     ws.Range( _
         ws.Cells(r + 2, c + 1), _
-        ws.Cells(r + 4, LastCol)).NumberFormat = EuroNumberFormat()
+        ws.Cells(r + 6, LastCol)).NumberFormat = EuroNumberFormat()
 
+    '
+    ' The three share rows and the two change rows.
+    '
     ws.Range( _
         ws.Cells(r + 3, c + 1), _
         ws.Cells(r + 3, LastCol)).NumberFormat = "0.00%"
@@ -1562,22 +1590,28 @@ Private Sub BuildCollateralBreakdown( _
         ws.Cells(r + 5, LastCol)).NumberFormat = "0.00%"
 
     ws.Range( _
-        ws.Cells(r + 6, c + 1), _
-        ws.Cells(r + 6, LastCol)).NumberFormat = "0.00%"
+        ws.Cells(r + 7, c + 1), _
+        ws.Cells(r + 7, LastCol)).NumberFormat = "0.00%"
+
+    ws.Range( _
+        ws.Cells(r + 8, c + 1), _
+        ws.Cells(r + 9, LastCol)).NumberFormat = "0.00%"
 
     FormatReportTable _
-        ws.Range(ws.Cells(r + 1, c), ws.Cells(r + 6, LastCol)), _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(r + 9, LastCol)), _
         1
 
-    FormatFirstColumn ws, r + 1, r + 6, c
+    FormatFirstColumn ws, r + 1, r + 9, c
 
     AddBottomBorder ws, r + 3, c, LastCol
     AddBottomBorder ws, r + 5, c, LastCol
+    AddBottomBorder ws, r + 7, c, LastCol
 
     ws.Cells(r + 3, c).Font.Bold = False
     ws.Cells(r + 5, c).Font.Bold = False
+    ws.Cells(r + 7, c).Font.Bold = False
 
-    With ws.Range(ws.Cells(r + 6, c), ws.Cells(r + 6, LastCol))
+    With ws.Range(ws.Cells(r + 8, c), ws.Cells(r + 9, LastCol))
         .Font.Bold = True
         .Interior.Color = RGB(212, 212, 212)
     End With
@@ -1921,11 +1955,37 @@ End Sub
 Private Sub BuildEnteredCollateralSection( _
     ByVal ws As Worksheet, _
     ByRef CurrentAccounts As Variant, _
-    ByRef PreviousAccounts As Variant, _
+    ByRef WeekAccounts As Variant, _
+    ByRef MonthAccounts As Variant, _
     ByRef CurrentPositions As Variant, _
     ByRef UnknownAssets As Object)
 
-    Dim PreviousNDGs As Object
+    If Not WeeklyDataHasRows(CurrentAccounts) Then Exit Sub
+    If Not WeeklyDataHasRows(MonthAccounts) Then Exit Sub
+    If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
+
+    WriteEnteredCollateralLayout _
+        ws, _
+        EnteredCollateralAmounts( _
+            CurrentAccounts, WeekAccounts, CurrentPositions, UnknownAssets), _
+        EnteredCollateralAmounts( _
+            CurrentAccounts, MonthAccounts, CurrentPositions, UnknownAssets), _
+        Layout.EnteredRow, _
+        Layout.EnteredCol
+
+End Sub
+
+'
+' The collateral of the NDGs the current snapshot has and the reference one
+' did not, by asset class.  One window per call.
+'
+Private Function EnteredCollateralAmounts( _
+    ByRef CurrentAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant, _
+    ByRef CurrentPositions As Variant, _
+    ByRef UnknownAssets As Object) As Object
+
+    Dim ReferenceNDGs As Object
     Dim NewNDGs As Object
     Dim Amounts As Object
 
@@ -1935,20 +1995,20 @@ Private Sub BuildEnteredCollateralSection( _
 
     Dim r As Long
 
-    If Not WeeklyDataHasRows(CurrentAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(PreviousAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
-
-    Set PreviousNDGs = GetAccountNDGDictionary(PreviousAccounts)
-    Set NewNDGs = NewNDGSet()
     Set Amounts = NewCollateralDictionary()
+    Set EnteredCollateralAmounts = Amounts
+
+    If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Function
+
+    Set ReferenceNDGs = GetAccountNDGDictionary(ReferenceAccounts)
+    Set NewNDGs = NewNDGSet()
 
     For r = LBound(CurrentAccounts, 1) To UBound(CurrentAccounts, 1)
 
         NDG = CleanWeeklyCsvField(CurrentAccounts(r, WeeklyAccountNDG))
 
         If NDG <> "" Then
-            If Not PreviousNDGs.Exists(NDG) Then NewNDGs(NDG) = True
+            If Not ReferenceNDGs.Exists(NDG) Then NewNDGs(NDG) = True
         End If
 
     Next r
@@ -1974,53 +2034,64 @@ Private Sub BuildEnteredCollateralSection( _
 
     Next r
 
-    WriteEnteredCollateralLayout _
-        ws, Amounts, Layout.EnteredRow, Layout.EnteredCol
-
-End Sub
+End Function
 
 Private Sub WriteEnteredCollateralLayout( _
     ByVal ws As Worksheet, _
-    ByVal Amounts As Object, _
+    ByVal WeekAmounts As Object, _
+    ByVal MonthAmounts As Object, _
     ByVal TopRow As Long, _
     ByVal LeftCol As Long)
 
-    Dim Total As Double
     Dim LastCol As Long
 
-    Total = CollateralTotal(Amounts)
     LastCol = LeftCol + CollateralCategoryCount()
 
     WriteSectionTitle _
         ws, TopRow, LeftCol, _
         CollateralCategoryCount() + 1, _
-        "Collateral Entered with New NDGs in the Past Month"
+        "Collateral Entered with New NDGs"
 
     WriteCollateralHeaders ws, TopRow + 1, LeftCol
 
-    ws.Cells(TopRow + 2, LeftCol).Value = "Collateral Value"
-    WriteCollateralAmounts ws, TopRow + 2, LeftCol, Amounts
+    ws.Cells(TopRow + 2, LeftCol).Value = "Past week"
+    WriteCollateralAmounts ws, TopRow + 2, LeftCol, WeekAmounts
 
     ws.Cells(TopRow + 3, LeftCol).Value = "%"
-    WriteCollateralShares ws, TopRow + 3, LeftCol, Amounts, Total
+    WriteCollateralShares _
+        ws, TopRow + 3, LeftCol, WeekAmounts, CollateralTotal(WeekAmounts)
+
+    ws.Cells(TopRow + 4, LeftCol).Value = "Past month"
+    WriteCollateralAmounts ws, TopRow + 4, LeftCol, MonthAmounts
+
+    ws.Cells(TopRow + 5, LeftCol).Value = "%"
+    WriteCollateralShares _
+        ws, TopRow + 5, LeftCol, MonthAmounts, CollateralTotal(MonthAmounts)
 
     ws.Range( _
         ws.Cells(TopRow + 2, LeftCol + 1), _
-        ws.Cells(TopRow + 2, LastCol)).NumberFormat = EuroNumberFormat()
+        ws.Cells(TopRow + 4, LastCol)).NumberFormat = EuroNumberFormat()
 
     ws.Range( _
         ws.Cells(TopRow + 3, LeftCol + 1), _
         ws.Cells(TopRow + 3, LastCol)).NumberFormat = "0.00%"
 
+    ws.Range( _
+        ws.Cells(TopRow + 5, LeftCol + 1), _
+        ws.Cells(TopRow + 5, LastCol)).NumberFormat = "0.00%"
+
     FormatReportTable _
         ws.Range( _
             ws.Cells(TopRow + 1, LeftCol), _
-            ws.Cells(TopRow + 3, LastCol)), _
+            ws.Cells(TopRow + 5, LastCol)), _
         1
 
-    FormatFirstColumn ws, TopRow + 1, TopRow + 3, LeftCol
+    FormatFirstColumn ws, TopRow + 1, TopRow + 5, LeftCol
+
+    AddBottomBorder ws, TopRow + 3, LeftCol, LastCol
 
     ws.Cells(TopRow + 3, LeftCol).Font.Bold = False
+    ws.Cells(TopRow + 5, LeftCol).Font.Bold = False
 
 End Sub
 
