@@ -193,6 +193,13 @@ End Enum
 Private WeeklyPositionCache As Object
 Private WeeklyAccountCache As Object
 
+'
+' Counted while the staging rows are built, so a run that stages nothing can
+' say whether the positions were missing or their exposure names were.
+'
+Private RiskStagePositionsScanned As Long
+Private RiskStageRowsDropped As Long
+
 Private Enum IssuerPlaceholderMode
 
     PlaceholderFromISIN = 1
@@ -9235,7 +9242,19 @@ Private Sub AppendRiskStageRow( _
     Dim StageRow As Variant
 
     If StageRows Is Nothing Then Exit Sub
-    If Trim(ExposureName) = "" Then Exit Sub
+
+    '
+    ' A row with no exposure name cannot be aggregated under anything, so it
+    ' is dropped - but dropping every row of a run without a word is how a
+    ' staging table comes to look as though there was nothing to report.
+    '
+    If Trim(ExposureName) = "" Then
+
+        RiskStageRowsDropped = RiskStageRowsDropped + 1
+
+        Exit Sub
+
+    End If
 
     ReDim StageRow(1 To RISK_STAGE_FIELD_COUNT)
 
@@ -10286,6 +10305,10 @@ Private Sub BuildRiskGranularitySection( _
     If Not WeeklyDataHasRows(PositionData) Then Exit Sub
 
     Set StageRows = NewRiskStageRows()
+
+    RiskStagePositionsScanned = 0
+    RiskStageRowsDropped = 0
+
     Set GeographyEntries = NewExactNameMap()
     Set GeographyObservationSet = NewExactNameMap()
 
@@ -10328,6 +10351,8 @@ Private Sub BuildRiskGranularitySection( _
     For r = _
         LBound(PositionData, 1) To _
         UBound(PositionData, 1)
+
+        RiskStagePositionsScanned = RiskStagePositionsScanned + 1
 
         SourceRow = r + 1
         NDG = _
@@ -10663,6 +10688,8 @@ Private Sub BuildRiskGranularitySection( _
     Set StageFinalizationCache = NewExactNameMap()
 
 
+    AddRiskStagingNote StageRows
+
     StageData = _
         FinalizeRiskStageData( _
             StageRows, _
@@ -10915,6 +10942,34 @@ Private Sub AddUnknownUnderlyingNote( _
         "Collateral value: " & Format(TotalValue, EuroNumberFormat()) & _
         " over " & CStr(RowCount) & " staging row(s)." & _
         Detail
+
+End Sub
+
+'
+' What the staging pass made of the positions it read.  Nothing is said when
+' every position produced an exposure, which is the normal case; the report
+' hears about it only when rows were dropped for want of an exposure name, or
+' when the pass produced no rows at all.  Those two look identical afterwards
+' - an empty staging table and a report of Nones - and neither used to say
+' anything at all.
+'
+Private Sub AddRiskStagingNote( _
+    ByVal StageRows As Collection)
+
+    Dim StagedRows As Long
+
+    If Not StageRows Is Nothing Then StagedRows = StageRows.Count
+
+    If StagedRows > 0 And RiskStageRowsDropped = 0 Then Exit Sub
+
+    WriteNoteWeekly _
+        "Risk staging read " & CStr(RiskStagePositionsScanned) & _
+        " position(s) and produced " & CStr(StagedRows) & " row(s), " & _
+        "dropping " & CStr(RiskStageRowsDropped) & _
+        " for which no exposure name could be resolved." & vbLf & _
+        "Exposure names come from the maintained reference tables, so a run " & _
+        "made before those tables have finished calculating resolves none " & _
+        "of them."
 
 End Sub
 
