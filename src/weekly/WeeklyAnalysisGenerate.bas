@@ -8953,11 +8953,10 @@ Private Function RiskRankedFormula( _
             "d", _
             IIf(RanksEveryRow, "SUM(v),", "SUM(FILTER(val, kAll, 0)),")) & _
         vbLf & vbLf & _
-        RISK_FORMULA_INDENT & "IFERROR(" & vbLf & _
+        RISK_FORMULA_INDENT & "IF(SUM(k) = 0, """"," & vbLf & _
         RISK_FORMULA_INDENT & RISK_FORMULA_INDENT & _
         "HSTACK(CHOOSECOLS(s, 1), CHOOSECOLS(s, 2), " & _
-        "CHOOSECOLS(s, 2) / d, CHOOSECOLS(s, 3))," & vbLf & _
-        RISK_FORMULA_INDENT & RISK_FORMULA_INDENT & """"")" & vbLf & _
+        "CHOOSECOLS(s, 2) / d, CHOOSECOLS(s, 3)))" & vbLf & _
         ")"
 
     RiskRankedFormula = Formula
@@ -9017,10 +9016,13 @@ Private Function RiskUnionNdgFormula( _
             RiskKeepExpression( _
                 DimensionKey, AssetClassKey, ExcludeDPM, True, Visibility) & ",") & _
         vbLf & vbLf & _
-        RISK_FORMULA_INDENT & "IFERROR(COUNTA(UNIQUE(FILTER(ndg," & vbLf & _
-        RISK_FORMULA_INDENT & RISK_FORMULA_INDENT & "k * ISNUMBER(MATCH(" & _
-        RiskDimensionBinding(DimensionKey) & ", " & NameRange & ", 0))))), 0)" & _
-        vbLf & ")"
+        RiskBindLine( _
+            "m", _
+            "k * ISNUMBER(MATCH(" & RiskDimensionBinding(DimensionKey) & _
+            ", " & NameRange & ", 0)),") & _
+        vbLf & vbLf & _
+        RISK_FORMULA_INDENT & _
+        "IF(SUM(m) = 0, 0, COUNTA(UNIQUE(FILTER(ndg, m))))" & vbLf & ")"
 
 End Function
 
@@ -9034,6 +9036,7 @@ Private Function RiskSpilledRowCount( _
 
     Dim Spill As Range
 
+    If IsError(AnchorCell.Value2) Then Exit Function
     If Len(CStr(AnchorCell.Value2)) = 0 Then Exit Function
 
     On Error Resume Next
@@ -11009,11 +11012,26 @@ Private Function WriteTopExposureGroup( _
             ExcludeDPM, _
             Visibility)
 
-    AnchorCell.Calculate
+    '
+    ' GenerateWeeklyAnalysis runs with calculation on manual, and a spilled
+    ' formula has no value until a calculation resolves the spill.  Range
+    ' .Calculate does not reliably do that for a dynamic array, and reading
+    ' the height before it has one makes every class look empty.
+    '
+    Application.Calculate
 
     OutputCount = RiskSpilledRowCount(AnchorCell)
 
-    If OutputCount = 0 Then
+    If IsError(AnchorCell.Value2) Then
+
+        '
+        ' The formula failed rather than found nothing.  Leave it in place so
+        ' the error is on the report, where it can be read, instead of being
+        ' written over with None.
+        '
+        OutputCount = 1
+
+    ElseIf OutputCount = 0 Then
 
         AnchorCell.ClearContents
 
@@ -11055,13 +11073,17 @@ Private Function WriteTopExposureGroup( _
     ' #DIV/0!, which is what the division used to be guarded for.
     '
     ws.Cells(TotalRow, LeftCol + 3).Formula2 = _
-        "=IFERROR(" & _
-        ws.Cells(TotalRow, LeftCol + 2).Address(True, True) & " / " & _
-        RiskCategoryTotalFormula( _
-            DimensionKey, _
-            AssetClassKey, _
-            ExcludeDPM, _
-            Visibility) & ", 0)"
+        "=LET(" & vbLf & _
+        RiskBindLine( _
+            "d", _
+            RiskCategoryTotalFormula( _
+                DimensionKey, _
+                AssetClassKey, _
+                ExcludeDPM, _
+                Visibility) & ",") & vbLf & vbLf & _
+        RISK_FORMULA_INDENT & "IF(d = 0, 0, " & _
+        ws.Cells(TotalRow, LeftCol + 2).Address(True, True) & " / d)" & _
+        vbLf & ")"
 
     FormatReportTable _
         ws.Range( _
