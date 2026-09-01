@@ -964,12 +964,15 @@ Public Sub GenerateWeeklyAnalysis()
     Dim OldNoteHandler As String
     Dim CurrentDate As Date
     Dim ComparisonDate As Date
+    Dim WeekDate As Date
     Dim YTDDate As Date
 
     Dim ws As Worksheet
 
     Dim AccountsCurrent As Variant
     Dim AccountsCompare As Variant
+    Dim AccountsWeek As Variant
+    Dim PositionsWeek As Variant
     Dim PositionsCurrent As Variant
     Dim PositionsCompare As Variant
     Dim PositionsYTD As Variant
@@ -1016,6 +1019,9 @@ ComparisonDate = _
     ResolveComparisonDate( _
         GetComparisonDate(CurrentDate))
 
+WeekDate = _
+    ResolveComparisonDate(CurrentDate - 7)
+
 YTDDate = _
     ResolveComparisonDate( _
         GetYTDDate(CurrentDate))
@@ -1031,6 +1037,8 @@ YTDDate = _
     AccountsCompare = LoadWeeklyAccountData(ComparisonDate)
     PositionsCurrent = LoadWeeklyPositionData(CurrentDate)
     PositionsCompare = LoadWeeklyPositionData(ComparisonDate)
+    AccountsWeek = LoadWeeklyAccountData(WeekDate)
+    PositionsWeek = LoadWeeklyPositionData(WeekDate)
     PositionsYTD = LoadWeeklyPositionData(YTDDate)
     
     InitializeLayout
@@ -1063,6 +1071,7 @@ YTDDate = _
         BuildNewLoansSection _
             ws, _
             AccountsCurrent, _
+            AccountsWeek, _
             AccountsCompare, _
             PositionsCurrent
 
@@ -1074,6 +1083,8 @@ YTDDate = _
         BuildEndedLoansSection _
             ws, _
             AccountsCurrent, _
+            AccountsWeek, _
+            PositionsWeek, _
             AccountsCompare, _
             PositionsCompare
 
@@ -1213,9 +1224,11 @@ Private Sub BuildPortfolioSection( _
     Dim Date2 As Date
     Dim Date3 As Date
     Dim YTDDate As Date
+    Dim WeekDate As Date
 
     Dim RowDates As Variant
     Dim ShowYTD As Boolean
+    Dim ShowWeek As Boolean
 
     Dim FirstDataRow As Long
     Dim LastDataRow As Long
@@ -1230,6 +1243,17 @@ Private Sub BuildPortfolioSection( _
     Date2 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 2))
     Date3 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 3))
     YTDDate = ResolveComparisonDate(GetYTDDate(CurrentDate))
+    WeekDate = ResolveComparisonDate(CurrentDate - 7)
+
+    '
+    ' The week row is what makes the table read week on week: it sits
+    ' immediately under the current date, so the last two rows are seven days
+    ' apart.  It is dropped when the snapshots are too sparse for it to be a
+    ' week of its own - ResolveComparisonDate searches forward, so a thin
+    ' week can land on the current date or on the monthly comparison.
+    '
+    ShowWeek = _
+        (WeekDate < CurrentDate) And (WeekDate <> ComparisonDate)
 
     '
     ' Three months of history already reaches into the previous year, so a
@@ -1237,8 +1261,13 @@ Private Sub BuildPortfolioSection( _
     '
     ShowYTD = (Year(Date3) = Year(CurrentDate))
 
-    If ShowYTD Then
+    If ShowYTD And ShowWeek Then
+        RowDates = _
+            Array(YTDDate, Date3, Date2, ComparisonDate, WeekDate, CurrentDate)
+    ElseIf ShowYTD Then
         RowDates = Array(YTDDate, Date3, Date2, ComparisonDate, CurrentDate)
+    ElseIf ShowWeek Then
+        RowDates = Array(Date3, Date2, ComparisonDate, WeekDate, CurrentDate)
     Else
         RowDates = Array(Date3, Date2, ComparisonDate, CurrentDate)
     End If
@@ -1557,39 +1586,58 @@ Private Sub BuildCollateralBreakdown( _
 
 End Sub
 
+'
+' New loans are the NDGs the current snapshot has that an earlier one did
+' not, so the current accounts are the subject in both windows and only the
+' reference moves.
+'
 Private Sub BuildNewLoansSection( _
     ByVal ws As Worksheet, _
     ByRef CurrentAccounts As Variant, _
-    ByRef PreviousAccounts As Variant, _
+    ByRef WeekAccounts As Variant, _
+    ByRef MonthAccounts As Variant, _
     ByRef CurrentPositions As Variant)
 
     WriteLoanMovementSection _
         ws, _
         Layout.NewLoanRow, _
         Layout.NewLoanCol, _
-        "New Lombard Loans in the Past Month", _
+        "New Lombard Loans", _
         "New Loans", _
         CurrentAccounts, _
-        PreviousAccounts, _
+        WeekAccounts, _
+        CurrentPositions, _
+        CurrentAccounts, _
+        MonthAccounts, _
         CurrentPositions
 
 End Sub
 
+'
+' Ended loans are the other way round: the NDGs an earlier snapshot had and
+' the current one does not, so the earlier snapshot is the subject and its
+' own positions carry the collateral that left.
+'
 Private Sub BuildEndedLoansSection( _
     ByVal ws As Worksheet, _
     ByRef CurrentAccounts As Variant, _
-    ByRef ComparisonAccounts As Variant, _
-    ByRef ComparisonPositions As Variant)
+    ByRef WeekAccounts As Variant, _
+    ByRef WeekPositions As Variant, _
+    ByRef MonthAccounts As Variant, _
+    ByRef MonthPositions As Variant)
 
     WriteLoanMovementSection _
         ws, _
         Layout.EndedLoanRow, _
         Layout.EndedLoanCol, _
-        "Lombard Loans Ended in the Past Month", _
+        "Lombard Loans Ended", _
         "Ended Loans", _
-        ComparisonAccounts, _
+        WeekAccounts, _
         CurrentAccounts, _
-        ComparisonPositions
+        WeekPositions, _
+        MonthAccounts, _
+        CurrentAccounts, _
+        MonthPositions
 
 End Sub
 
@@ -1600,12 +1648,73 @@ End Sub
 ' previous one; ended loans compare the previous snapshot against the current
 ' one. An NDG is counted once however many account rows it holds.
 '
+'
+' A movement table, one row per window, so the past week reads against the
+' past month rather than replacing it.  Which snapshot is the subject and
+' which the reference is the caller's business: new loans are the current
+' accounts measured against an earlier one, ended loans the earlier accounts
+' measured against the current.
+'
 Private Sub WriteLoanMovementSection( _
     ByVal ws As Worksheet, _
     ByVal TopRow As Long, _
     ByVal LeftCol As Long, _
     ByVal Title As String, _
     ByVal CountHeader As String, _
+    ByRef WeekSubject As Variant, _
+    ByRef WeekReference As Variant, _
+    ByRef WeekPositions As Variant, _
+    ByRef MonthSubject As Variant, _
+    ByRef MonthReference As Variant, _
+    ByRef MonthPositions As Variant)
+
+    Dim LastRow As Long
+
+    If Not WeeklyDataHasRows(MonthSubject) Then Exit Sub
+    If Not WeeklyDataHasRows(MonthReference) Then Exit Sub
+
+    WriteSectionTitle ws, TopRow, LeftCol, 5, Title
+
+    ws.Cells(TopRow + 1, LeftCol).Value = "Window"
+    ws.Cells(TopRow + 1, LeftCol + 1).Value = CountHeader
+    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Max Approved Loan"
+    ws.Cells(TopRow + 1, LeftCol + 3).Value = "Drawn Amount"
+    ws.Cells(TopRow + 1, LeftCol + 4).Value = "Collateral Value"
+
+    WriteLoanMovementRow _
+        ws, TopRow + 2, LeftCol, "Past week", _
+        WeekSubject, WeekReference, WeekPositions
+
+    WriteLoanMovementRow _
+        ws, TopRow + 3, LeftCol, "Past month", _
+        MonthSubject, MonthReference, MonthPositions
+
+    LastRow = TopRow + 3
+
+    ws.Range( _
+        ws.Cells(TopRow + 2, LeftCol + 2), _
+        ws.Cells(LastRow, LeftCol + 4)).NumberFormat = EuroNumberFormat()
+
+    FormatReportTable _
+        ws.Range( _
+            ws.Cells(TopRow + 1, LeftCol), _
+            ws.Cells(LastRow, LeftCol + 4)), _
+        1
+
+    FormatFirstColumn ws, TopRow + 1, LastRow, LeftCol
+
+End Sub
+
+'
+' The NDGs in the subject snapshot that the reference snapshot does not have,
+' and what they are worth.  Collateral is summed from the subject's own
+' positions, which is why the caller passes them alongside.
+'
+Private Sub WriteLoanMovementRow( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByVal WindowLabel As String, _
     ByRef SubjectAccounts As Variant, _
     ByRef ReferenceAccounts As Variant, _
     ByRef SubjectPositions As Variant)
@@ -1622,8 +1731,16 @@ Private Sub WriteLoanMovementSection( _
 
     Dim r As Long
 
-    If Not WeeklyDataHasRows(SubjectAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Sub
+    ws.Cells(RowNo, LeftCol).Value = WindowLabel
+
+    If Not WeeklyDataHasRows(SubjectAccounts) Or _
+       Not WeeklyDataHasRows(ReferenceAccounts) Then
+
+        ws.Cells(RowNo, LeftCol + 1).Value = "n/a"
+
+        Exit Sub
+
+    End If
 
     Set ReferenceNDGs = GetAccountNDGDictionary(ReferenceAccounts)
     Set MovedNDGs = NewNDGSet()
@@ -1667,27 +1784,10 @@ Private Sub WriteLoanMovementSection( _
 
     End If
 
-    WriteSectionTitle ws, TopRow, LeftCol, 4, Title
-
-    ws.Cells(TopRow + 1, LeftCol).Value = CountHeader
-    ws.Cells(TopRow + 1, LeftCol + 1).Value = "Max Approved Loan"
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Drawn Amount"
-    ws.Cells(TopRow + 1, LeftCol + 3).Value = "Collateral Value"
-
-    ws.Cells(TopRow + 2, LeftCol).Value = LoanCount
-    ws.Cells(TopRow + 2, LeftCol + 1).Value = TotalApproved
-    ws.Cells(TopRow + 2, LeftCol + 2).Value = TotalDrawn
-    ws.Cells(TopRow + 2, LeftCol + 3).Value = TotalCollateral
-
-    ws.Range( _
-        ws.Cells(TopRow + 2, LeftCol + 1), _
-        ws.Cells(TopRow + 3, LeftCol + 3)).NumberFormat = EuroNumberFormat()
-
-    FormatReportTable _
-        ws.Range( _
-            ws.Cells(TopRow + 1, LeftCol), _
-            ws.Cells(TopRow + 2, LeftCol + 3)), _
-        1
+    ws.Cells(RowNo, LeftCol + 1).Value = LoanCount
+    ws.Cells(RowNo, LeftCol + 2).Value = TotalApproved
+    ws.Cells(RowNo, LeftCol + 3).Value = TotalDrawn
+    ws.Cells(RowNo, LeftCol + 4).Value = TotalCollateral
 
 End Sub
 

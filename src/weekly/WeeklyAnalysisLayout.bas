@@ -129,12 +129,15 @@ Public Sub InitializeLayout()
         Layout.ReportCol
 
     ' Risk concentration (far right, aligned with the upper report tables)
+    ' The movement tables to its left are five columns wide since they gained
+    ' a window label, so this starts one column further out to keep the single
+    ' spacer column between them.
 
     Layout.RiskRow = _
         Layout.ReportRow + 3
 
     Layout.RiskCol = _
-        Layout.ReportCol + 20
+        Layout.ReportCol + 21
 
     ' Risk concentration excluding DPM
     ' One empty spacer column is left between the two five-column tables.

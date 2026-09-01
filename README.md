@@ -143,11 +143,13 @@ Historical Events tables. It is kept only for reference.
 
 ### Pipelines
 
-**Weekly** — `GenerateWeeklyAnalysis` loads the current, comparison and
-year-end snapshots, then builds the report sections in place on one sheet
+**Weekly** — `GenerateWeeklyAnalysis` loads the current, one-week, one-month
+and year-end snapshots, then builds the report sections in place on one sheet
 using the coordinates in `WeeklyAnalysisLayout.Layout`: portfolio overview,
 collateral breakdown, new/ended loans, entered collateral, the pie chart, and
-the exposure concentration block. The concentration block is the bulk of the
+the exposure concentration block. The overview carries a row a week back as
+well as the monthly history, and each loan-movement table carries a row per
+window, so both read week on week and month on month at once. The concentration block is the bulk of the
 module: certificate baskets are expanded recursively into their underlyings,
 entity names are normalised and merged (diacritics, legal suffixes, share
 class suffixes, prefix matching, manual variants), resolved against the

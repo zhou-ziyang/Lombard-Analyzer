@@ -170,8 +170,8 @@ Public Sub CreateWeeklyEmail()
     HTMLBody = HTMLBody & _
         BlockHtml(ws, Layout.PortfolioRow, Layout.PortfolioCol, 7, 3) & _
         BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 7, 8) & _
-        BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 3, 3) & _
-        BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 3, 3) & _
+        BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 3, 4) & _
+        BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 3, 4) & _
         BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 4, 8)
 
     '
