@@ -11,7 +11,7 @@ configuration parameters (as defined names) and one button per entry point.
 
 | Home section | Defined names | Button | Entry point |
 | --- | --- | --- | --- |
-| 01 Configuration | `path`, `report_path`, `Certificate_Path` | Text-to-Column Settings | `CoreTextToCol.text_to_col1` |
+| 01 Configuration | `path`, `report_path` | Text-to-Column Settings | `CoreTextToCol.text_to_col1` |
 | 01 Configuration | — | Clear Sheets | `CoreClean.Clean` |
 | 02 Date Range Analysis | `AnalysisStartDate`, `AnalysisEndDate` | Calculate Delta | `DeltaCalculation.BuildPositionMovements` |
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `DeltaRevenue.BuildRevenueSummary` |
@@ -39,9 +39,10 @@ The addresses deliberately live in the workbook rather than in source.
 ```
 
 Both are semicolon-delimited. `report_path` points at an external workbook
-whose *Report* sheet supplies margin-call / shortfall reasons and comments;
-`Certificate_Path` points at the folder of certificate basket extracts used to
-decompose structured products into their underlyings.
+whose *Report* sheet supplies margin-call / shortfall reasons and comments.
+The certificate reference used to decompose structured products into their
+underlyings is no longer an external folder: it is two worksheets, listed
+below.
 
 ## Reference sheets
 
@@ -56,11 +57,16 @@ not generated:
 | Equity Names | `UnmappedEquities` | Queue of equity ISINs that resolved to no company; filled in by hand |
 | Countries | — | Country code → country name |
 | Name Variants | — | Manual entity-name variant overrides |
+| Certificates | — | Certificate ISIN → its underlying RIC(s) |
+| Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
 
 Generated sheets (*Weekly Analysis*, *Asset Type Mapping*, *New Geo-Sec
 Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
+
+Both certificate sheets are on `CoreClean`'s keep list, like every other
+reference sheet — they hold maintained data now, not a rebuilt cache.
 
 `CoreClean` keeps only the sheets on its own list and deletes everything else,
 *Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and

@@ -74,9 +74,15 @@ Option Explicit
 Public AssetTypeMapping As Object
 Public ReportNotes As Collection
 
-Private Const CERTIFICATE_PATH_NAME As String = "Certificate_Path"
-Private Const CERTIFICATE_SEARCH_PREFIX As String = "SearchResults"
-Private Const CERTIFICATE_INSTRUMENT_PREFIX As String = "InstrumentList"
+'
+' The two certificate references, both worksheets in this workbook.
+' Certificates maps a certificate ISIN to its underlying RIC(s);
+' Certificate Underlyings is the instrument reference those RICs resolve
+' against - name, ISIN, asset class and basket components.
+'
+Private Const CERTIFICATES_SHEET As String = "Certificates"
+Private Const CERTIFICATE_UNDERLYINGS_SHEET As String = _
+    "Certificate Underlyings"
 Private Const MISSING_CERTIFICATE_RIC_PREFIX As String = "__MISSING_RIC__|"
 '
 ' A certificate whose underlying could not be named at all.  The prefix marks
@@ -3030,356 +3036,6 @@ Private Function NewNDGSet() As Object
 End Function
 
 
-Private Function GetDefinedNameText( _
-    ByVal wb As Workbook, _
-    ByVal DefinedName As String) As String
-
-    Dim nm As name
-    Dim rng As Range
-    Dim ShortName As String
-
-    If wb Is Nothing Then Exit Function
-
-    On Error Resume Next
-
-    Set rng = wb.Names(DefinedName).RefersToRange
-
-    On Error GoTo 0
-
-    If Not rng Is Nothing Then
-
-        GetDefinedNameText = SafeText(rng.Cells(1, 1).Value)
-
-        Exit Function
-
-    End If
-
-    For Each nm In wb.Names
-
-        ShortName = nm.name
-
-        If InStrRev(ShortName, "!") > 0 Then
-
-            ShortName = _
-                Mid( _
-                    ShortName, _
-                    InStrRev(ShortName, "!") + 1)
-
-        End If
-
-        ShortName = Replace(ShortName, "'", "")
-
-        If StrComp( _
-                ShortName, _
-                DefinedName, _
-                vbTextCompare) = 0 Then
-
-            On Error Resume Next
-
-            Set rng = nm.RefersToRange
-
-            On Error GoTo 0
-
-            If Not rng Is Nothing Then
-
-                GetDefinedNameText = _
-                    SafeText(rng.Cells(1, 1).Value)
-
-                Exit Function
-
-            End If
-
-        End If
-
-    Next nm
-
-End Function
-
-Private Function GetCertificateFolderPath( _
-    ByVal PreferredWorkbook As Workbook) As String
-
-    Dim FolderPath As String
-
-    FolderPath = _
-        GetDefinedNameText( _
-            PreferredWorkbook, _
-            CERTIFICATE_PATH_NAME)
-
-    If FolderPath = "" Then
-
-        FolderPath = _
-            GetDefinedNameText( _
-                ThisWorkbook, _
-                CERTIFICATE_PATH_NAME)
-
-    End If
-
-    If FolderPath = "" Then
-
-        If Not ActiveWorkbook Is Nothing Then
-
-            FolderPath = _
-                GetDefinedNameText( _
-                    ActiveWorkbook, _
-                    CERTIFICATE_PATH_NAME)
-
-        End If
-
-    End If
-
-    FolderPath = Trim(Replace(FolderPath, Chr(34), ""))
-
-    If FolderPath <> "" Then
-
-        If InStr(FolderPath, ":") = 0 And _
-           Left(FolderPath, 2) <> "\\" And _
-           Left(FolderPath, 1) <> "/" Then
-
-            If Not PreferredWorkbook Is Nothing Then
-
-                If PreferredWorkbook.Path <> "" Then
-
-                    FolderPath = _
-                        PreferredWorkbook.Path & _
-                        Application.PathSeparator & _
-                        FolderPath
-
-                End If
-
-            End If
-
-        End If
-
-    End If
-
-    GetCertificateFolderPath = FolderPath
-
-End Function
-
-Private Function CombineFolderAndFile( _
-    ByVal FolderPath As String, _
-    ByVal FileName As String) As String
-
-    Dim LastCharacter As String
-
-    If FolderPath = "" Then Exit Function
-
-    LastCharacter = Right(FolderPath, 1)
-
-    If LastCharacter <> "\" And LastCharacter <> "/" Then
-
-        FolderPath = FolderPath & Application.PathSeparator
-
-    End If
-
-    CombineFolderAndFile = FolderPath & FileName
-
-End Function
-
-Private Function EmbeddedFileTimestamp( _
-    ByVal FileName As String) As Date
-
-    Dim i As Long
-    Dim j As Long
-
-    Dim DateToken As String
-    Dim TimeToken As String
-
-    Dim YearNo As Long
-    Dim MonthNo As Long
-    Dim DayNo As Long
-    Dim HourNo As Long
-    Dim MinuteNo As Long
-
-    Dim CandidateDate As Date
-
-    For i = 1 To Len(FileName) - 7
-
-        DateToken = Mid(FileName, i, 8)
-
-        If DateToken Like "########" Then
-
-            YearNo = CLng(Left(DateToken, 4))
-            MonthNo = CLng(Mid(DateToken, 5, 2))
-            DayNo = CLng(Right(DateToken, 2))
-
-            On Error Resume Next
-
-            CandidateDate = _
-                DateSerial( _
-                    YearNo, _
-                    MonthNo, _
-                    DayNo)
-
-            If Err.Number = 0 And _
-               Year(CandidateDate) = YearNo And _
-               Month(CandidateDate) = MonthNo And _
-               Day(CandidateDate) = DayNo Then
-
-                On Error GoTo 0
-
-                For j = i + 8 To Len(FileName) - 3
-
-                    TimeToken = Mid(FileName, j, 4)
-
-                    If TimeToken Like "####" Then
-
-                        HourNo = CLng(Left(TimeToken, 2))
-                        MinuteNo = CLng(Right(TimeToken, 2))
-
-                        If HourNo <= 23 And MinuteNo <= 59 Then
-
-                            CandidateDate = _
-                                CandidateDate + _
-                                TimeSerial( _
-                                    HourNo, _
-                                    MinuteNo, _
-                                    0)
-
-                        End If
-
-                        Exit For
-
-                    End If
-
-                Next j
-
-                EmbeddedFileTimestamp = CandidateDate
-
-                Exit Function
-
-            End If
-
-            Err.Clear
-            On Error GoTo 0
-
-        End If
-
-    Next i
-
-End Function
-
-Private Function FindLatestCertificateFile( _
-    ByVal FolderPath As String, _
-    ByVal FilePrefix As String) As String
-
-    Dim FileName As String
-    Dim FullPath As String
-
-    Dim CandidateStamp As Date
-    Dim CandidateModified As Date
-    Dim LatestStamp As Date
-    Dim LatestModified As Date
-
-    On Error GoTo SearchFailed
-
-    FileName = _
-        Dir( _
-            CombineFolderAndFile( _
-                FolderPath, _
-                FilePrefix & "*.xls*"), _
-            vbNormal Or vbReadOnly Or vbHidden Or vbSystem)
-
-    Do While FileName <> ""
-
-        FullPath = CombineFolderAndFile(FolderPath, FileName)
-
-        CandidateStamp = EmbeddedFileTimestamp(FileName)
-        CandidateModified = FileDateTime(FullPath)
-
-        If CandidateStamp = 0 Then
-
-            CandidateStamp = CandidateModified
-
-        End If
-
-        If FindLatestCertificateFile = "" Or _
-           CandidateStamp > LatestStamp Or _
-           (CandidateStamp = LatestStamp And _
-            CandidateModified > LatestModified) Then
-
-            FindLatestCertificateFile = FullPath
-            LatestStamp = CandidateStamp
-            LatestModified = CandidateModified
-
-        End If
-
-        FileName = Dir()
-
-    Loop
-
-    Exit Function
-
-SearchFailed:
-
-    FindLatestCertificateFile = ""
-
-End Function
-
-Private Function GetOpenWorkbookByPath( _
-    ByVal FilePath As String) As Workbook
-
-    Dim wb As Workbook
-
-    For Each wb In Application.Workbooks
-
-        If StrComp( _
-                wb.FullName, _
-                FilePath, _
-                vbTextCompare) = 0 Then
-
-            Set GetOpenWorkbookByPath = wb
-
-            Exit Function
-
-        End If
-
-    Next wb
-
-End Function
-
-Private Function OpenCertificateReferenceWorkbook( _
-    ByVal FilePath As String, _
-    ByRef OpenedByCode As Boolean) As Workbook
-
-    Set OpenCertificateReferenceWorkbook = _
-        GetOpenWorkbookByPath(FilePath)
-
-    If Not OpenCertificateReferenceWorkbook Is Nothing Then Exit Function
-
-    Set OpenCertificateReferenceWorkbook = _
-        Workbooks.Open( _
-            FileName:=FilePath, _
-            UpdateLinks:=0, _
-            ReadOnly:=True, _
-            IgnoreReadOnlyRecommended:=True, _
-            AddToMru:=False)
-
-    OpenedByCode = True
-
-End Function
-
-Private Function GetReferenceWorksheet( _
-    ByVal wb As Workbook, _
-    ByVal PreferredName As String) As Worksheet
-
-    If wb Is Nothing Then Exit Function
-
-    On Error Resume Next
-
-    Set GetReferenceWorksheet = _
-        wb.Worksheets(PreferredName)
-
-    If GetReferenceWorksheet Is Nothing Then
-
-        Set GetReferenceWorksheet = wb.Worksheets(1)
-
-    End If
-
-    On Error GoTo 0
-
-End Function
-
 Private Function NewCertificateComponent( _
     ByVal ComponentName As String, _
     ByVal ComponentWeight As Double, _
@@ -4148,7 +3804,7 @@ Private Function ExpandCertificateRic( _
 
         End If
 
-        ' An obsolete component RIC can disappear from a newer InstrumentList.
+        ' A component RIC can be absent from Certificate Underlyings.
         ' In that case the descriptive Basket text is the more useful fallback.
         Set Result = New Collection
 
@@ -4267,7 +3923,6 @@ End Function
 
 Private Function LoadCertificateUnderlyingMap( _
     ByRef MappingReady As Boolean, _
-    ByVal PreferredWorkbook As Workbook, _
     ByRef UnderlyingReferenceIsinMap As Object, _
     ByRef UnderlyingAssetClassMap As Object, _
     ByRef MappingIssue As String) As Object
@@ -4282,17 +3937,8 @@ Private Function LoadCertificateUnderlyingMap( _
     Dim NameToRic As Object
     Dim ExpandedRicCache As Object
 
-    Dim wbSearch As Workbook
-    Dim wbInstrument As Workbook
     Dim wsSearch As Worksheet
     Dim wsInstrument As Worksheet
-
-    Dim SearchOpenedByCode As Boolean
-    Dim InstrumentOpenedByCode As Boolean
-
-    Dim FolderPath As String
-    Dim SearchPath As String
-    Dim InstrumentPath As String
 
     Dim SearchIsinCol As Long
     Dim SearchRicCol As Long
@@ -4370,84 +4016,30 @@ Private Function LoadCertificateUnderlyingMap( _
         CreateObject("Scripting.Dictionary")
     UnderlyingAssetClassMap.CompareMode = vbTextCompare
 
-    FolderPath = GetCertificateFolderPath(PreferredWorkbook)
+    Set wsSearch = GetOptionalWorksheet(CERTIFICATES_SHEET)
+    Set wsInstrument = _
+        GetOptionalWorksheet(CERTIFICATE_UNDERLYINGS_SHEET)
 
-    If FolderPath = "" Then
+    If wsSearch Is Nothing Then
 
         MappingIssue = _
-            "The named cell '" & _
-            CERTIFICATE_PATH_NAME & _
-            "' is missing or empty."
+            "Worksheet '" & CERTIFICATES_SHEET & "' was not found."
 
         GoTo ReturnMapping
 
     End If
 
-    SearchPath = _
-        FindLatestCertificateFile( _
-            FolderPath, _
-            CERTIFICATE_SEARCH_PREFIX)
-
-    InstrumentPath = _
-        FindLatestCertificateFile( _
-            FolderPath, _
-            CERTIFICATE_INSTRUMENT_PREFIX)
-
-    If SearchPath = "" Then
+    If wsInstrument Is Nothing Then
 
         MappingIssue = _
-            "No SearchResults*.xls* file was found in '" & _
-            FolderPath & _
-            "'."
+            "Worksheet '" & CERTIFICATE_UNDERLYINGS_SHEET & _
+            "' was not found."
 
         GoTo ReturnMapping
 
     End If
-
-    If InstrumentPath = "" Then
-
-        MappingIssue = _
-            "No InstrumentList*.xls* file was found in '" & _
-            FolderPath & _
-            "'."
-
-        GoTo ReturnMapping
-
-    End If
-
 
     On Error GoTo LoadFailed
-
-    Set wbSearch = _
-        OpenCertificateReferenceWorkbook( _
-            SearchPath, _
-            SearchOpenedByCode)
-
-    Set wbInstrument = _
-        OpenCertificateReferenceWorkbook( _
-            InstrumentPath, _
-            InstrumentOpenedByCode)
-
-
-    Set wsSearch = _
-        GetReferenceWorksheet( _
-            wbSearch, _
-            "Search Results")
-
-    Set wsInstrument = _
-        GetReferenceWorksheet( _
-            wbInstrument, _
-            "Instruments")
-
-    If wsSearch Is Nothing Or wsInstrument Is Nothing Then
-
-        Err.Raise _
-            vbObjectError + 9130, _
-            "LoadCertificateUnderlyingMap", _
-            "A required worksheet could not be opened."
-
-    End If
-
 
     SearchIsinCol = _
         FindPositionColumn( _
@@ -4817,17 +4409,18 @@ Private Function LoadCertificateUnderlyingMap( _
 
         MappingIssue = _
             CStr(MissingRicCount) & _
-            " underlying RIC(s) were not found in the latest InstrumentList."
+            " underlying RIC(s) were not found in '" & _
+            CERTIFICATE_UNDERLYINGS_SHEET & "'."
 
     ElseIf Not MappingReady Then
 
         MappingIssue = _
-            "No valid ISIN / Underlying RIC mappings were loaded from " & _
-            "the latest certificate reference files."
+            "No valid ISIN / Underlying RIC mappings were found in '" & _
+            CERTIFICATES_SHEET & "'."
 
     End If
 
-    GoTo CloseFiles
+    GoTo ReturnMapping
 
 LoadFailed:
 
@@ -4837,20 +4430,10 @@ LoadFailed:
     UnderlyingAssetClassMap.RemoveAll
 
     MappingIssue = _
-        "Certificate reference files could not be loaded: " & _
+        "The certificate reference worksheets could not be read: " & _
         Err.Description
 
     Err.Clear
-
-CloseFiles:
-
-    On Error Resume Next
-
-    If InstrumentOpenedByCode Then wbInstrument.Close SaveChanges:=False
-    If SearchOpenedByCode Then wbSearch.Close SaveChanges:=False
-
-    On Error GoTo 0
-
 
 ReturnMapping:
 
@@ -10334,7 +9917,6 @@ Private Sub BuildRiskGranularitySection( _
     Set CertificateMap = _
         LoadCertificateUnderlyingMap( _
             CertificateMapReady, _
-            ThisWorkbook, _
             CertificateUnderlyingReferenceIsinMap, _
             CertificateUnderlyingAssetClassMap, _
             CertificateMappingIssue)

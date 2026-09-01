@@ -11,7 +11,8 @@ Public Sub Clean()
         "Database", "MissingPEC", "Ended Lombards", "Report", _
         "Possible Upsize", "CLN", "CLN Report", _
         "Non-Eligible ISIN", "Companies", "Countries", _
-        "Fund Parent Companies", "Bond Issuers", "Equity Names", "Name Variants" _
+        "Fund Parent Companies", "Bond Issuers", "Equity Names", "Name Variants", _
+        "Certificates", "Certificate Underlyings" _
     )
 
     With ThisWorkbook
