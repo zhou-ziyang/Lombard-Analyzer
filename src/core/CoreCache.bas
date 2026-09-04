@@ -1,4 +1,4 @@
-Attribute VB_Name = "Cache"
+Attribute VB_Name = "CoreCache"
 Option Explicit
 
 Public Type PositionCache
@@ -63,7 +63,7 @@ Public Function LoadPositionCache( _
 
 End Function
 
-Public Function BuildPositionKey( _
+Private Function BuildPositionKey( _
     ByVal PositionFields As Variant, _
     ByVal idxNDG As Long, _
     ByVal idxCO As Long, _
@@ -90,12 +90,4 @@ Public Function BuildPositionKey( _
         InstrumentId & "|" & _
         SafeField(PositionFields, idxAsset)
 
-End Function
-
-Public Function SafeField(Arr As Variant, idx As Long) As String
-    If idx >= 0 And idx <= UBound(Arr) Then
-        SafeField = Trim(Arr(idx))
-    Else
-        SafeField = ""
-    End If
 End Function

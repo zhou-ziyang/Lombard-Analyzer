@@ -1,4 +1,4 @@
-Attribute VB_Name = "AssetMapping"
+Attribute VB_Name = "RefAssetMapping"
 Option Explicit
 
 '====================================================

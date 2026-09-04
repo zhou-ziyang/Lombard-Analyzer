@@ -17,7 +17,12 @@ can't quietly become permanent.
 Grep the repo for comment markers, skipping `node_modules`, `.git`, and build
 output:
 
-`grep -rnE '(#|//) ?ponytail:' .`  (add other comment prefixes if your stack uses them)
+`grep -rnE "(#|//|--|') ?ponytail:" . --exclude-dir=.git`
+
+The prefix list covers `#`, `//`, `--` and VBA's `'`. This repository is
+VBA, so the apostrophe is the one that matters here — without it the
+ledger comes back empty no matter how many markers the source carries.
+Add your own stack's prefix if it is not in the list.
 
 Each hit is one ledger row. The comment prefix keeps prose that merely mentions
 the convention out of the ledger.

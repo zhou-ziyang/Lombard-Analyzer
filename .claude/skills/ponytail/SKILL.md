@@ -25,9 +25,13 @@ code is the code never written.
 
 ## Persistence
 
-ACTIVE EVERY RESPONSE. No drift back to over-building. Still active if
-unsure. Off only: "stop ponytail" / "normal mode". Default: **full**.
-Switch: `/ponytail lite|full|ultra`.
+Once invoked, ACTIVE EVERY RESPONSE. No drift back to over-building. Still
+active if unsure. Off only: "stop ponytail" / "normal mode". Default level:
+**full**. Switch: `/ponytail lite|full|ultra`.
+
+Invoked is the operative word: this copy is vendored into `.claude/skills/`,
+not installed as a plugin, so it starts when it is called by name or matched
+by a request - never automatically at session start.
 
 ## The ladder
 
@@ -100,16 +104,20 @@ change touches, the actual flow — before picking a rung. Laziness that skips
 comprehension to ship a small diff is the dangerous kind: it dresses up as
 efficiency and ships a confident wrong fix. Read fully, then be lazy.
 
-Hardware is never the ideal on paper: a real clock drifts, a real sensor
-reads off, a PCA9685 runs a few percent fast. Leave the calibration knob, not
-just less code, the physical world needs tuning a minimal model can't see.
-
 Lazy code without its check is unfinished. Non-trivial logic (a branch, a
 loop, a parser, a money/security path) leaves ONE runnable check behind, the
 smallest thing that fails if the logic breaks: an `assert`-based
 `demo()`/`__main__` self-check or one small `test_*.py`. No frameworks, no
 fixtures, no per-function suites unless asked. Trivial one-liners need no
 test, YAGNI applies to tests too.
+
+In this repository that check cannot be a `test_*.py`: the source is VBA
+inside an Excel workbook, and nothing here runs outside it. The equivalent is
+a zero-argument `Sub` the user can run from the VBE with F5, asserting with
+`Debug.Assert` and reporting through `Debug.Print` - and it is worth writing
+only for logic that can be exercised without a live Sophis extract. Say when
+a change could not be checked that way instead of inventing a check that
+never runs.
 
 ## Boundaries
 

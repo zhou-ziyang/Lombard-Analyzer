@@ -1,4 +1,4 @@
-Attribute VB_Name = "RevenueTools"
+Attribute VB_Name = "DeltaRevenue"
 Option Explicit
 
 Public Sub BuildRevenueSummary()
@@ -407,7 +407,7 @@ ErrorHandler:
 
 End Sub
 
-Public Sub FormatRevenueSummary( _
+Private Sub FormatRevenueSummary( _
     ByVal ws As Worksheet, _
     ByVal LastSummaryRow As Long)
 
@@ -491,7 +491,7 @@ Public Sub FormatRevenueSummary( _
 
 End Sub
 
-Public Function GetRevenueRate( _
+Private Function GetRevenueRate( _
     ByVal AssetClass As String) As Double
 
     Select Case AssetClass
@@ -524,7 +524,7 @@ Public Function GetRevenueRate( _
 
 End Function
 
-Public Function GetMonthsInForecastYear( _
+Private Function GetMonthsInForecastYear( _
     ByVal StartDate As Date, _
     ByVal ForecastYear As Long) As Long
 

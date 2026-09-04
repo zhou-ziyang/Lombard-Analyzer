@@ -1,5 +1,15 @@
-Attribute VB_Name = "Utils"
+Attribute VB_Name = "CoreUtils"
 Option Explicit
+
+'
+' Helpers with no Lombard knowledge in them.  Every pipeline in this
+' workbook - weekly, journey, delta - calls into here; nothing in here
+' calls back out.
+'
+
+'====================================================================
+' Worksheets in this workbook
+'====================================================================
 
 Public Function CreateOrReplaceSheet( _
     ByVal SheetName As String) As Worksheet
@@ -113,7 +123,6 @@ CleanExit:
 
     Exit Function
 
-
 ErrorHandler:
 
     ErrorNumber = Err.Number
@@ -153,15 +162,18 @@ Public Function GetLastRow( _
 
 End Function
 
-Public Function GetYTDDate( _
-    ByVal ReferenceDate As Date) As Date
+'====================================================================
+' Application state, and how a run talks back to the user
+'====================================================================
 
-    GetYTDDate = DateSerial( _
-        Year(ReferenceDate) - 1, _
-        12, _
-        31)
+Public Sub ResetExcel()
 
-End Function
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.CutCopyMode = False
+
+End Sub
 
 Public Sub Note( _
     ByVal Message As String)
@@ -188,15 +200,51 @@ Public Sub Fatal( _
 
 End Sub
 
-Public Sub ResetExcel()
+'====================================================================
+' Dates as this workbook writes and reads them
+'====================================================================
 
-    Application.ScreenUpdating = True
-    Application.EnableEvents = True
-    Application.Calculation = xlCalculationAutomatic
-    Application.CutCopyMode = False
+Public Function GetDateCode( _
+    ByVal InputDate As Date) As String
 
-End Sub
+    GetDateCode = Format(InputDate, "yyyymmdd")
 
+End Function
+
+Public Function GetYTDDate( _
+    ByVal ReferenceDate As Date) As Date
+
+    GetYTDDate = DateSerial( _
+        Year(ReferenceDate) - 1, _
+        12, _
+        31)
+
+End Function
+
+'====================================================================
+' Values that arrive untrusted: from a cell, a CSV field or an array
+'====================================================================
+
+Public Function Nz(ValueIn As Variant, Optional DefaultValue As Variant = 0) As Variant
+
+    If IsError(ValueIn) Then
+        Nz = DefaultValue
+    ElseIf IsEmpty(ValueIn) Then
+        Nz = DefaultValue
+    ElseIf Trim(CStr(ValueIn)) = "" Then
+        Nz = DefaultValue
+    Else
+        Nz = ValueIn
+    End If
+
+End Function
+
+'
+' The two ways a number reaches this workbook.  ParseCsvDouble takes
+' the raw text of a CSV field; WorksheetDouble takes a cell value that
+' Excel has already typed, and which may be an error, empty or text.
+' Both answer 0 rather than raising, because every caller is summing.
+'
 Public Function ParseCsvDouble( _
     ByVal ValueIn As Variant) As Double
 
@@ -227,6 +275,34 @@ Public Function WorksheetDouble( _
     End If
 
 End Function
+
+Public Function SafeCellText( _
+    ByVal TargetCell As Range) As String
+
+    If IsError(TargetCell.Value) Then
+
+        SafeCellText = ""
+
+    Else
+
+        SafeCellText = _
+            Trim$(CStr(TargetCell.Value2))
+
+    End If
+
+End Function
+
+Public Function SafeField(Arr As Variant, idx As Long) As String
+    If idx >= 0 And idx <= UBound(Arr) Then
+        SafeField = Trim(Arr(idx))
+    Else
+        SafeField = ""
+    End If
+End Function
+
+'====================================================================
+' Columns, by the name in their header
+'====================================================================
 
 Public Function FindColumnByHeader( _
     ByVal ws As Worksheet, _
@@ -277,30 +353,75 @@ Public Sub RenameHeader( _
 
 End Sub
 
-Public Function GetNumericValue( _
-    ByVal v As Variant) As Double
+Public Function FindHeaderIndex(hdr As Variant, name As String) As Long
+    Dim i As Long
+    For i = LBound(hdr) To UBound(hdr)
+        If Trim(hdr(i)) = name Then
+            FindHeaderIndex = i
+            Exit Function
+        End If
+    Next i
+    FindHeaderIndex = -1
+End Function
 
-    If IsError(v) Then
-        GetNumericValue = 0
-        Exit Function
+Public Function RequiredHeaderIndex( _
+    ByRef HeaderFields As Variant, _
+    ByVal HeaderName As String, _
+    Optional ByVal FileName As String = "") As Long
+
+    RequiredHeaderIndex = _
+        FindHeaderIndex(HeaderFields, HeaderName)
+
+    If RequiredHeaderIndex = -1 Then
+
+        If FileName = "" Then
+
+            Fatal "Header not found: " & HeaderName
+
+        Else
+
+            Fatal _
+                "Header not found: " & HeaderName & _
+                vbCrLf & FileName
+
+        End If
+
     End If
-
-    If IsEmpty(v) Then
-        GetNumericValue = 0
-        Exit Function
-    End If
-
-    If Len(Trim$(CStr(v))) = 0 Then
-        GetNumericValue = 0
-        Exit Function
-    End If
-
-    If Not IsNumeric(v) Then
-        GetNumericValue = 0
-        Exit Function
-    End If
-
-    GetNumericValue = CDbl(v)
 
 End Function
 
+'====================================================================
+' Files
+'====================================================================
+
+Public Function ReadAllLines(FilePath As String) As Variant
+
+    Dim FileNumber As Integer
+    Dim FileSize As Long
+    Dim FileText As String
+
+    FileNumber = FreeFile
+
+    Open FilePath For Binary Access Read As #FileNumber
+
+    FileSize = LOF(FileNumber)
+
+    If FileSize > 0 Then
+
+        FileText = Space$(FileSize)
+        Get #FileNumber, , FileText
+
+    End If
+
+    Close #FileNumber
+
+    '
+    ' Accept CRLF, LF and CR line endings.  An LF-terminated extract
+    ' used to parse as a single line and yield no data at all.
+    '
+    FileText = Replace(FileText, vbCrLf, vbLf)
+    FileText = Replace(FileText, vbCr, vbLf)
+
+    ReadAllLines = Split(FileText, vbLf)
+
+End Function

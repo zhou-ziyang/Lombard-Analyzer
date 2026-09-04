@@ -91,7 +91,7 @@ Collateral Breakdown、Entered Collateral、各处合计和饼图切片颜色都
 比对；全都找不到就退到一个固定列号；再不行才按 `Required` 决定报错还是返回 −1。Issuer 和
 Additional Comment 是 `Required:=False` 的——这两列不在也能跑。
 
-> `WeeklySourceLines` 是先把 CRLF / CR 归一成 LF 再切分的。`DeltaCalculation.ReadAllLines`
+> `WeeklySourceLines` 是先把 CRLF / CR 归一成 LF 再切分的。`CoreUtils.ReadAllLines`
 > 后来补上的就是这套写法。
 
 ---
@@ -187,7 +187,7 @@ Sophis 的 Security Name、Bloomberg 的 Issuer Name、证书篮子里的文本�
 
 | 函数 | 管什么 | 依据 |
 | --- | --- | --- |
-| `GetAssetClass`（AssetMapping） | Collateral Breakdown、饼图、Entered Collateral | Asset Type 的 `Like` 前缀匹配 |
+| `GetAssetClass`（RefAssetMapping） | Collateral Breakdown、饼图、Entered Collateral | Asset Type 的 `Like` 前缀匹配 |
 | `ResolveTopTenAssetClass` | **只**用于 Top 10 集中度 | 基类是 GP 时，按 `Additional Comment` 的前缀再拆成 Equity / Bonds / Funds |
 | `IsRiskRelevantCertificateAssetType` | 证书是否进入风险分析 | 原始 Asset Type 归一后必须等于 `CERTIFICATESOTHER` |
 

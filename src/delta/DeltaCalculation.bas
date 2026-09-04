@@ -569,76 +569,7 @@ Private Function FindNearestExistingDate(BasePath As String, TargetDate As Date,
     FindNearestExistingDate = 0
 End Function
 
-Public Function ReadAllLines(FilePath As String) As Variant
-
-    Dim FileNumber As Integer
-    Dim FileSize As Long
-    Dim FileText As String
-
-    FileNumber = FreeFile
-
-    Open FilePath For Binary Access Read As #FileNumber
-
-    FileSize = LOF(FileNumber)
-
-    If FileSize > 0 Then
-
-        FileText = Space$(FileSize)
-        Get #FileNumber, , FileText
-
-    End If
-
-    Close #FileNumber
-
-    '
-    ' Accept CRLF, LF and CR line endings.  An LF-terminated extract
-    ' used to parse as a single line and yield no data at all.
-    '
-    FileText = Replace(FileText, vbCrLf, vbLf)
-    FileText = Replace(FileText, vbCr, vbLf)
-
-    ReadAllLines = Split(FileText, vbLf)
-
-End Function
-
-Public Function FindHeaderIndex(hdr As Variant, name As String) As Long
-    Dim i As Long
-    For i = LBound(hdr) To UBound(hdr)
-        If Trim(hdr(i)) = name Then
-            FindHeaderIndex = i
-            Exit Function
-        End If
-    Next i
-    FindHeaderIndex = -1
-End Function
-
-Public Function RequiredHeaderIndex( _
-    ByRef HeaderFields As Variant, _
-    ByVal HeaderName As String, _
-    Optional ByVal FileName As String = "") As Long
-
-    RequiredHeaderIndex = _
-        FindHeaderIndex(HeaderFields, HeaderName)
-
-    If RequiredHeaderIndex = -1 Then
-
-        If FileName = "" Then
-
-            Fatal "Header not found: " & HeaderName
-
-        Else
-
-            Fatal _
-                "Header not found: " & HeaderName & _
-                vbCrLf & FileName
-
-        End If
-
-    End If
-
-End Function
-
-Public Sub BuildPositionDateDictionaries( _
+Private Sub BuildPositionDateDictionaries( _
     ByVal BasePath As String, _
     ByVal AnalysisStartDate As Date, _
     ByVal AnalysisEndDate As Date, _
@@ -743,7 +674,7 @@ NextPositionFile:
 
 End Sub
 
-Public Function GetSortedPositionFiles( _
+Private Function GetSortedPositionFiles( _
     ByVal BasePath As String, _
     ByVal AnalysisStartDate As Date, _
     ByVal AnalysisAnalysisEndDate As Date) As Variant

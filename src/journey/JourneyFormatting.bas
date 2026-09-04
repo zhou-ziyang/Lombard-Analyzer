@@ -263,7 +263,7 @@ Private Sub FormatMCJourneyBands( _
         '
         If Not InBand Then
 
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, MCCol).Value2) > 0 Then
 
                 StartRow = r
@@ -279,7 +279,7 @@ Private Sub FormatMCJourneyBands( _
         '
         If InBand Then
 
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, MCClearedCol).Value2) = 1 Then
 
                 EndRow = r
@@ -367,7 +367,7 @@ Private Sub FormatSFJourneyBands( _
 
         If Not InBand Then
 
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, SFCol).Value2) > 0 Then
 
                 StartRow = r
@@ -381,7 +381,7 @@ Private Sub FormatSFJourneyBands( _
             ' First SF = 0 row is the cleared row.
             ' The cleared row itself is not formatted.
             '
-            If GetNumericValue( _
+            If WorksheetDouble( _
                     ws.Cells(r, SFCol).Value2) = 0 Then
 
                 LastActiveRow = r - 1
@@ -604,22 +604,6 @@ Public Function IsTechnicalReason( _
             NormalizedReason, _
             "switch of collateral", _
             vbTextCompare) > 0)
-
-End Function
-
-Public Function SafeCellText( _
-    ByVal TargetCell As Range) As String
-
-    If IsError(TargetCell.Value) Then
-
-        SafeCellText = ""
-
-    Else
-
-        SafeCellText = _
-            Trim$(CStr(TargetCell.Value2))
-
-    End If
 
 End Function
 
@@ -1054,4 +1038,91 @@ Private Sub ApplyLTVTrendHighlight( _
 
 End Sub
 
+'
+' The shared look of the two journey reports: the dashboard and the
+' position change analysis.  Every colour either report paints on a
+' title, a status or a delta is decided here, so the two cannot drift
+' apart.
+'
+Public Sub ApplyJourneyReportTitle(ByVal TargetRange As Range)
+    With TargetRange
+        .Interior.Pattern = xlSolid
+        .Interior.Color = RGB(31, 78, 121)
+        .Font.name = "Arial"
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .Font.Size = 16
+        .HorizontalAlignment = xlLeft
+        .VerticalAlignment = xlCenter
+        .RowHeight = 26
+    End With
+End Sub
 
+Public Sub ApplyJourneyReportSubtitle(ByVal TargetRange As Range)
+    With TargetRange
+        .Interior.Pattern = xlSolid
+        .Interior.Color = RGB(221, 235, 247)
+        .Font.name = "Arial"
+        .Font.Color = RGB(31, 78, 121)
+        .Font.Bold = True
+        .HorizontalAlignment = xlLeft
+        .VerticalAlignment = xlCenter
+        .RowHeight = 20
+    End With
+End Sub
+
+Public Sub ApplyJourneySectionTitle(ByVal TargetRange As Range, _
+                                    Optional ByVal TitleText As String = "")
+    With TargetRange
+        If TitleText <> "" Then .Value = TitleText
+        .Interior.Pattern = xlSolid
+        .Interior.Color = RGB(68, 114, 196)
+        .Font.name = "Arial"
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+        .HorizontalAlignment = xlLeft
+        .VerticalAlignment = xlCenter
+    End With
+End Sub
+
+Public Sub ApplyJourneySignalCell(ByVal TargetCell As Range, _
+                                  ByVal FillColor As Long, _
+                                  ByVal FontColor As Long)
+    With TargetCell
+        .Interior.Pattern = xlSolid
+        .Interior.Color = FillColor
+        .Font.Color = FontColor
+        .Font.Bold = True
+    End With
+End Sub
+
+Public Sub ApplyJourneyStatusHighlight(ByVal TargetCell As Range, _
+                                       ByVal StatusText As String)
+    TargetCell.HorizontalAlignment = xlCenter
+
+    Select Case StatusText
+        Case "Ended"
+            ApplyJourneySignalCell _
+                TargetCell, RGB(217, 217, 217), RGB(89, 89, 89)
+        Case "Shortfall"
+            ApplyJourneySignalCell _
+                TargetCell, RGB(255, 120, 120), RGB(150, 0, 0)
+        Case "Margin Call"
+            ApplyJourneySignalCell _
+                TargetCell, RGB(255, 205, 80), RGB(120, 65, 0)
+        Case Else
+            ApplyJourneySignalCell _
+                TargetCell, RGB(198, 239, 206), RGB(84, 130, 53)
+    End Select
+End Sub
+
+Public Sub ApplyJourneyDeltaHighlight(ByVal TargetCell As Range, _
+                                      ByVal DeltaValue As Double)
+    If DeltaValue > 0 Then
+        ApplyJourneySignalCell _
+            TargetCell, RGB(198, 239, 206), RGB(84, 130, 53)
+    ElseIf DeltaValue < 0 Then
+        ApplyJourneySignalCell _
+            TargetCell, RGB(255, 199, 206), RGB(156, 0, 6)
+    End If
+End Sub
