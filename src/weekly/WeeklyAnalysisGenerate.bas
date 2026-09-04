@@ -10060,7 +10060,7 @@ Private Sub BuildRiskGranularitySection( _
                 RISK_STAGE_TABLE)
 
 
-        GoTo AggregateUnifiedRiskStageDataLabel
+        GoTo StageDataReadyLabel
 
     End If
 
@@ -10474,7 +10474,7 @@ Private Sub BuildRiskGranularitySection( _
     DeleteLegacyRiskStageWorksheets
 
 
-AggregateUnifiedRiskStageDataLabel:
+StageDataReadyLabel:
 
     '
     ' Reported whether the staging table was rebuilt or reused, because the
