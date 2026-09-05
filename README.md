@@ -41,8 +41,7 @@ The addresses deliberately live in the workbook rather than in source.
 Both are semicolon-delimited. `report_path` points at an external workbook
 whose *Report* sheet supplies margin-call / shortfall reasons and comments.
 The certificate reference used to decompose structured products into their
-underlyings is no longer an external folder: it is two worksheets, listed
-below.
+underlyings is two worksheets in this workbook, listed below.
 
 ## Reference sheets
 
@@ -66,7 +65,7 @@ Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
 
 Both certificate sheets are on `CoreClean`'s keep list, like every other
-reference sheet — they hold maintained data now, not a rebuilt cache.
+reference sheet: they hold maintained data, not a rebuilt cache.
 
 `CoreClean` keeps only the sheets on its own list and deletes everything else,
 *Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and
@@ -85,7 +84,8 @@ src/weekly/     WeeklyAnalysisGenerate, WeeklyAnalysisLayout, WeeklyAnalysisEmai
 src/journey/    Journey, JourneyFormatting, JourneyDashboardTable, JourneyPositionAnalysis
 src/delta/      DeltaCalculation, DeltaRevenue
 tools/          ToolsInstall (loads a folder of modules), ToolsExposureProbe
-                (formula-vs-VBA experiment) — neither is part of the workbook
+                (checks the report's formulas against a VBA pass) — neither
+                is part of the workbook
 archive/        JourneyVisualization (superseded)
 ```
 
@@ -120,9 +120,9 @@ button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,000 lines and 188 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 175 of those procedures are
-Private, along with six Enums and forty-odd Consts. The module is the only
+It is 11,400 lines and 187 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 184 of those procedures are
+Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
 it into five, and every helper the pieces share has to become Public, which
@@ -133,8 +133,8 @@ So the boundary earns its size. What splitting would have bought — being able
 to find things — the file order already gives, and the sections run in the
 order the report is built: source loading and CSV parsing, the report
 sections, risk reference data, certificate basket expansion, entity-name
-normalisation, the staging table and its aggregation, then the chart and the
-notes. `docs/weekly-analysis-generate.md` walks through them.
+normalisation, the ranked formulas and the staging table they read, then the
+chart and the notes. `docs/weekly-analysis-generate.md` walks through them.
 
 `archive/JourneyVisualization.bas` is commented out in full. Its charting
 procedures were revived inside `JourneyDashboardTable`, which now carries the
@@ -150,17 +150,19 @@ collateral breakdown, new/ended loans, entered collateral, the pie chart, and
 the exposure concentration block. Every section that measures change carries
 the week beside the month: the overview gains a row seven days back, the
 collateral breakdown a week snapshot and a `% Change WoW` row, the two
-loan-movement tables and the entered-collateral table a block per window. The concentration block is the bulk of the
-module: certificate baskets are expanded recursively into their underlyings,
-entity names are normalised and merged (diacritics, legal suffixes, share
-class suffixes, prefix matching, manual variants), resolved against the
-reference sheets, staged into the `RiskExposure` table with an account scope
-flag, then aggregated twice — full portfolio and excluding aggregated accounts
-— into top-10 tables by name, geography and sector.
-`CreateWeeklyEmail` re-exports the finished ranges as HTML and assembles the
-Outlook message. `docs/weekly-analysis-generate.md` walks through that module
-in detail — the staging table's schema, the certificate recursion, the entity
-name normalisation, and the three separate asset classifications.
+loan-movement tables and the entered-collateral table a block per window.
+The concentration block is the bulk of the module: certificate baskets are
+expanded recursively into their underlyings, entity names are normalised and
+merged (diacritics, legal suffixes, share class suffixes, prefix matching,
+manual variants), resolved against the reference sheets, and staged into the
+`RiskExposure` table with an account scope flag. The top-10 tables by name,
+geography and sector — full portfolio and excluding segregated accounts — are
+then worksheet formulas over that table, one per subtable, left live in the
+sheet. `CreateWeeklyEmail` re-exports the finished ranges as HTML and
+assembles the Outlook message. `docs/weekly-analysis-generate.md` walks
+through that module in detail — the staging table's schema, the certificate
+recursion, the entity name normalisation, the ranked formula, and the three
+separate asset classifications.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears
@@ -213,20 +215,21 @@ Pasting the text into a new module instead leaves `Attribute VB_Name` in the
 body, where it is not valid VBA and shows as a syntax error — it is a
 file-format directive the importer reads and strips.
 
-## Experiment: the concentration arithmetic as formulas
+## The concentration arithmetic is formulas
 
-`tools/ToolsExposureProbe.bas` rebuilds the whole exposure concentration
-section — all twenty-two subtables: three dimensions, the asset classes
-`BuildRiskSubtableVisibility` leaves visible in each, and both account scopes —
-twice over the same `RiskExposure` staging table, once with worksheet formulas
-and once with a VBA pass, and puts the difference between them in a column.
-Import it, run `BuildExposureProbe`, and read the three numbers at the top of
-the *Exposure Probe* sheet: they should all be zero.
+The exposure concentration section — all twenty-two subtables: three
+dimensions, the asset classes `BuildRiskSubtableVisibility` leaves visible in
+each, and both account scopes — is worksheet formulas over the `RiskExposure`
+staging table. `WriteTopExposureGroup` writes one `LET` per subtable,
+calculates it, reads how many rows it spilled, and places the total row
+underneath. The formulas stay live: the numbers follow the staging table
+without a rerun.
 
-The staging table is already a fact table (one row per position × allocated
-exposure, with every dimension beside the measure), so the 432 lines of
-`AggregateUnifiedRiskStageData` are a hand-written `GROUP BY` that `GROUPBY`
-does natively. What the probe tests is not whether that is possible but
+The staging table is a fact table (one row per position × allocated exposure,
+with every dimension beside the measure), so the ranking is a `GROUP BY` that
+`GROUPBY` does natively: name, value and distinct NDG count, ordered and cut to
+ten, with the distinct count written as `LAMBDA(x, COUNTA(UNIQUE(x)))` where
+the aggregate goes. What needed care was not whether that is possible but
 whether the *semantics* survive the translation. Four are easy to lose:
 
 - **Issuer's denominator is not its numerator.** Issuer receives every row of
@@ -235,38 +238,34 @@ whether the *semantics* survive the translation. Four are easy to lose:
   basket is being expanded, then the `Unknown certificate underlying` exposure
   type once staged — and it carries the certificate's whole value at weight 1.
   The ranked list skips it; the share denominator counts it. So part of an
-  Issuer table's denominator can never appear in the table. Country of Risk
-  and Sector never see those rows, and their two filters match.
+  Issuer table's denominator can never appear in the table, which is why the
+  formula carries two masks, one for what ranks and one for what the share
+  divides by. Country of Risk and Sector never see those rows, and their two
+  masks match.
 
   That condition should not happen and is not benign: it means the reference
   data could not say what is inside a certificate the portfolio is lending
   against. The analysis still completes — the money is real exposure either
-  way — but the weekly report now names the certificates in its Notes rather
-  than absorbing them silently.
+  way — but the report names the certificates in its Notes rather than
+  absorbing them silently.
 - **The `#NDG` on a total row is a union, not a sum** of the ten counts above
   it.
 - **Ties break on name ascending**, case-insensitively, after value descending.
 - **The class name in the table is not the label on the report.** Certificates
-  is stored as `Certificates (Excl. Protected)`, and
-  `RiskAssetIndexFromClass` accepts the bare name as well, so a block can
-  answer to more than one string.
+  is stored as `Certificates (Excl. Protected)`, so the formula matches a list
+  of class values rather than one string.
 
-The whole ranked table — country, value and distinct NDG count, ordered and
-cut to ten — is one `GROUPBY` formula per asset class, with the distinct count
-written as `LAMBDA(x, COUNTA(UNIQUE(x)))` where the aggregate goes.
+One wrinkle: `GROUPBY` names its value columns in a row of its own, that row
+is text, and sorting by value descending therefore carries it to the top and
+pushes the tenth name out of the table — `DROP(…, 1)` takes it off before the
+sort.
 
-**It answers yes.** Against the VBA pass the values agree to the cent, the
-per-country and union `#NDG` counts agree, and the category totals are equal.
-One wrinkle worth keeping in mind for a real implementation: `GROUPBY` names
-its value columns in a row of its own, that row is text, and sorting by value
-descending therefore carries it to the top and pushes the tenth country out of
-the table — `DROP(…, 1)` takes it off before the sort.
-
-The probe's VBA side selects the top ten rather than sorting every name, which
-matters once the Issuer dimension is in scope: sorting costs n², and n there is
-the number of distinct issuers — thousands, where a country or sector table has
-dozens. `WriteTopExposureGroup` sorts in full for the same top ten, so the
-report pays that cost too.
+`tools/ToolsExposureProbe.bas` is how this was proved before it replaced the
+VBA aggregation, and it is the check to run after touching the formula:
+import it, run `BuildExposureProbe`, and the *Exposure Probe* sheet writes all
+twenty-two subtables twice — once with the formulas, once with a VBA pass —
+with the difference in a column and three totals at the top that should all
+be zero.
 
 ## Encoding
 

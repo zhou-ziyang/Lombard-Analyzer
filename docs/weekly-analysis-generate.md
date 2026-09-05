@@ -1,33 +1,35 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` v82（13,055 行 / 193 个过程）通读整理。
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（11,393 行 / 187 个过程；模块头部的版本注释停在
+v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
 快照变成一张周度 Lombard 报表，中间经过一张 16 字段的可审计暂存表。
 
 | | |
 | --- | --- |
-| 行数 | 13,055 |
-| 过程数 | 193 |
+| 行数 | 11,393 |
+| 过程数 | 187 |
 | 暂存表字段 | 16 |
-| 输出集中度表 | 6（3 维度 × 2 口径） |
+| 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
 ---
 
 ## 整体形状
 
-入口只有一个：`GenerateWeeklyAnalysis`。它读 `Home!WeeklyEndDate`，解析出比较日（上月）和
-YTD 日（上年末），加载五份快照数据，然后按 `WeeklyAnalysisLayout.Layout` 里的坐标把六个区块
-写到同一张 *Weekly Analysis* 表上。
+入口只有一个：`GenerateWeeklyAnalysis`。它读 `Home!WeeklyEndDate`，解析出上周、上月两个比较日和
+YTD 日（上年末），加载七份快照数据（当前、上周、上月各一份 Accounts 加一份 Positions，YTD 只要
+Positions），然后按 `WeeklyAnalysisLayout.Layout` 里的坐标把六个区块写到同一张 *Weekly Analysis*
+表上。每个衡量变化的区块都把周环比放在月环比旁边。
 
-但真正的重量不在报表区块，而在 `BuildRiskGranularitySection` —— 它一个人占了从第 11,397 行
+但真正的重量不在报表区块，而在 `BuildRiskGranularitySection` —— 它一个人占了从第 9,978 行
 往后的篇幅，加上它依赖的证书展开、实体名规范化和参照表维护，超过全模块的三分之二。
 
 ```mermaid
 flowchart TB
     P["Positions CSV<br/><small>LoadWeeklyPositionData</small>"]
     A["Accounts CSV<br/><small>LoadWeeklyAccountData</small>"]
-    C["Certificates .xlsx<br/><small>FindLatestCertificateFile</small>"]
+    C["Certificates · Certificate Underlyings 工作表<br/><small>LoadCertificateUnderlyingMap</small>"]
 
     R["六个报表区块<br/><small>Overview · Breakdown · New<br/>Ended · Entered · Pie</small>"]
 
@@ -40,8 +42,9 @@ flowchart TB
 
     STAGE["<b>Risk Exposure — 16 字段暂存表</b><br/><small>NDG · AssetClass · ExposureName · AllocationWeight<br/>AllocatedValue · Geography · Sector · ResolutionSource · AccountScope</small>"]
 
-    FULL["Full（全组合）<br/><small>扫描时只收 DPM 行<br/>扫完并入 Excl. DPM</small>"]
-    EXD["Excl. DPM<br/><small>扫描时只收 Non-DPM 行<br/>Asset Class = GP 即 DPM</small>"]
+    FML["<b>一张子表一条公式</b><br/><small>RiskRankedFormula<br/>FILTER → GROUPBY → SORTBY → TAKE 10</small>"]
+    FULL["Full（全组合）<br/><small>掩码不看 Account Scope</small>"]
+    EXD["Excl. DPM<br/><small>掩码只放行 Non-DPM<br/>Asset Class = GP 即 DPM</small>"]
 
     T1["Name × 2"]
     T2["Geography × 2"]
@@ -53,9 +56,9 @@ flowchart TB
     C --> CE
     EQ & BD & FD & CE --> NORM
     NORM --> STAGE
-    STAGE --> FULL & EXD
-    EXD -.并入.-> FULL
-    STAGE -. 可复用：跳过解析层，直接重新聚合 .-> FULL
+    STAGE --> FML
+    STAGE -. 可复用：跳过解析层，公式直接读表 .-> FML
+    FML --> FULL & EXD
     FULL --> T1 & T2 & T3
     EXD --> T1 & T2 & T3
 ```
@@ -124,7 +127,8 @@ Additional Comment 是 `Required:=False` 的——这两列不在也能跑。
 `ShouldRebuildRiskStageTables` 先验证表的 schema 和数据是否完好，完好就把
 `RiskStageReuseDescription`（里面带着表上记录的 as-of 日期，以及它和当前请求日期是否一致）
 交给 `ShouldOverwriteExistingSheets` 去问用户。选择复用时，`BuildRiskGranularitySection`
-直接 `GoTo` 到聚合标签——整个证书文件加载、参照表更新、实体解析全部跳过，只从表里重新聚合。
+直接 `GoTo StageDataReadyLabel`——证书表加载、参照表更新、实体解析全部跳过。下面的集中度表是
+读这张暂存表的公式，所以复用和重建走到这里之后没有区别。
 
 > **操作上的一个后果**：这个询问对话框是在 `ScreenUpdating = False` 的状态下弹出来的，
 > 而且发生在报表跑到一半（`BuildRiskGranularitySection` 排在 `BuildNewLoansSection` 之前）。
@@ -139,14 +143,16 @@ Additional Comment 是 `Required:=False` 的——这两列不在也能跑。
 
 1. **四道熔断。** 空 RIC、深度超过 `CERTIFICATE_MAX_BASKET_DEPTH`（12）、`RecursionPath`
    里已存在（成环）、RIC 在映射表里找不到——四种情况都产出一个带 `__MISSING_RIC__|` 前缀、
-   权重 1、标记为 Temporary 的占位成分。不抛错，不静默丢弃。
+   权重 1、标记为 Temporary 的占位成分。不抛错，不静默丢弃。完全叫不出名字的底层则带
+   `__UNKNOWN_CERTIFICATE_UNDERLYING__|` 前缀，进暂存表前剥掉前缀、换成
+   `Unknown certificate underlying` 这个 Exposure Type：排名跳过它，分母算上它，Notes 里点名。
 2. **不是篮子就到底了。** `IsBasketUnderlyingName` 判否，直接产出这个实体，权重 1。
 3. **是篮子且有子 RIC 列表。** 把子列表按逗号、分号、竖线、各种换行切开，去重，按 `1 / n`
    等权递归展开。
 4. **关键的回退。** 如果所有子 RIC 展开完，`CertificateComponentsContainResolvedEntity`
    发现**一个真实体都没有**，就把整个结果丢掉重来，改用篮子的描述性文本解析。代码注释解释了
-   原因：过期的成分 RIC 会从新版 InstrumentList 里消失，这时候那段人类可读的文本反而更靠得住。
-   这一条不是设计出来的，是从事故里长出来的。
+   原因：过期的成分 RIC 会从新版 Certificate Underlyings 表里消失，这时候那段人类可读的文本
+   反而更靠得住。这一条不是设计出来的，是从事故里长出来的。
 5. **文本路径又是三级。** 先在文本里直接找已知 RIC；找不到就抽出第一个 ISIN 查 ISIN→RIC；
    再不行就 `CleanBasketComponentName` 清洗出名字查 名字→RIC；全都不行才把清洗后的名字直接
    当成实体。
@@ -207,12 +213,20 @@ Account（全权委托）。于是出现了一个效果：`ResolveTopTenAssetCla
 
 ## 聚合与开关
 
-### 一行只更新一套字典
+### 一张子表一条公式
 
-`AggregateUnifiedRiskStageData` 里有个乍看反直觉的写法：扫描过程中，`Full*` 数组**只**接收
-DPM 行，`ExDPM*` 数组只接收 Non-DPM 行。扫完之后再 `MergeRiskAggregateSet` 把 ExDPM 并进
-Full。这样每一行只做一套字典更新而不是两套——版本注释里的 v81 就是这件事。扫描末尾还有个对账
-断言：两边行数之和对不上暂存表总行数就直接抛错。
+聚合不在 VBA 里做。`RiskRankedFormula` 为每个「维度 × 资产类 × 口径」生成一条 `LET` 公式，
+`WriteTopExposureGroup` 把它写进子表的第一个数据格、`.Calculate`、读出溢出了几行，再把合计行
+放到下面。公式留在表里是活的，暂存表变了数字跟着变，不用重跑。
+
+公式里有两个掩码：`k` 决定谁进榜，`kAll` 决定份额的分母。两者只在 Issuer 维度上不同——
+`Unknown certificate underlying` 的行不进榜但算分母（见上）。`GROUPBY` 按名字汇总价值、用
+`LAMBDA(x, COUNTA(UNIQUE(x)))` 数不重复的 NDG；它会多吐一行文字表头，在按价值降序排之前得
+`DROP(…, 1)` 拿掉，否则文字排到最顶上、把第十名挤出去。同分按名字升序。合计行的 `#NDG`
+是并集，不是上面十个数的和，由另一条公式单独算。
+
+`tools/ToolsExposureProbe.bas` 把 22 个子表用公式和一遍 VBA 各算一次并列比较，是替换之前
+用来证明等价的工具，也是改公式之后该跑的检查。
 
 ### 注释即配置
 
@@ -228,9 +242,10 @@ Full。这样每一行只做一套字典更新而不是两套——版本注释�
 
 ### Same as left
 
-`ExposureGroupsMatch` 会比较 Full 和 Excl. DPM 两侧的 Certificates 结果。完全一致时右表那一段
-用一行 "Same as left" 代替整块重复内容（v59）。证书通常不进全委账户，所以这一段大多数时候确实
-是重复的。
+`CertificateResultsMatch` 在暂存表右侧的空白列里把 Full 和 Excl. DPM 两条 Certificates 公式各
+算一次，交给 `ExposureGroupsMatch` 逐格比较，比完清掉。完全一致时右表那一段用一行
+"Same as left" 代替整块重复内容（v59）。证书通常不进全委账户，所以这一段大多数时候确实是
+重复的。
 
 ---
 
@@ -254,11 +269,10 @@ append-only，已有的人工填写不会被覆盖——**只有一个例外**�
 
 都不是 bug，是这个规模的模块里值得留意的结构性风险。
 
-**性能：三处 O(n²)。** `WriteTopExposureGroup` 和 `WriteAssetTypeMapping` 都用冒泡排序。前者的
-n 是某个资产类别下的唯一实体数——为了取前 10 名而把全表冒泡一遍。更重的是
+**性能：两处 O(n²)。** `WriteAssetTypeMapping` 用冒泡排序，n 是资产类型映射的行数，小。重的是
 `FindEntityPrefixCanonicalName`：每遇到一个新实体键就遍历一次全部已有键，整体 O(n²) 的字符串
 比较。版本注释里 v64 到 v76 一直在做性能优化（缓存重复的证书展开、避免重复合并地域候选、缓存
-实体排序用的比较属性），这三处是剩下的量级项。
+实体排序用的比较属性），集中度的排序已经交给 Excel，这两处是剩下的量级项。
 
 **Notes 框的高度由饼图决定。** `BuildNotes` 的 LastRow 是
 `Layout.PieRow + Layout.PieHeightRows - 1`。改饼图的高度会连带改掉 Notes 框的高度。两者在
