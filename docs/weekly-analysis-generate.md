@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（11,393 行 / 187 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,005 行 / 194 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 11,393 |
-| 过程数 | 187 |
+| 行数 | 12,005 |
+| 过程数 | 194 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -260,10 +260,30 @@ append-only，已有的人工填写不会被覆盖——**只有一个例外**�
   等人工填名字。
 - **Bond Issuers**：按 ticker 一行。各字段独立累积，所以同一 ticker 下的另一个 ISIN 可以补上
   缺失的 issuer 或分类，不用多扫一遍表。`Issuer Name` 是**唯一允许覆盖已有值**的字段，注释
-  给了理由：Sophis 之后可能给出更正过的名字。
+  给了理由：Sophis 之后可能给出更正过的名字。被覆盖掉的旧名不再丢弃，而是并进 `Previous
+  Names` 列（第一次需要时由代码建列）——它是下面识别改名的证据之一。
 - **Funds**：补 Reference ISIN，并给 Prefix / Company Name 写 XLOOKUP 公式。
   `SetFundLookupFormula` 先试 `Formula2`（逗号分隔），失败再退到 `FormulaLocal`（分号分隔）
   ——处理的是 Excel 区域设置差异。
+
+### 改名的公司
+
+Companies 只按 Name 和 Name Variants 匹配，改了名的公司会被当成陌生人：进 New Geo-Sec
+Lookup，Country / Sector 归 Others。`DetectCompanyRenames` 在 `LoadCompaniesLookup` 之后、
+`CanonicalizeGeographyUsingCompanies` 之前跑一遍：名字和变体都对不上的实体，再试两座桥——
+它的 ISIN 候选对 Companies 的 Reference ISIN（只算 Issued / Underlying security，基金的
+ISIN 认的是基金不是母公司），以及债券 issuer 的 `PreviousNames` 对 Companies 的名字和变体。
+搭上桥就把那行 Companies **复制一份、换上新名**，登记进内存里的 ByName / ByVariant 映射，
+带着 `RenamedFrom` 和 `RenameEvidence` 两个字段。于是后面按新名的查找全部命中——报表显示
+新名（沿用债券"Sophis 最新的名字算数"的规则），Country / Sector 取自旧行；Companies 表本身
+一个字不动。
+
+`CompanyEntryNeedsLookup` 见到 `RenamedFrom` 一律列入 New Geo-Sec Lookup：Name 是新名，
+Name Variants 已经并好了旧名 + 旧变体 + 新名，J / K 两列写着从哪来、凭什么。有这种行时表上
+会画一个 **Apply Renames** 按钮，绑到 `ApplyCompanyRenames`——代码写 Companies 的唯一入口，
+而且只写人按了按钮的那些行：改 Name，并入 Name Variants 和 Exposure Type，Geography /
+Sector 不碰，然后删掉 lookup 上那一行。同名行已存在或旧名找不到的跳过并在弹窗里说明。按完
+要重建一次 staging，新旧名下的持仓才会并到一起——在那之前它们分开排名，Notes 里有提示。
 
 ---
 

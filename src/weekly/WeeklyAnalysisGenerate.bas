@@ -130,6 +130,7 @@ Private Const UNKNOWN_UNDERLYING_TYPE As String = _
 Private Const NON_DPM_SCOPE As String = "Non-DPM"
 
 Private Const UNKNOWN_UNDERLYING_NOTE_LIMIT As Long = 10
+Private Const RENAME_NOTE_LIMIT As Long = 10
 
 Private Const RISK_FORMULA_INDENT As String = "    "
 Private Const RISK_BIND_WIDTH As Long = 6
@@ -2772,6 +2773,7 @@ Private Sub UpdateRiskReferenceDatabases( _
     Dim BondNameCol As Long
     Dim BondIssuerCol As Long
     Dim BondTypeCol As Long
+    Dim BondPrevCol As Long
     Dim FundNameCol As Long
     Dim FundIsinCol As Long
     Dim FundPrefixCol As Long
@@ -2981,6 +2983,19 @@ Private Sub UpdateRiskReferenceDatabases( _
            BondNameCol > 0 And BondIssuerCol > 0 And _
            BondTypeCol > 0 Then
 
+            '
+            ' Previous Names is added to the table the first time it is
+            ' needed.  It is the only column here the code creates, and it
+            ' holds only what the code itself is about to overwrite.
+            '
+            BondPrevCol = _
+                GetTableColumnIndex(DataTable, "Previous Names")
+
+            If BondPrevCol = 0 Then
+                BondPrevCol = DataTable.ListColumns.Add.Index
+                DataTable.ListColumns(BondPrevCol).name = "Previous Names"
+            End If
+
             Set ExistingRows = _
                 BuildTableKeyIndex(DataTable, "Issuer Ticker")
 
@@ -3047,7 +3062,28 @@ Private Sub UpdateRiskReferenceDatabases( _
 
                 ' Sophis may later supply a corrected issuer name; this is
                 ' the only populated field intentionally allowed to update.
+                ' The name it replaces goes to Previous Names: it is what
+                ' lets the issuer be matched back to its row in Companies
+                ' once nothing else about it reads the same.
                 If CStr(Candidate("IssuerName")) <> "" Then
+
+                    CurrentValue = _
+                        SafeText( _
+                            DataRow.Range.Cells(1, BondIssuerCol).Value)
+
+                    If CurrentValue <> "" And _
+                       NormalizeExactNameKey(CurrentValue) <> _
+                       NormalizeExactNameKey( _
+                            CStr(Candidate("IssuerName"))) Then
+
+                        DataRow.Range.Cells(1, BondPrevCol).Value = _
+                            MergeDelimitedText( _
+                                SafeText( _
+                                    DataRow.Range.Cells( _
+                                        1, BondPrevCol).Value), _
+                                CurrentValue)
+
+                    End If
 
                     DataRow.Range.Cells(1, BondIssuerCol).Value = _
                         CStr(Candidate("IssuerName"))
@@ -5364,6 +5400,7 @@ End Function
 Private Sub LoadBondIssuerMaps( _
     ByRef IssuerMapping As Object, _
     ByRef TypeMapping As Object, _
+    ByRef PreviousNameMapping As Object, _
     ByRef MappingReady As Boolean, _
     ByVal PreferredWorkbook As Workbook)
 
@@ -5372,13 +5409,16 @@ Private Sub LoadBondIssuerMaps( _
     Dim TickerColumn As Long
     Dim IssuerColumn As Long
     Dim TypeColumn As Long
+    Dim PreviousColumn As Long
     Dim r As Long
     Dim LookupKey As String
     Dim IssuerName As String
     Dim IssuerType As String
+    Dim PreviousNames As String
 
     Set IssuerMapping = NewExactNameMap()
     Set TypeMapping = NewExactNameMap()
+    Set PreviousNameMapping = NewExactNameMap()
 
     Set DataTable = _
         GetReferenceDataTable( _
@@ -5394,6 +5434,10 @@ Private Sub LoadBondIssuerMaps( _
         GetTableColumnIndex(DataTable, "Issuer Name")
     TypeColumn = _
         GetTableColumnIndex(DataTable, "Bond Type")
+
+    ' Optional: present once an issuer name has ever been corrected.
+    PreviousColumn = _
+        GetTableColumnIndex(DataTable, "Previous Names")
 
     If TickerColumn = 0 Or IssuerColumn = 0 Or _
        TypeColumn = 0 Or DataTable.DataBodyRange Is Nothing Then
@@ -5430,6 +5474,18 @@ Private Sub LoadBondIssuerMaps( _
             If IssuerType <> "" Then
 
                 TypeMapping(LookupKey) = IssuerType
+
+            End If
+
+            If PreviousColumn > 0 Then
+
+                PreviousNames = _
+                    SafeText( _
+                        TableData(r, PreviousColumn))
+
+                If PreviousNames <> "" Then
+                    PreviousNameMapping(LookupKey) = PreviousNames
+                End If
 
             End If
 
@@ -5765,7 +5821,8 @@ Private Sub AddGeographyLookupEntry( _
     ByVal IsinRelationship As String, _
     ByVal IsinPriority As Long, _
     ByVal ObservationSet As Object, _
-    Optional ByVal NameVariant As String = "")
+    Optional ByVal NameVariant As String = "", _
+    Optional ByVal PreviousNames As String = "")
 
     Dim EntryKey As String
     Dim ObservationKey As String
@@ -5858,6 +5915,25 @@ Private Sub AddGeographyLookupEntry( _
         AppendUniqueGeographyVariant( _
             CStr(Entry("Variants")), _
             NameVariant)
+
+    '
+    ' Names this entity was known by before, kept apart from the variants
+    ' because they are evidence of a rename, and also among them so they
+    ' travel into Companies with everything else.
+    '
+    If PreviousNames <> "" Then
+
+        Entry("PreviousNames") = _
+            MergeDelimitedText( _
+                EntryText(Entry, "PreviousNames"), _
+                PreviousNames)
+
+        Entry("Variants") = _
+            MergeDelimitedText( _
+                CStr(Entry("Variants")), _
+                PreviousNames)
+
+    End If
 
     If ReferenceISIN = "" Then Exit Sub
 
@@ -6227,6 +6303,13 @@ Private Sub AddGeographyEntryWithCandidates( _
             CStr(TargetEntry("Variants")), _
             NameVariant, _
             SourceVariants)
+
+    If EntryText(SourceEntry, "PreviousNames") <> "" Then
+        TargetEntry("PreviousNames") = _
+            MergeDelimitedText( _
+                EntryText(TargetEntry, "PreviousNames"), _
+                EntryText(SourceEntry, "PreviousNames"))
+    End If
 
     MergeGeographyCandidateSets _
         TargetEntry, _
@@ -7295,6 +7378,7 @@ End Function
 Private Sub LoadCompaniesLookup( _
     ByRef CompaniesByName As Object, _
     ByRef CompaniesByVariant As Object, _
+    ByRef CompaniesByIsin As Object, _
     ByRef CompaniesReady As Boolean)
 
     Dim DataTable As ListObject
@@ -7316,6 +7400,7 @@ Private Sub LoadCompaniesLookup( _
 
     Set CompaniesByName = NewExactNameMap()
     Set CompaniesByVariant = NewExactNameMap()
+    Set CompaniesByIsin = NewExactNameMap()
     CompaniesReady = False
 
     Set DataTable = GetCompaniesDataTable(ThisWorkbook)
@@ -7415,11 +7500,47 @@ Private Sub LoadCompaniesLookup( _
 
             Next Part
 
+            '
+            ' The ISIN is the bridge to a company whose name has changed:
+            ' what it issued keeps its ISIN through a rename, its name does
+            ' not.  A fund's ISIN identifies the fund rather than its parent,
+            ' so those rows stay out of this index.
+            '
+            LookupKey = _
+                NormalizeExactNameKey(CStr(Entry("ReferenceISIN")))
+
+            If LookupKey <> "" And _
+               Not IsManagedFundRelationship( _
+                    CStr(Entry("IsinRelationship"))) Then
+
+                If Not CompaniesByIsin.Exists(LookupKey) Then
+                    CompaniesByIsin.Add LookupKey, Entry
+                End If
+
+            End If
+
         End If
 
     Next r
 
 End Sub
+
+Private Function IsManagedFundRelationship( _
+    ByVal Relationship As String) As Boolean
+
+    IsManagedFundRelationship = _
+        (InStr(1, Relationship, "fund", vbTextCompare) > 0)
+
+End Function
+
+Private Function EntryText( _
+    ByVal Entry As Object, _
+    ByVal Key As String) As String
+
+    If Entry Is Nothing Then Exit Function
+    If Entry.Exists(Key) Then EntryText = CStr(Entry(Key))
+
+End Function
 
 Private Function ResolveCompanyEntry( _
     ByVal ExposureName As String, _
@@ -7876,6 +7997,15 @@ Private Function CompanyEntryNeedsLookup( _
 
     End If
 
+    '
+    ' A row registered for a renamed company exists only in memory; the
+    ' sheet still carries the old name, so it is always listed.
+    '
+    If CompanyEntry.Exists("RenamedFrom") Then
+        CompanyEntryNeedsLookup = True
+        Exit Function
+    End If
+
     CurrentName = CStr(GeographyEntry("Name"))
     CurrentVariants = CStr(GeographyEntry("Variants"))
     CurrentTypes = CStr(GeographyEntry("ExposureType"))
@@ -7950,7 +8080,9 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     Dim CurrentRelationship As String
     Dim OutputCount As Long
     Dim OutputRow As Long
+    Dim RenameCount As Long
     Dim LastRow As Long
+
     Set wsLookup = _
         CreateOrReplaceSheet(GEO_SEC_LOOKUP_SHEET)
 
@@ -7965,6 +8097,8 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     wsLookup.Cells(1, 7).Value = "Fallback Geography"
     wsLookup.Cells(1, 8).Value = "Sector"
     wsLookup.Cells(1, 9).Value = "Fallback Sector"
+    wsLookup.Cells(1, 10).Value = "Renamed From"
+    wsLookup.Cells(1, 11).Value = "Rename Evidence"
 
     LastRow = 1
     Set PendingKeys = New Collection
@@ -7996,7 +8130,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
         If OutputCount > 0 Then
 
-            ReDim Output(1 To OutputCount, 1 To 9)
+            ReDim Output(1 To OutputCount, 1 To 11)
             OutputRow = 0
 
             For Each EntryKey In PendingKeys
@@ -8071,6 +8205,20 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
                     End If
 
+                    '
+                    ' A renamed company: Name already carries the new name
+                    ' and Name Variants the old one, so the row is ready to
+                    ' apply; these two columns say where it came from and
+                    ' why it is believed to be the same company.
+                    '
+                    If CompanyEntry.Exists("RenamedFrom") Then
+                        Output(OutputRow, 10) = _
+                            CStr(CompanyEntry("RenamedFrom"))
+                        Output(OutputRow, 11) = _
+                            CStr(CompanyEntry("RenameEvidence"))
+                        RenameCount = RenameCount + 1
+                    End If
+
                 End If
 
             Next EntryKey
@@ -8079,11 +8227,11 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
             wsLookup.Range( _
                 wsLookup.Cells(2, 1), _
-                wsLookup.Cells(LastRow, 9)).Value = Output
+                wsLookup.Cells(LastRow, 11)).Value = Output
 
             wsLookup.Range( _
                 wsLookup.Cells(1, 1), _
-                wsLookup.Cells(LastRow, 9)).Sort _
+                wsLookup.Cells(LastRow, 11)).Sort _
                     Key1:=wsLookup.Cells(2, 1), _
                     Order1:=xlAscending, _
                     Header:=xlYes
@@ -8116,7 +8264,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     FormatReportTable _
         wsLookup.Range( _
             wsLookup.Cells(1, 1), _
-            wsLookup.Cells(LastRow, 9)), _
+            wsLookup.Cells(LastRow, 11)), _
         1
 
     If LastRow >= 2 Then
@@ -8132,12 +8280,13 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     wsLookup.Columns(4).NumberFormat = "@"
     wsLookup.Range( _
         wsLookup.Cells(1, 1), _
-        wsLookup.Cells(LastRow, 9)).HorizontalAlignment = xlLeft
+        wsLookup.Cells(LastRow, 11)).HorizontalAlignment = xlLeft
 
     wsLookup.Range( _
         wsLookup.Cells(1, 1), _
-        wsLookup.Cells(LastRow, 9)).Font.name = "Aptos Display"
-    wsLookup.Columns("A:I").AutoFit
+        wsLookup.Cells(LastRow, 11)).Font.name = "Aptos Display"
+
+    wsLookup.Columns("A:K").AutoFit
 
     If wsLookup.Columns(1).ColumnWidth > 45 Then _
         wsLookup.Columns(1).ColumnWidth = 45
@@ -8150,6 +8299,8 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
     If wsLookup.Columns(5).ColumnWidth > 35 Then _
         wsLookup.Columns(5).ColumnWidth = 35
+    If wsLookup.Columns(10).ColumnWidth > 45 Then _
+        wsLookup.Columns(10).ColumnWidth = 45
 
     wsLookup.Columns(2).WrapText = True
 
@@ -8157,13 +8308,431 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
         wsLookup.Range( _
             wsLookup.Cells(1, 1), _
-            wsLookup.Cells(LastRow, 9)).AutoFilter
+            wsLookup.Cells(LastRow, 11)).AutoFilter
 
     End If
 
+    '
+    ' The rename rows reach Companies through a button on this sheet: a
+    ' person reads the evidence, then presses it.  Nothing is applied on
+    ' its own.  The sheet is rebuilt every run, so the button is too.
+    '
+    If RenameCount > 0 Then
+
+        With wsLookup.Buttons.Add( _
+                wsLookup.Cells(1, 13).Left, _
+                wsLookup.Cells(1, 13).Top, _
+                110, _
+                22)
+
+            .name = "btnApplyRenames"
+            .Characters.Text = "Apply Renames"
+            .OnAction = "ApplyCompanyRenames"
+
+        End With
+
+    End If
 
     DeleteLegacyGeographyLookupWorksheet
 
+End Sub
+
+'
+' A company that changes its name arrives as a name Companies has never
+' heard of, and would be treated as a stranger: listed for lookup, its
+' geography and sector shown as Others.  Two things survive a rename and
+' can vouch for it - the ISIN of what the company issued, and, for a bond
+' issuer, the name Bond Issuers held before Sophis corrected it.  An entry
+' that matches by neither name nor variant but by one of those is taken to
+' be the same company under its new name: a copy of the Companies row is
+' registered under the new name, so it resolves - geography and sector
+' included - and the new name is what the report shows, as the latest
+' Sophis name is for bonds already.  Companies itself is not touched.  The
+' copy remembers the old name and the evidence, the lookup sheet lists it,
+' and a person applies it.
+'
+Private Function DetectCompanyRenames( _
+    ByVal GeographyEntries As Object, _
+    ByVal CompaniesByName As Object, _
+    ByVal CompaniesByVariant As Object, _
+    ByVal CompaniesByIsin As Object) As Object
+
+    Dim Renames As Object
+    Dim EntryKey As Variant
+    Dim Entry As Object
+    Dim CompanyEntry As Object
+    Dim RenamedEntry As Object
+    Dim NewName As String
+    Dim Evidence As String
+    Dim LookupKey As String
+
+    Set Renames = NewExactNameMap()
+    Set DetectCompanyRenames = Renames
+
+    If GeographyEntries Is Nothing Then Exit Function
+    If CompaniesByName Is Nothing Then Exit Function
+    If CompaniesByVariant Is Nothing Then Exit Function
+
+    For Each EntryKey In GeographyEntries.Keys
+
+        Set Entry = GeographyEntries(EntryKey)
+        NewName = CStr(Entry("Name"))
+        LookupKey = NormalizeExactNameKey(NewName)
+
+        If LookupKey <> "" Then
+
+            If ResolveCompanyEntry( _
+                    NewName, _
+                    CompaniesByName, _
+                    CompaniesByVariant) Is Nothing Then
+
+                Evidence = ""
+
+                Set CompanyEntry = _
+                    MatchCompanyByIsin( _
+                        Entry, _
+                        CompaniesByIsin, _
+                        Evidence)
+
+                If CompanyEntry Is Nothing Then
+                    Set CompanyEntry = _
+                        MatchCompanyByPreviousName( _
+                            Entry, _
+                            CompaniesByName, _
+                            CompaniesByVariant, _
+                            Evidence)
+                End If
+
+                If Not CompanyEntry Is Nothing Then
+
+                    Set RenamedEntry = _
+                        RenamedCompanyEntry( _
+                            CompanyEntry, _
+                            NewName, _
+                            Evidence)
+
+                    CompaniesByName.Add LookupKey, RenamedEntry
+                    CompaniesByVariant.Add LookupKey, RenamedEntry
+                    Renames.Add LookupKey, RenamedEntry
+
+                End If
+
+            End If
+
+        End If
+
+    Next EntryKey
+
+End Function
+
+'
+' The entry's ISINs against the Companies index.  Only an issued or an
+' underlying security counts: a fund's ISIN names the fund, not the parent
+' the entry stands for.
+'
+Private Function MatchCompanyByIsin( _
+    ByVal Entry As Object, _
+    ByVal CompaniesByIsin As Object, _
+    ByRef Evidence As String) As Object
+
+    Dim Candidates As Object
+    Dim Candidate As Object
+    Dim Isin As Variant
+    Dim LookupKey As String
+
+    If Entry Is Nothing Then Exit Function
+    If CompaniesByIsin Is Nothing Then Exit Function
+    If Not Entry.Exists("IsinCandidates") Then Exit Function
+
+    Set Candidates = Entry("IsinCandidates")
+
+    For Each Isin In Candidates.Keys
+
+        Set Candidate = Candidates(Isin)
+
+        If CLng(Candidate("Priority")) <= _
+           GEO_ISIN_PRIORITY_UNDERLYING Then
+
+            LookupKey = NormalizeExactNameKey(CStr(Isin))
+
+            If CompaniesByIsin.Exists(LookupKey) Then
+
+                Set MatchCompanyByIsin = CompaniesByIsin(LookupKey)
+                Evidence = "ISIN " & CStr(Isin)
+
+                Exit Function
+
+            End If
+
+        End If
+
+    Next Isin
+
+End Function
+
+'
+' The names the entry was known by before, against Companies by name and
+' by variant.  Today only bond issuers carry these, from the Previous
+' Names column Bond Issuers keeps when Sophis corrects a name.
+'
+Private Function MatchCompanyByPreviousName( _
+    ByVal Entry As Object, _
+    ByVal CompaniesByName As Object, _
+    ByVal CompaniesByVariant As Object, _
+    ByRef Evidence As String) As Object
+
+    Dim Parts As Variant
+    Dim Part As Variant
+    Dim PreviousName As String
+
+    Parts = Split(EntryText(Entry, "PreviousNames"), ";")
+
+    For Each Part In Parts
+
+        PreviousName = Trim(CStr(Part))
+
+        If PreviousName <> "" Then
+
+            Set MatchCompanyByPreviousName = _
+                ResolveCompanyEntry( _
+                    PreviousName, _
+                    CompaniesByName, _
+                    CompaniesByVariant)
+
+            If Not MatchCompanyByPreviousName Is Nothing Then
+
+                Evidence = _
+                    "previous issuer name '" & PreviousName & "'"
+
+                Exit Function
+
+            End If
+
+        End If
+
+    Next Part
+
+End Function
+
+'
+' The Companies row again, under the new name, with the old name leading
+' its variants, and two fields the row in the sheet does not have: where
+' it came from and why.
+'
+Private Function RenamedCompanyEntry( _
+    ByVal CompanyEntry As Object, _
+    ByVal NewName As String, _
+    ByVal Evidence As String) As Object
+
+    Dim Copy As Object
+    Dim Key As Variant
+
+    Set Copy = CreateObject("Scripting.Dictionary")
+    Copy.CompareMode = vbTextCompare
+
+    For Each Key In CompanyEntry.Keys
+        Copy.Add Key, CompanyEntry(Key)
+    Next Key
+
+    Copy("Name") = NewName
+    Copy("NameVariants") = _
+        MergeDelimitedText( _
+            CStr(CompanyEntry("Name")), _
+            CStr(CompanyEntry("NameVariants")))
+    Copy.Add "RenamedFrom", CStr(CompanyEntry("Name"))
+    Copy.Add "RenameEvidence", Evidence
+
+    Set RenamedCompanyEntry = Copy
+
+End Function
+
+Private Sub AddCompanyRenameNote( _
+    ByVal Renames As Object)
+
+    Dim Key As Variant
+    Dim Entry As Object
+    Dim Listed As Long
+    Dim Lines As String
+
+    If Renames Is Nothing Then Exit Sub
+    If Renames.Count = 0 Then Exit Sub
+
+    For Each Key In Renames.Keys
+
+        Set Entry = Renames(Key)
+
+        If Listed < RENAME_NOTE_LIMIT Then
+            Lines = Lines & vbLf & _
+                CStr(Entry("RenamedFrom")) & " -> " & _
+                CStr(Entry("Name")) & _
+                " (" & CStr(Entry("RenameEvidence")) & ")"
+        End If
+
+        Listed = Listed + 1
+
+    Next Key
+
+    If Renames.Count > RENAME_NOTE_LIMIT Then
+        Lines = Lines & vbLf & _
+            "... and " & _
+            CStr(Renames.Count - RENAME_NOTE_LIMIT) & " more"
+    End If
+
+    WriteNoteWeekly _
+        CStr(Renames.Count) & _
+        IIf(Renames.Count = 1, _
+            " company appears", _
+            " companies appear") & _
+        " under a new name. Geography and sector were taken from " & _
+        "the existing '" & COMPANIES_SHEET & "' row; the new name is " & _
+        "listed on '" & GEO_SEC_LOOKUP_SHEET & "' with an Apply " & _
+        "Renames button. Until it is applied, positions still under " & _
+        "the old name rank separately." & _
+        Lines
+
+End Sub
+
+'
+' Bound to the Apply Renames button that WriteNewGeoSecLookupWorksheet
+' draws on the lookup sheet when it lists a renamed company.  Nothing in
+' the source calls it; it must stay Public and take no arguments for the
+' button to reach it.  It is the one place the code writes to Companies,
+' and it writes only the rows a person has read and pressed the button
+' for: the row named in Renamed From takes the new name, keeps the old
+' one and every variant, and keeps its geography and sector.
+'
+Public Sub ApplyCompanyRenames()
+
+    Dim wsLookup As Worksheet
+    Dim DataTable As ListObject
+    Dim RowIndex As Object
+    Dim DataRow As ListRow
+
+    Dim NameCol As Long
+    Dim VariantsCol As Long
+    Dim TypeCol As Long
+
+    Dim LastRow As Long
+    Dim r As Long
+
+    Dim OldName As String
+    Dim NewName As String
+    Dim OldKey As String
+    Dim NewKey As String
+
+    Dim Applied As String
+    Dim Skipped As String
+    Dim AppliedCount As Long
+
+    Set wsLookup = GetOptionalWorksheet(GEO_SEC_LOOKUP_SHEET)
+
+    If wsLookup Is Nothing Then
+        MsgBox _
+            "There is no '" & GEO_SEC_LOOKUP_SHEET & "' sheet to read.", _
+            vbExclamation
+        Exit Sub
+    End If
+
+    Set DataTable = GetCompaniesDataTable(ThisWorkbook)
+
+    If DataTable Is Nothing Then
+        MsgBox _
+            "The '" & COMPANIES_SHEET & "' table was not found.", _
+            vbExclamation
+        Exit Sub
+    End If
+
+    NameCol = GetTableColumnIndex(DataTable, "Name")
+    VariantsCol = GetTableColumnIndex(DataTable, "Name Variants")
+    TypeCol = GetTableColumnIndex(DataTable, "Exposure Type")
+
+    If NameCol = 0 Or VariantsCol = 0 Or TypeCol = 0 Then
+        MsgBox _
+            "'" & COMPANIES_SHEET & "' needs Name, Name Variants and " & _
+            "Exposure Type columns.", _
+            vbExclamation
+        Exit Sub
+    End If
+
+    Set RowIndex = BuildTableKeyIndex(DataTable, "Name")
+
+    LastRow = wsLookup.Cells(wsLookup.Rows.Count, 1).End(xlUp).Row
+
+    '
+    ' Bottom up: an applied row leaves the sheet.
+    '
+    For r = LastRow To 2 Step -1
+
+        OldName = SafeText(wsLookup.Cells(r, 10).Value)
+        NewName = SafeText(wsLookup.Cells(r, 1).Value)
+
+        If OldName <> "" And NewName <> "" Then
+
+            OldKey = NormalizeExactNameKey(OldName)
+            NewKey = NormalizeExactNameKey(NewName)
+
+            If RowIndex.Exists(NewKey) And NewKey <> OldKey Then
+
+                Skipped = Skipped & vbLf & "  " & NewName & _
+                    " - '" & COMPANIES_SHEET & _
+                    "' already has a row with that name"
+
+            ElseIf Not RowIndex.Exists(OldKey) Then
+
+                Skipped = Skipped & vbLf & "  " & OldName & _
+                    " - no such row in '" & COMPANIES_SHEET & "'"
+
+            Else
+
+                Set DataRow = _
+                    DataTable.ListRows(CLng(RowIndex(OldKey)))
+
+                DataRow.Range.Cells(1, NameCol).Value = NewName
+
+                DataRow.Range.Cells(1, VariantsCol).Value = _
+                    MergeDelimitedText( _
+                        SafeText( _
+                            DataRow.Range.Cells(1, VariantsCol).Value), _
+                        OldName & "; " & _
+                        SafeText(wsLookup.Cells(r, 2).Value))
+
+                DataRow.Range.Cells(1, TypeCol).Value = _
+                    MergeDelimitedText( _
+                        SafeText( _
+                            DataRow.Range.Cells(1, TypeCol).Value), _
+                        SafeText(wsLookup.Cells(r, 3).Value))
+
+                wsLookup.Rows(r).Delete
+
+                Applied = Applied & vbLf & "  " & _
+                    OldName & "  ->  " & NewName
+                AppliedCount = AppliedCount + 1
+
+            End If
+
+        End If
+
+    Next r
+
+    If AppliedCount = 0 And Skipped = "" Then
+
+        MsgBox _
+            "No rename rows on '" & GEO_SEC_LOOKUP_SHEET & _
+            "' - nothing to apply.", _
+            vbInformation
+
+    Else
+
+        MsgBox _
+            "Applied " & CStr(AppliedCount) & " rename(s) to '" & _
+            COMPANIES_SHEET & "':" & Applied & _
+            IIf(Skipped <> "", vbLf & vbLf & "Skipped:" & Skipped, "") & _
+            vbLf & vbLf & _
+            "Rebuild the staging table on the next Weekly Analysis " & _
+            "run for the report to group the old and new names together.", _
+            vbInformation
+
+    End If
 
 End Sub
 
@@ -9998,6 +10567,7 @@ Private Sub BuildRiskGranularitySection( _
     Dim EquityNameMap As Object
     Dim BondIssuerMap As Object
     Dim BondIssuerTypeMap As Object
+    Dim BondPreviousNameMap As Object
     Dim FundMap As Object
     Dim CertificateUnderlyingReferenceIsinMap As Object
     Dim CertificateUnderlyingAssetClassMap As Object
@@ -10006,6 +10576,8 @@ Private Sub BuildRiskGranularitySection( _
     Dim CanonicalNameMap As Object
     Dim CompaniesByName As Object
     Dim CompaniesByVariant As Object
+    Dim CompaniesByIsin As Object
+    Dim CompanyRenames As Object
     Dim CountryNameMap As Object
     Dim StageFinalizationCache As Object
     Dim RiskSubtableVisibility As Object
@@ -10111,6 +10683,7 @@ Private Sub BuildRiskGranularitySection( _
     LoadBondIssuerMaps _
         BondIssuerMap, _
         BondIssuerTypeMap, _
+        BondPreviousNameMap, _
         BondIssuerMapReady, _
         ThisWorkbook
 
@@ -10311,7 +10884,11 @@ Private Sub BuildRiskGranularitySection( _
                         ISIN, _
                         "Issued security", _
                         GEO_ISIN_PRIORITY_ISSUED_SECURITY, _
-                        GeographyObservationSet
+                        GeographyObservationSet, _
+                        PreviousNames:= _
+                            ResolveExactName( _
+                                IssuerTicker, _
+                                BondPreviousNameMap)
 
                     AppendRiskStageRow _
                         StageRows, _
@@ -10446,8 +11023,20 @@ Private Sub BuildRiskGranularitySection( _
     LoadCompaniesLookup _
         CompaniesByName, _
         CompaniesByVariant, _
+        CompaniesByIsin, _
         CompaniesReady
 
+    '
+    ' Before the entries are canonicalised against Companies: a company
+    ' under a new name is registered under that name first, so the step
+    ' below resolves it to the new name and not back to the old one.
+    '
+    Set CompanyRenames = _
+        DetectCompanyRenames( _
+            GeographyEntries, _
+            CompaniesByName, _
+            CompaniesByVariant, _
+            CompaniesByIsin)
 
     Set GeographyEntries = _
         CanonicalizeGeographyUsingCompanies( _
@@ -10600,6 +11189,8 @@ StageDataReadyLabel:
             GeographyEntries, _
             CompaniesByName, _
             CompaniesByVariant
+
+        AddCompanyRenameNote CompanyRenames
 
         If Not CompaniesReady Then
 

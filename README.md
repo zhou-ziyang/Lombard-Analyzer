@@ -19,7 +19,9 @@ configuration parameters (as defined names) and one button per entry point.
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
-`GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet, and
+`GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet,
+`WeeklyAnalysisGenerate.ApplyCompanyRenames` from the *Apply Renames* button
+drawn onto *New Geo-Sec Lookup* when a company has changed its name, and
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
 buttons that `AddPositionAnalysisButtons` draws onto *NDG Journey* and the
 dashboard's history table.
@@ -51,7 +53,7 @@ not generated:
 | Sheet | Table(s) | Purpose |
 | --- | --- | --- |
 | Companies | `Companies` | Master entity table: canonical name, name variants, exposure types, reference ISIN and its relationship, country of risk and sector with fallbacks |
-| Bond Issuers | `BondIssuers` | Issuer ticker → issuer name and Corporate/Sovereign type |
+| Bond Issuers | `BondIssuers` | Issuer ticker → issuer name and Corporate/Sovereign type; *Previous Names* keeps every name Sophis has since corrected |
 | Fund Parent Companies | `FundParentCompanies`, `Funds` | Fund name prefix → parent company, plus per-fund overrides |
 | Equity Names | `UnmappedEquities` | Queue of equity ISINs that resolved to no company; filled in by hand |
 | Countries | — | Country code → country name |
@@ -66,6 +68,31 @@ rebuilt from source and are not committed here.
 
 Both certificate sheets are on `CoreClean`'s keep list, like every other
 reference sheet: they hold maintained data, not a rebuilt cache.
+
+*Companies* is fed from *New Geo-Sec Lookup*, which every staging rebuild
+writes: one row per entity Companies does not know, or knows under fewer
+names, exposure types or a different reference ISIN than the run saw. Columns
+A–E come filled; F–I are left for a Bloomberg or manual lookup and are never
+copied from Companies. An entity missing from Companies still ranks by name;
+its Country of Risk and Sector fall to *Others* until the row is added.
+
+### Renamed companies
+
+A renamed company would arrive as a name Companies has never heard of. Two
+things survive a rename and vouch for it: the ISIN of what the company issued
+(Companies' *Reference ISIN*, for issued and underlying securities — a fund's
+ISIN names the fund, not its parent), and for a bond issuer the name *Bond
+Issuers* held before Sophis corrected it, which `UpdateRiskReferenceDatabases`
+now keeps in *Previous Names* instead of discarding. `DetectCompanyRenames`
+takes an entity that matches Companies by neither name nor variant but by one
+of those to be the same company under a new name: the report shows the new
+name — the latest Sophis name wins, as it already does for bonds — with the
+geography and sector of the existing row, and the lookup sheet lists it with
+*Renamed From* and *Rename Evidence* filled and an *Apply Renames* button.
+Pressing the button is the one way the code writes to Companies: the row
+takes the new name and keeps the old one and every variant. Until it is
+pressed, positions still under the old name rank separately, and the report's
+Notes say so.
 
 `CoreClean` keeps only the sheets on its own list and deletes everything else,
 *Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and
@@ -112,16 +139,17 @@ to reach across for (`ReadAllLines`, `FindHeaderIndex`, `FormatReportTable`,
 `Public` is the whole namespace in VBA: any Public procedure in any standard
 module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
-only Public procedures with no caller in the source are the eight zero-argument
-entry points the Home buttons name. Two exceptions carry a comment saying why
-they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches by
-name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to a
-button that would not be visible from the source.
+only Public procedures with no caller in the source are the zero-argument
+entry points a button names — the eight on Home, plus `ApplyCompanyRenames`
+behind a button the code itself draws. Two exceptions carry a comment saying
+why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
+by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
+a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 11,400 lines and 187 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 184 of those procedures are
+It is 12,000 lines and 194 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 190 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
