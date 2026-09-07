@@ -220,8 +220,8 @@ earlier report slotted in: the date to compare to is a second Home date,
 `WeeklyCompareDate`. The overview shows that date's row among its own (or
 simply the row it already has) and no change rows; the breakdown gains that
 date's amounts and shares beside the week block, or nothing when the two
-dates coincide; *New Lombard Loans in the past month*, *Lombard Loans Ended in
-the past month* and the entered table each show that date's row over this
+dates coincide; *New Lombard Loans in the Past Month*, *Lombard Loans Ended in
+the Past Month* and *Collateral Entered with New NDGs in the Past Month* each show that date's row over this
 report's, both over the past month, and close with a *% Change WoW* row
 between the two. The exposure section, the pie, the notes and the buttons are
 the report's own, and `CreateWeeklyComparisonEmail` — behind the sheet's

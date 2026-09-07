@@ -300,8 +300,8 @@ From` 写旧名
 数据塞进 overview 和 activity 各表——老板草图里 "from last report" 那几行，只是那些数据没有现成的，
 按 compare-to 日期重新算。Active Lombard Loans 按日期插入那一天的行（本来就有这一行就什么都不加），
 不带 WoW / YTD 两行；Collateral Breakdown 插入那一天的金额和占比两行，按日期排在 week 块旁边
-（compare-to 就是 week 那天时不加）；*New Lombard Loans in the past month*、*Lombard Loans Ended in
-the past month* 和 Collateral Entered 各是那一天的行（Entered 是金额加占比两行）、本期的行，最后一行
+（compare-to 就是 week 那天时不加）；*New Lombard Loans in the Past Month*、*Lombard Loans Ended in
+the Past Month* 和 *Collateral Entered with New NDGs in the Past Month* 各是那一天的行（Entered 是金额加占比两行）、本期的行，最后一行
 `% Change WoW` 是两者之差，窗口都是过去一个月，标签是 `As of dd/mm/yyyy`。Exposure 部分、饼图、
 Notes、按钮都是周报自己的；`WeeklyAnalysisEmail.CreateWeeklyComparisonEmail`（表上的 Generate Email
 按钮）生成同样的邮件，表格按实际高度截取，开头说明比较的是哪一天。

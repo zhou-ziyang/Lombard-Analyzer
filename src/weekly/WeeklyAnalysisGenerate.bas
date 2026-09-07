@@ -12455,7 +12455,7 @@ Public Sub GenerateWeeklyAnalysisComparison()
             ws, _
             Layout.NewLoanRow, _
             Layout.NewLoanCol, _
-            "New Lombard Loans in the past month", _
+            "New Lombard Loans in the Past Month", _
             "New Loans", _
             PriorReport, _
             ThisReport, _
@@ -12470,7 +12470,7 @@ Public Sub GenerateWeeklyAnalysisComparison()
             ws, _
             Layout.EndedLoanRow, _
             Layout.EndedLoanCol, _
-            "Lombard Loans Ended in the past month", _
+            "Lombard Loans Ended in the Past Month", _
             "Ended Loans", _
             PriorReport, _
             ThisReport, _
@@ -13087,7 +13087,7 @@ Private Sub ComparisonBuildEnteredCollateralSection( _
     WriteSectionTitle _
         ws, TopRow, LeftCol, _
         CollateralCategoryCount() + 1, _
-        "Collateral Entered with New NDGs"
+        "Collateral Entered with New NDGs in the Past Month"
 
     WriteCollateralHeaders ws, TopRow + 1, LeftCol
 
