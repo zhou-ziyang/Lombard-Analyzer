@@ -131,6 +131,11 @@ Private Const NON_DPM_SCOPE As String = "Non-DPM"
 
 Private Const UNKNOWN_UNDERLYING_NOTE_LIMIT As Long = 10
 Private Const RENAME_NOTE_LIMIT As Long = 10
+'
+' The date cells that label a snapshot row read "As of dd/mm/yyyy": the
+' words are part of the number format, so the cell is still a date.
+'
+Private Const DATE_AS_OF_FORMAT As String = """As of ""dd/mm/yyyy"
 
 Private Const RISK_FORMULA_INDENT As String = "    "
 Private Const RISK_BIND_WIDTH As Long = 6
@@ -1369,7 +1374,7 @@ Private Sub BuildPortfolioSection( _
 
     ws.Range( _
         ws.Cells(FirstDataRow, c), _
-        ws.Cells(LastDataRow, c)).NumberFormat = "dd/mm/yyyy"
+        ws.Cells(LastDataRow, c)).NumberFormat = DATE_AS_OF_FORMAT
 
     ws.Range( _
         ws.Cells(FirstDataRow, c + 2), _
@@ -1674,7 +1679,7 @@ Private Sub BuildCollateralBreakdown( _
     ' Formatting
     '
 
-    ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 6, c)).NumberFormat = "dd/mm/yyyy"
+    ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 6, c)).NumberFormat = DATE_AS_OF_FORMAT
 
     ws.Range( _
         ws.Cells(r + 2, c + 1), _
