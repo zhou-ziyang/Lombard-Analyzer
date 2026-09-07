@@ -1814,7 +1814,6 @@ Private Sub WriteLoanMovementSection( _
 
     WriteSectionTitle ws, TopRow, LeftCol, 5, Title
 
-    ws.Cells(TopRow + 1, LeftCol).Value = "Window"
     ws.Cells(TopRow + 1, LeftCol + 1).Value = CountHeader
     ws.Cells(TopRow + 1, LeftCol + 2).Value = "Max Approved Loan"
     ws.Cells(TopRow + 1, LeftCol + 3).Value = "Drawn Amount"
