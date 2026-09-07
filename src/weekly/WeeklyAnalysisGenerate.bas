@@ -134,10 +134,13 @@ Private Const UNKNOWN_UNDERLYING_NOTE_LIMIT As Long = 10
 Private Const RISK_FORMULA_INDENT As String = "    "
 Private Const RISK_BIND_WIDTH As Long = 6
 '
-' Air between the pie and the edge of its chart, in points - one report row,
-' so the plot no longer runs from the title to the bottom edge.
+' Where the pie sits in its chart, in points: the gap under the title and the
+' gap above the bottom edge.  Excel's own layout centres the circle in what
+' is left under the title, which leaves far more air below it than above;
+' these two numbers replace that with a placement that can be read and tuned.
 '
-Private Const PIE_INSET_POINTS As Double = 16
+Private Const PIE_TOP_GAP_POINTS As Double = 30
+Private Const PIE_BOTTOM_GAP_POINTS As Double = 8
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
@@ -11135,19 +11138,28 @@ Private Sub CreateCollateralPieChart( _
         End With
 
         '
-        ' Air around the pie.  Left to itself the plot runs from the title
-        ' to the bottom edge; pulling the inside area in on all four sides
-        ' leaves a margin whichever dimension bounds the circle.
+        ' The pie's box, set outright rather than nudged: its top a fixed
+        ' gap under the title, its bottom a fixed gap above the edge, square,
+        ' and centred in the width left of the legend.  The circle fills
+        ' the box, so the two gaps are the air above and below the pie.
         '
 
         On Error Resume Next
 
         With .PlotArea
 
-            .InsideLeft = .InsideLeft + PIE_INSET_POINTS
-            .InsideTop = .InsideTop + PIE_INSET_POINTS
-            .InsideWidth = .InsideWidth - 2 * PIE_INSET_POINTS
-            .InsideHeight = .InsideHeight - 2 * PIE_INSET_POINTS
+            .InsideTop = _
+                ChartObj.Chart.ChartTitle.Top + _
+                ChartObj.Chart.ChartTitle.Height + _
+                PIE_TOP_GAP_POINTS
+
+            .InsideHeight = _
+                ChartObj.Height - .InsideTop - PIE_BOTTOM_GAP_POINTS
+
+            .InsideWidth = .InsideHeight
+
+            .InsideLeft = _
+                (ChartObj.Chart.Legend.Left - .InsideWidth) / 2
 
         End With
 
