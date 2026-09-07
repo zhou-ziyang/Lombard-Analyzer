@@ -163,15 +163,17 @@ Public Sub CreateWeeklyEmail()
         "</div>"
 
     '
-    ' Report blocks, in reading order. Each one is a Layout anchor plus
-    ' the height and width of the block that starts there.
+    ' Report blocks, in reading order - the sheet's left column first,
+    ' active loans with the two movement tables straight under them, then
+    ' the middle column.  Each one is a Layout anchor plus the height and
+    ' width of the block that starts there.
     '
 
     HTMLBody = HTMLBody & _
         BlockHtml(ws, Layout.PortfolioRow, Layout.PortfolioCol, 9, 4) & _
-        BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 9, 8) & _
         BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 3, 4) & _
         BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 3, 4) & _
+        BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 9, 8) & _
         BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 5, 8)
 
     '
