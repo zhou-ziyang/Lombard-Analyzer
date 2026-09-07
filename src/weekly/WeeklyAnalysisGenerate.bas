@@ -8223,12 +8223,17 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                     End If
 
                     '
-                    ' A renamed company: the row above is the new company
-                    ' as the run saw it, and this says which row it came
+                    ' A renamed company: the new name with the variants
+                    ' the run saw, the old row's reference ISIN - the
+                    ' thing that identified it - and which row it came
                     ' from.
                     '
                     If CompanyEntry.Exists("RenamedFrom") Then
 
+                        Output(OutputRow, 4) = _
+                            CStr(CompanyEntry("ReferenceISIN"))
+                        Output(OutputRow, 5) = _
+                            CStr(CompanyEntry("IsinRelationship"))
                         Output(OutputRow, RenamedCol) = _
                             CStr(CompanyEntry("RenamedFrom"))
                         RenamedCount = RenamedCount + 1
@@ -8617,9 +8622,9 @@ Private Function MatchCompanyByPreviousName( _
 End Function
 
 '
-' The renamed company as a row of its own: the old row's geography and
-' sector, the new name, and nothing else of the old row's - its variants
-' and reference ISIN are what this run saw for the new name.  Two fields
+' The renamed company as a row of its own: the old row's geography,
+' sector and reference ISIN - the ISIN is what identified it, and stays -
+' under the new name, with the variants this run saw for it.  Two fields
 ' the sheet does not have say where it came from and why.
 '
 Private Function RenamedCompanyEntry( _
@@ -8639,8 +8644,6 @@ Private Function RenamedCompanyEntry( _
 
     Copy("Name") = NewName
     Copy("NameVariants") = ""
-    Copy("ReferenceISIN") = ""
-    Copy("IsinRelationship") = ""
     Copy.Add "RenamedFrom", CStr(CompanyEntry("Name"))
     Copy.Add "RenameEvidence", Evidence
 
@@ -8699,10 +8702,10 @@ End Sub
 ' the source calls it; it must stay Public and take no arguments for the
 ' button to reach it.  It is the one place the code writes to Companies,
 ' and it only adds: for each lookup row with Renamed From filled, a new
-' row copied whole from the row named there - geography and sector
-' included - with the new name, the variants, exposure types and
-' reference ISIN the run saw, and Renamed From recording where it came
-' from.  The old row stays as it is.
+' row copied whole from the row named there - geography, sector and
+' reference ISIN included - with the new name, the variants and exposure
+' types the run saw, and Renamed From recording where it came from.  The
+' old row stays as it is.
 '
 Public Sub InsertRenamedCompanies()
 
@@ -8715,8 +8718,6 @@ Public Sub InsertRenamedCompanies()
     Dim NameCol As Long
     Dim VariantsCol As Long
     Dim TypeCol As Long
-    Dim IsinCol As Long
-    Dim RelationshipCol As Long
     Dim RenamedCol As Long
     Dim LookupRenamedCol As Long
 
@@ -8726,7 +8727,6 @@ Public Sub InsertRenamedCompanies()
 
     Dim OldName As String
     Dim NewName As String
-    Dim CellText As String
 
     Dim Applied As String
     Dim Skipped As String
@@ -8761,8 +8761,6 @@ Public Sub InsertRenamedCompanies()
 
     VariantsCol = GetTableColumnIndex(DataTable, "Name Variants")
     TypeCol = GetTableColumnIndex(DataTable, "Exposure Type")
-    IsinCol = GetTableColumnIndex(DataTable, "Reference ISIN")
-    RelationshipCol = GetTableColumnIndex(DataTable, "ISIN Relationship")
 
     '
     ' The lookup sheet's Renamed From is wherever its header says; the
@@ -8839,16 +8837,8 @@ Public Sub InsertRenamedCompanies()
                         SafeText(wsLookup.Cells(r, 3).Value)
                 End If
 
-                If IsinCol > 0 Then
-                    CellText = SafeText(wsLookup.Cells(r, 4).Value)
-                    NewRow.Range.Cells(1, IsinCol).NumberFormat = "@"
-                    NewRow.Range.Cells(1, IsinCol).Value = CellText
-                End If
-
-                If RelationshipCol > 0 Then
-                    NewRow.Range.Cells(1, RelationshipCol).Value = _
-                        SafeText(wsLookup.Cells(r, 5).Value)
-                End If
+                ' The reference ISIN and its relationship came across with
+                ' the copy: they are the old row's, and stay so.
 
                 NewRow.Range.Cells(1, RenamedCol).Value = OldName
 

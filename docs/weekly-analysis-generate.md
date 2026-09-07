@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,158 行 / 197 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,148 行 / 197 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,7 +8,7 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,158 |
+| 行数 | 12,148 |
 | 过程数 | 197 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
@@ -277,13 +277,15 @@ Underlying security，基金的 ISIN 认的是基金不是母公司）。搭上�
 另一种写法（`NamesLookAlike`），就是改名。
 
 改名的公司**当作另一家公司**处理。这一次运行里，把那行 Companies 复制一份、换上新名登记进
-内存映射（`RenamedCompanyEntry`：只带走 Geography / Sector，变体和 ISIN 用这次看到的），
+内存映射（`RenamedCompanyEntry`：带走 Geography / Sector 和 Reference ISIN——ISIN 就是认出它
+的依据——变体用这次看到的），
 所以报表显示新名、不归 Others。老行不动：还叫旧名的持仓照旧对到老行，跑早先日期的报表和
 从前一样。New Geo-Sec Lookup 列出新名，`Renamed From` 填旧名——这一列放在和 Companies
 里同样的位置（Companies 已有该列就用它的位置，没有就是表尾下一列），整行可以直接复制粘贴；
 F / H 两格显示老行的地理行业而不是 Bloomberg 公式。有这种行时表上画一个 **Insert Renamed**
 按钮，绑到 `InsertRenamedCompanies`——代码写 Companies 的唯一入口，而且只做加法：把老行整行
-复制成新行，换上新名、这次看到的变体 / Exposure Type / Reference ISIN，`Renamed From` 写旧名
+复制成新行，换上新名、这次看到的变体 / Exposure Type，Reference ISIN 保留老行的，`Renamed
+From` 写旧名
 （列不存在就建），然后删掉 lookup 上那一行。新名已有行、旧名找不到的，跳过并在弹窗里说明。
 按完要重建一次 staging。
 

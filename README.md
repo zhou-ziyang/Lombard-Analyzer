@@ -97,16 +97,18 @@ A renamed company is **a company of its own**. `DetectRenamedCompanies` runs
 the two bridges over every entity Companies does not know; a match whose name
 is not merely another spelling of the row's own name is registered for this
 run as a copy of that row under the new name, so the report shows the new
-name with the old row's geography and sector rather than *Others*. The old
+name with the old row's geography, sector and reference ISIN rather than
+*Others*. The old
 row is never touched: positions that still carry the old name keep resolving
 to it, and a report for an earlier date reads as it always did. The lookup
 sheet lists the new name with *Renamed From* filled — in the same column
 Companies has (or will get) for it, so rows paste across whole — with the
 old row's geography and sector shown in place of the Bloomberg formula, and
 draws an *Insert Renamed* button. Pressing it is the one way the code writes
-to Companies, and it only adds: a new row copied whole from the old one, with
-the new name, the variants, exposure types and reference ISIN the run saw,
-and *Renamed From* recording where it came from. The column is created the
+to Companies, and it only adds: a new row copied whole from the old one —
+reference ISIN included, since that is what identified it — with the new
+name, the variants and exposure types the run saw, and *Renamed From*
+recording where it came from. The column is created the
 first time it is needed. The weekly Notes list the renames.
 
 ## Layout
@@ -156,7 +158,7 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,200 lines and 197 procedures, and it does not get split, because in
+It is 12,100 lines and 197 procedures, and it does not get split, because in
 VBA splitting it would cost more than it buys. 193 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
