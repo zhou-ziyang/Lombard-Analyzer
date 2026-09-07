@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,005 行 / 194 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,180 行 / 196 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,005 |
-| 过程数 | 194 |
+| 行数 | 12,180 |
+| 过程数 | 196 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -266,24 +266,32 @@ append-only，已有的人工填写不会被覆盖——**只有一个例外**�
   `SetFundLookupFormula` 先试 `Formula2`（逗号分隔），失败再退到 `FormulaLocal`（分号分隔）
   ——处理的是 Excel 区域设置差异。
 
-### 改名的公司
+### Companies 的 Name Variants 是分组，不是拼写
 
-Companies 只按 Name 和 Name Variants 匹配，改了名的公司会被当成陌生人：进 New Geo-Sec
-Lookup，Country / Sector 归 Others。`DetectCompanyRenames` 在 `LoadCompaniesLookup` 之后、
-`CanonicalizeGeographyUsingCompanies` 之前跑一遍：名字和变体都对不上的实体，再试两座桥——
-它的 ISIN 候选对 Companies 的 Reference ISIN（只算 Issued / Underlying security，基金的
-ISIN 认的是基金不是母公司），以及债券 issuer 的 `PreviousNames` 对 Companies 的名字和变体。
-搭上桥就把那行 Companies **复制一份、换上新名**，登记进内存里的 ByName / ByVariant 映射，
-带着 `RenamedFrom` 和 `RenameEvidence` 两个字段。于是后面按新名的查找全部命中——报表显示
-新名（沿用债券"Sophis 最新的名字算数"的规则），Country / Sector 取自旧行；Companies 表本身
-一个字不动。
+Companies 一行是一个**组**：Name 是报表里排名的那个头，Name Variants 是成员——头的其他写法，
+加上暴露要算到头上的子公司。这是统计口径。它和 **Name Variants 表**（模糊合并的日志）同名但
+不是一回事，后者只记拼写。
 
-`CompanyEntryNeedsLookup` 见到 `RenamedFrom` 一律列入 New Geo-Sec Lookup：Name 是新名，
-Name Variants 已经并好了旧名 + 旧变体 + 新名，J / K 两列写着从哪来、凭什么。有这种行时表上
-会画一个 **Apply Renames** 按钮，绑到 `ApplyCompanyRenames`——代码写 Companies 的唯一入口，
-而且只写人按了按钮的那些行：改 Name，并入 Name Variants 和 Exposure Type，Geography /
-Sector 不碰，然后删掉 lookup 上那一行。同名行已存在或旧名找不到的跳过并在弹窗里说明。按完
-要重建一次 staging，新旧名下的持仓才会并到一起——在那之前它们分开排名，Notes 里有提示。
+### Companies 只按 ISIN 或旧名认识的名字
+
+改了名的公司，或者还没登记的子公司，到 Companies 这里都是陌生名字。`DetectCompanyRenames`
+在 `LoadCompaniesLookup` 之后、`CanonicalizeGeographyUsingCompanies` 之前跑：名字和变体都对不
+上的实体，再试两座桥——债券 issuer 的 `PreviousNames`（Bond Issuers 覆盖 Issuer Name 时留在
+`Previous Names` 列里的旧名）对 Companies 的名字和变体；以及它的 ISIN 候选对 Companies 的
+Reference ISIN（只算 Issued / Underlying security，基金的 ISIN 认的是基金不是母公司）。
+
+搭上桥之后按分组模型读这次匹配：旧名就是那行的 Name → **头改名了**（`Rename`）；旧名在变体
+里 → **某个成员改名了**，头不动（`Add variant`）；ISIN 说不出是哪个成员发的，除非那行除了头
+没有别的成员。`Rename` 把那行 Companies 复制一份、换上新名，登记进内存映射，报表显示新名；
+`Add variant` 直接把新名登记成那行的变体，报表显示头。两种情况下 Country / Sector 都取自那行，
+暴露都算到头上——Companies 表本身一个字不动。
+
+New Geo-Sec Lookup 列出每一条匹配，J–M 四列：Action、Company Row、New Name、Evidence。
+Action 是代码的判断，按之前可以改。有匹配行时表上画一个 **Apply Renames** 按钮，绑到
+`ApplyCompanyRenames`——代码写 Companies 的唯一入口，只处理人按了按钮时表上的行，按 Action
+办：Rename 改 Name、旧名并进 Name Variants；Add variant 只并变体；两者都并 Exposure Type，
+Geography / Sector 不碰，然后删掉 lookup 上那一行。行找不到、Rename 目标已是另一行、一行里有
+多个新名要 Rename 的，跳过并在弹窗里说明。按完要重建一次 staging。
 
 ---
 

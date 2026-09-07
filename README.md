@@ -72,27 +72,44 @@ reference sheet: they hold maintained data, not a rebuilt cache.
 *Companies* is fed from *New Geo-Sec Lookup*, which every staging rebuild
 writes: one row per entity Companies does not know, or knows under fewer
 names, exposure types or a different reference ISIN than the run saw. Columns
-A–E come filled; F–I are left for a Bloomberg or manual lookup and are never
-copied from Companies. An entity missing from Companies still ranks by name;
-its Country of Risk and Sector fall to *Others* until the row is added.
+A–E come filled. *Country of Risk* (F) and *Sector* (H) come as `BDP`
+formulas over the reference ISIN — `CNTRY_OF_RISK` and `INDUSTRY_SECTOR` —
+so they resolve on a machine with a Bloomberg terminal; *Fallback Geography*
+(G) and *Fallback Sector* (I) are left for a manual lookup. None of F–I is
+ever copied from Companies. An entity missing from Companies still ranks by
+name; its Country of Risk and Sector fall to *Others* until the row is added.
 
-### Renamed companies
+A Companies row is a group, not a spelling: *Name* is the head the report
+ranks under, and *Name Variants* holds its members — other spellings of the
+head, and subsidiaries whose exposure counts toward it. That is the
+statistical basis, and it is a different thing from the *Name Variants*
+sheet, which only logs the spellings the fuzzy merge folded together.
 
-A renamed company would arrive as a name Companies has never heard of. Two
-things survive a rename and vouch for it: the ISIN of what the company issued
-(Companies' *Reference ISIN*, for issued and underlying securities — a fund's
-ISIN names the fund, not its parent), and for a bond issuer the name *Bond
-Issuers* held before Sophis corrected it, which `UpdateRiskReferenceDatabases`
-now keeps in *Previous Names* instead of discarding. `DetectCompanyRenames`
-takes an entity that matches Companies by neither name nor variant but by one
-of those to be the same company under a new name: the report shows the new
-name — the latest Sophis name wins, as it already does for bonds — with the
-geography and sector of the existing row, and the lookup sheet lists it with
-*Renamed From* and *Rename Evidence* filled and an *Apply Renames* button.
-Pressing the button is the one way the code writes to Companies: the row
-takes the new name and keeps the old one and every variant. Until it is
-pressed, positions still under the old name rank separately, and the report's
-Notes say so.
+### Names Companies knows only by ISIN or by a previous name
+
+A renamed company, or a subsidiary not yet listed, arrives as a name Companies
+has never heard of. Two things vouch for it: for a bond issuer, the name
+*Bond Issuers* held before Sophis corrected it — `UpdateRiskReferenceDatabases`
+now keeps that in *Previous Names* instead of discarding it — and, for
+anything, the ISIN of what it issued against Companies' *Reference ISIN*
+(issued and underlying securities; a fund's ISIN names the fund, not its
+parent). `DetectCompanyRenames` runs the two bridges over every entity that
+resolves by neither name nor variant, and reads the match through the group
+model: a previous name that was the head's own name means the **head was
+renamed**; a previous name found among the members means a **member was**,
+and the head stands; an ISIN says nothing about which member issued it,
+unless the row has no members but its head.
+
+Either way the name is grouped under the row for this run, in memory —
+geography and sector resolve, and the exposure counts toward the head — and
+the report shows the new name only when it is the head that was renamed. The
+lookup sheet lists each match with four columns: *Action* (`Rename` or `Add
+variant`, the code's reading), *Company Row*, *New Name* and *Evidence*, and
+draws an *Apply Renames* button. Change *Action* first if the reading is
+wrong. Pressing the button is the one way the code writes to Companies:
+`Rename` gives the row the new name and keeps the old one among the variants;
+`Add variant` adds the name to the variants and leaves the head alone. Both
+merge the exposure types and leave geography and sector as they are.
 
 `CoreClean` keeps only the sheets on its own list and deletes everything else,
 *Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and
@@ -148,8 +165,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,000 lines and 194 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 190 of those procedures are
+It is 12,200 lines and 196 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 192 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
