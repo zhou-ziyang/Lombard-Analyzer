@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,235 行 / 197 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,441 行 / 202 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,235 |
-| 过程数 | 197 |
+| 行数 | 12,441 |
+| 过程数 | 202 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -293,12 +293,22 @@ Issuers 覆盖 Issuer Name 时留在 `Previous Names` 列里的旧名）对 Comp
 原名；不是 → 公司改名了（`Rename`），把那行复制一份、换上新名登记进去，报表显示新名。两种情况
 Country / Sector 都取自那行，Companies 表本身一个字不动。缩写认不出来，所以 Action 留着可以改。
 
-New Geo-Sec Lookup 列出每一条匹配，J–M 四列：Action、Company Row、New Name、Evidence。有匹配
-行时表上画一个 **Apply Renames** 按钮，绑到 `ApplyCompanyRenames`——代码写 Companies 的唯一
-入口，只处理人按了按钮时表上的行，按 Action 办：Rename 改 Name、旧名并进 Name Variants；
-Add variant 只并变体；两者都并 Exposure Type，Geography / Sector 不碰，然后删掉 lookup 上那
-一行。行找不到、Rename 目标已是另一行、一行里有多个新名要 Rename 的，跳过并在弹窗里说明。
-按完要重建一次 staging。
+New Geo-Sec Lookup 列出每一条匹配，J–N 五列：Action、Company Row、New Name、Evidence、
+Seen On（这次报表的日期）。有匹配行时表上画一个 **Apply Renames** 按钮，绑到
+`ApplyCompanyRenames`——代码写 Companies 的唯一入口，只处理人按了按钮时表上的行，按 Action
+办：Rename 改 Name、旧名并进 Name Variants；Add variant 只并变体；两者都并 Exposure Type，
+Geography / Sector 不碰，然后删掉 lookup 上那一行。行找不到、Rename 目标已是另一行、一行里有
+多个新名要 Rename 的，跳过并在弹窗里说明。按完要重建一次 staging。
+
+### 改名不改写过去的报表
+
+Rename 同时往 **Company Renames** 表追加一行：旧名、新名、生效日期（= Seen On）、证据、
+应用日期。`LoadCompaniesLookup` 读 Companies 时拿报表自己的日期对这张账：某个 Rename 的新名
+等于该行现在的 Name、且生效日期晚于报表日期 → 这份报表里这家公司叫旧名（`CompanyNameAtDate`，
+沿着名字往回走，连续改名也能走通）。条目里 "Name" 是那个日期的名字，"SheetName" 是表里现在
+的名字——要写 Companies、写 lookup 表的地方一律用后者。于是：跑上周的报表，看到的是上周的
+名字；跑今天的，看到新名；这张账也就是"这家公司以前叫什么"的记录，以后跨期比较不用重扫
+快照。真实改名日期早于第一次看到的那份报表的，手动把生效日期改早即可。
 
 ---
 

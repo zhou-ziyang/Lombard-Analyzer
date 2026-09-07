@@ -109,6 +109,7 @@ Private Const SOVEREIGN_BONDS_CLASS As String = "Sovereign Bonds"
 Private Const BOND_ISSUER_TYPE_CORPORATE As String = "Corporate"
 Private Const BOND_ISSUER_TYPE_SOVEREIGN As String = "Sovereign"
 Private Const COMPANIES_SHEET As String = "Companies"
+Private Const COMPANY_RENAMES_SHEET As String = "Company Renames"
 Private Const COMPANIES_TABLE As String = "Companies"
 Private Const COUNTRIES_SHEET As String = "Countries"
 ' Excel worksheet names cannot contain "/". The hyphen preserves the
@@ -7431,13 +7432,23 @@ Private Function GetCompaniesDataTable( _
 
 End Function
 
+'
+' Companies, three ways: by the name in force on the analysis date, by
+' every name it answers to, and by reference ISIN.  A row's Name is what
+' the sheet says today; the Company Renames ledger says what it was called
+' on any earlier date, and the entry carries that name as "Name" so a
+' report for that date shows it, while "SheetName" keeps the name the row
+' has now for anything that must address the sheet.
+'
 Private Sub LoadCompaniesLookup( _
     ByRef CompaniesByName As Object, _
     ByRef CompaniesByVariant As Object, _
     ByRef CompaniesByIsin As Object, _
-    ByRef CompaniesReady As Boolean)
+    ByRef CompaniesReady As Boolean, _
+    ByVal AnalysisDate As Date)
 
     Dim DataTable As ListObject
+    Dim Ledger As Collection
     Dim TableData As Variant
     Dim Entry As Object
     Dim Parts As Variant
@@ -7487,6 +7498,8 @@ Private Sub LoadCompaniesLookup( _
 
     If DataTable.DataBodyRange Is Nothing Then Exit Sub
 
+    Set Ledger = LoadCompanyRenameLedger()
+
     TableData = DataTable.DataBodyRange.Value2
 
     For r = 1 To UBound(TableData, 1)
@@ -7500,7 +7513,9 @@ Private Sub LoadCompaniesLookup( _
             Set Entry = CreateObject("Scripting.Dictionary")
             Entry.CompareMode = vbTextCompare
 
-            Entry.Add "Name", CompanyName
+            Entry.Add "SheetName", CompanyName
+            Entry.Add "Name", _
+                CompanyNameAtDate(CompanyName, AnalysisDate, Ledger)
             Entry.Add "NameVariants", _
                 SafeText( _
                     TableData(r, NameVariantsColumn))
@@ -7518,20 +7533,30 @@ Private Sub LoadCompaniesLookup( _
             Entry.Add "SectorFinal", _
                 TableData(r, SectorFinalColumn)
 
-            LookupKey = NormalizeExactNameKey(CompanyName)
+            '
+            ' The row answers to the name in force on the analysis date,
+            ' to the name the sheet carries today, and to every variant.
+            '
+            LookupKey = NormalizeExactNameKey(CStr(Entry("Name")))
 
             If LookupKey <> "" Then
 
                 If Not CompaniesByName.Exists(LookupKey) Then
-
                     CompaniesByName.Add LookupKey, Entry
-
                 End If
 
                 If Not CompaniesByVariant.Exists(LookupKey) Then
-
                     CompaniesByVariant.Add LookupKey, Entry
+                End If
 
+            End If
+
+            LookupKey = NormalizeExactNameKey(CompanyName)
+
+            If LookupKey <> "" Then
+
+                If Not CompaniesByVariant.Exists(LookupKey) Then
+                    CompaniesByVariant.Add LookupKey, Entry
                 End If
 
             End If
@@ -7578,6 +7603,148 @@ Private Sub LoadCompaniesLookup( _
         End If
 
     Next r
+
+End Sub
+
+'
+' The Company Renames ledger: one row per rename a person applied, with
+' the report date it was first seen on.  A report dated before that shows
+' the old name; one dated on or after it shows the new one.  Nothing here
+' is rewritten when a company is renamed again - the chain is followed by
+' name, so the ledger is also the record of what a company used to be
+' called, without another scan of the snapshots.
+'
+Private Function LoadCompanyRenameLedger() As Collection
+
+    Dim ws As Worksheet
+    Dim LastRow As Long
+    Dim r As Long
+    Dim OldName As String
+    Dim NewName As String
+    Dim EffectiveDate As Variant
+
+    Set LoadCompanyRenameLedger = New Collection
+
+    Set ws = GetOptionalWorksheet(COMPANY_RENAMES_SHEET)
+    If ws Is Nothing Then Exit Function
+
+    LastRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row
+
+    For r = 2 To LastRow
+
+        OldName = SafeText(ws.Cells(r, 1).Value)
+        NewName = SafeText(ws.Cells(r, 2).Value)
+        EffectiveDate = ws.Cells(r, 3).Value
+
+        If OldName <> "" And NewName <> "" And IsDate(EffectiveDate) Then
+            LoadCompanyRenameLedger.Add _
+                Array(OldName, NewName, CDate(EffectiveDate))
+        End If
+
+    Next r
+
+End Function
+
+'
+' The name a company was called on a date, walking the ledger back from
+' the name the sheet carries today: each rename to the current name that
+' took effect after the date hands back the name before it.
+'
+Private Function CompanyNameAtDate( _
+    ByVal SheetName As String, _
+    ByVal AnalysisDate As Date, _
+    ByVal Ledger As Collection) As String
+
+    Dim Rename As Variant
+    Dim Found As Boolean
+    Dim Hops As Long
+
+    CompanyNameAtDate = SheetName
+
+    If Ledger Is Nothing Then Exit Function
+    If AnalysisDate = 0 Then Exit Function
+
+    Do
+
+        Found = False
+
+        For Each Rename In Ledger
+
+            If NormalizeExactNameKey(CStr(Rename(1))) = _
+               NormalizeExactNameKey(CompanyNameAtDate) And _
+               CDate(Rename(2)) > AnalysisDate Then
+
+                CompanyNameAtDate = CStr(Rename(0))
+                Found = True
+
+                Exit For
+
+            End If
+
+        Next Rename
+
+        Hops = Hops + 1
+
+    Loop While Found And Hops < 10
+
+End Function
+
+'
+' The name the Companies sheet carries for a row today - what anything
+' that addresses the sheet must use.
+'
+Private Function CompanySheetName( _
+    ByVal CompanyEntry As Object) As String
+
+    CompanySheetName = EntryText(CompanyEntry, "SheetName")
+
+    If CompanySheetName = "" Then
+        CompanySheetName = EntryText(CompanyEntry, "Name")
+    End If
+
+End Function
+
+Private Sub AppendCompanyRename( _
+    ByVal OldName As String, _
+    ByVal NewName As String, _
+    ByVal EffectiveDate As Date, _
+    ByVal Evidence As String)
+
+    Dim ws As Worksheet
+    Dim NextRow As Long
+
+    Set ws = GetOptionalWorksheet(COMPANY_RENAMES_SHEET)
+
+    If ws Is Nothing Then
+
+        Set ws = _
+            ThisWorkbook.Worksheets.Add( _
+                After:=ThisWorkbook.Worksheets( _
+                    ThisWorkbook.Worksheets.Count))
+        ws.name = COMPANY_RENAMES_SHEET
+
+        ws.Cells(1, 1).Value = "Old Name"
+        ws.Cells(1, 2).Value = "New Name"
+        ws.Cells(1, 3).Value = "Effective Date"
+        ws.Cells(1, 4).Value = "Evidence"
+        ws.Cells(1, 5).Value = "Applied On"
+
+        ws.Range(ws.Cells(1, 1), ws.Cells(1, 5)).Font.Bold = True
+        ws.Columns(3).NumberFormat = "dd/mm/yyyy"
+        ws.Columns(5).NumberFormat = "dd/mm/yyyy"
+
+    End If
+
+    NextRow = ws.Cells(ws.Rows.Count, 1).End(xlUp).Row + 1
+    If NextRow < 2 Then NextRow = 2
+
+    ws.Cells(NextRow, 1).Value = OldName
+    ws.Cells(NextRow, 2).Value = NewName
+    ws.Cells(NextRow, 3).Value = EffectiveDate
+    ws.Cells(NextRow, 4).Value = Evidence
+    ws.Cells(NextRow, 5).Value = Date
+
+    ws.Columns("A:E").AutoFit
 
 End Sub
 
@@ -8125,7 +8292,8 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     ByVal GeographyEntries As Object, _
     ByVal CompaniesByName As Object, _
     ByVal CompaniesByVariant As Object, _
-    ByVal CompanyMatches As Object)
+    ByVal CompanyMatches As Object, _
+    ByVal AnalysisDate As Date)
 
     Dim wsLookup As Worksheet
     Dim GeographyEntry As Object
@@ -8160,6 +8328,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     wsLookup.Cells(1, 11).Value = "Company Row"
     wsLookup.Cells(1, 12).Value = "New Name"
     wsLookup.Cells(1, 13).Value = "Evidence"
+    wsLookup.Cells(1, 14).Value = "Seen On"
 
     LastRow = 1
     Set PendingKeys = New Collection
@@ -8191,7 +8360,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
         If OutputCount > 0 Then
 
-            ReDim Output(1 To OutputCount, 1 To 13)
+            ReDim Output(1 To OutputCount, 1 To 14)
             OutputRow = 0
 
             For Each EntryKey In PendingKeys
@@ -8224,7 +8393,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                 Else
 
                     Output(OutputRow, 1) = _
-                        CStr(CompanyEntry("Name"))
+                        CompanySheetName(CompanyEntry)
                     Output(OutputRow, 2) = _
                         MergeDelimitedText( _
                             CStr( _
@@ -8288,6 +8457,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                             Output(OutputRow, 11) = CStr(Match("RowName"))
                             Output(OutputRow, 12) = CStr(Match("NewName"))
                             Output(OutputRow, 13) = CStr(Match("Evidence"))
+                            Output(OutputRow, 14) = AnalysisDate
 
                             MatchCount = MatchCount + 1
 
@@ -8303,11 +8473,11 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
             wsLookup.Range( _
                 wsLookup.Cells(2, 1), _
-                wsLookup.Cells(LastRow, 13)).Value = Output
+                wsLookup.Cells(LastRow, 14)).Value = Output
 
             wsLookup.Range( _
                 wsLookup.Cells(1, 1), _
-                wsLookup.Cells(LastRow, 13)).Sort _
+                wsLookup.Cells(LastRow, 14)).Sort _
                     Key1:=wsLookup.Cells(2, 1), _
                     Order1:=xlAscending, _
                     Header:=xlYes
@@ -8340,7 +8510,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     FormatReportTable _
         wsLookup.Range( _
             wsLookup.Cells(1, 1), _
-            wsLookup.Cells(LastRow, 13)), _
+            wsLookup.Cells(LastRow, 14)), _
         1
 
     If LastRow >= 2 Then
@@ -8356,13 +8526,14 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     wsLookup.Columns(4).NumberFormat = "@"
     wsLookup.Range( _
         wsLookup.Cells(1, 1), _
-        wsLookup.Cells(LastRow, 13)).HorizontalAlignment = xlLeft
+        wsLookup.Cells(LastRow, 14)).HorizontalAlignment = xlLeft
 
     wsLookup.Range( _
         wsLookup.Cells(1, 1), _
-        wsLookup.Cells(LastRow, 13)).Font.name = "Aptos Display"
+        wsLookup.Cells(LastRow, 14)).Font.name = "Aptos Display"
 
-    wsLookup.Columns("A:M").AutoFit
+    wsLookup.Columns(14).NumberFormat = "dd/mm/yyyy"
+    wsLookup.Columns("A:N").AutoFit
 
     If wsLookup.Columns(1).ColumnWidth > 45 Then _
         wsLookup.Columns(1).ColumnWidth = 45
@@ -8386,7 +8557,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
         wsLookup.Range( _
             wsLookup.Cells(1, 1), _
-            wsLookup.Cells(LastRow, 13)).AutoFilter
+            wsLookup.Cells(LastRow, 14)).AutoFilter
 
     End If
 
@@ -8399,8 +8570,8 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     If MatchCount > 0 Then
 
         With wsLookup.Buttons.Add( _
-                wsLookup.Cells(1, 15).Left, _
-                wsLookup.Cells(1, 15).Top, _
+                wsLookup.Cells(1, 16).Left, _
+                wsLookup.Cells(1, 16).Top, _
                 110, _
                 22)
 
@@ -8522,7 +8693,7 @@ Private Function DetectCompanyRenames( _
                         IIf(Renamed, _
                             MATCH_ACTION_RENAME, _
                             MATCH_ACTION_ADD_VARIANT), _
-                        CStr(CompanyEntry("Name")), _
+                        CompanySheetName(CompanyEntry), _
                         NewName, _
                         Evidence
 
@@ -8799,6 +8970,8 @@ Public Sub ApplyCompanyRenames()
     Dim RowKey As String
     Dim NewKey As String
     Dim Reason As String
+    Dim SeenOn As Variant
+    Dim EffectiveDate As Date
 
     Dim Applied As String
     Dim Skipped As String
@@ -8884,8 +9057,28 @@ Public Sub ApplyCompanyRenames()
                             RowName & "; " & _
                             SafeText(wsLookup.Cells(r, 2).Value))
 
+                    '
+                    ' The ledger row: from the report date the new name
+                    ' was first seen on, the company is shown under it;
+                    ' reports for earlier dates keep the old one.
+                    '
+                    SeenOn = wsLookup.Cells(r, 14).Value
+
+                    If IsDate(SeenOn) Then
+                        EffectiveDate = CDate(SeenOn)
+                    Else
+                        EffectiveDate = ReportDateFromHome()
+                    End If
+
+                    AppendCompanyRename _
+                        RowName, _
+                        NewName, _
+                        EffectiveDate, _
+                        SafeText(wsLookup.Cells(r, 13).Value)
+
                     Applied = Applied & vbLf & "  " & _
-                        RowName & "  ->  " & NewName
+                        RowName & "  ->  " & NewName & _
+                        " (from " & Format(EffectiveDate, "dd/mm/yyyy") & ")"
 
                 End If
 
@@ -8958,6 +9151,17 @@ Public Sub ApplyCompanyRenames()
     End If
 
 End Sub
+
+Private Function ReportDateFromHome() As Date
+
+    On Error Resume Next
+    ReportDateFromHome = _
+        CDate(ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value)
+    On Error GoTo 0
+
+    If ReportDateFromHome = 0 Then ReportDateFromHome = Date
+
+End Function
 
 Private Function CanonicalizeGeographyUsingCompanies( _
     ByVal RawEntries As Object, _
@@ -11237,7 +11441,8 @@ Private Sub BuildRiskGranularitySection( _
         CompaniesByName, _
         CompaniesByVariant, _
         CompaniesByIsin, _
-        CompaniesReady
+        CompaniesReady, _
+        AnalysisDate
 
     Set CanonicalNameMap = _
         BuildCanonicalEntityNameMap(GeographyEntries, CompaniesByName)
@@ -11418,7 +11623,8 @@ StageDataReadyLabel:
             GeographyEntries, _
             CompaniesByName, _
             CompaniesByVariant, _
-            CompanyRenames
+            CompanyRenames, _
+            AnalysisDate
 
         AddCompanyRenameNote CompanyRenames
 

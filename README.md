@@ -60,6 +60,7 @@ not generated:
 | Name Variants | — | Manual entity-name variant overrides |
 | Certificates | — | Certificate ISIN → its underlying RIC(s) |
 | Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
+| Company Renames | — | Old name → new name with the report date it was first seen on; written by *Apply Renames*, read so a report shows each company under the name in force on its own date |
 
 Generated sheets (*Weekly Analysis*, *Asset Type Mapping*, *New Geo-Sec
 Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
@@ -106,14 +107,25 @@ latest Sophis name already is for bonds.
 
 Either way the name is grouped under the row for this run, in memory —
 geography and sector resolve — and the report shows the new name when it is
-a rename. The lookup sheet lists each match with four columns: *Action*
-(`Rename` or `Add variant`, the code's reading), *Company Row*, *New Name*
-and *Evidence*, and draws an *Apply Renames* button. Change *Action* first
-if the reading is wrong — an abbreviation, say, that the matcher cannot
-tell from a new name. Pressing the button is the one way the code writes to
-Companies: `Rename` gives the row the new name and keeps the old one among
-the variants; `Add variant` adds the name and leaves the row's name alone.
-Both merge the exposure types and leave geography and sector as they are.
+a rename. The lookup sheet lists each match with five columns: *Action*
+(`Rename` or `Add variant`, the code's reading), *Company Row*, *New Name*,
+*Evidence* and *Seen On* (the report date), and draws an *Apply Renames*
+button. Change *Action* first if the reading is wrong — an abbreviation,
+say, that the matcher cannot tell from a new name. Pressing the button is
+the one way the code writes to Companies: `Rename` gives the row the new
+name and keeps the old one among the variants; `Add variant` adds the name
+and leaves the row's name alone. Both merge the exposure types and leave
+geography and sector as they are.
+
+**A rename does not rewrite past reports.** `Rename` also appends a row to
+*Company Renames* — old name, new name, the *Seen On* date as the effective
+date, the evidence, and when it was applied. `LoadCompaniesLookup` reads the
+ledger against the report's own date: a report dated before the effective
+date shows the old name, one dated on or after it the new name, and a chain
+of renames is walked back by name. The ledger is also the record of what a
+company used to be called, so a later comparison across dates needs no
+rescan. Edit the effective date by hand if the legal rename is known to have
+happened earlier than the report that first saw it.
 
 ## Layout
 
@@ -162,8 +174,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,200 lines and 197 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 193 of those procedures are
+It is 12,400 lines and 202 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 198 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut

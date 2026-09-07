@@ -12,7 +12,7 @@ Public Sub Clean()
         "Possible Upsize", "CLN", "CLN Report", _
         "Non-Eligible ISIN", "Companies", "Countries", _
         "Fund Parent Companies", "Bond Issuers", "Equity Names", "Name Variants", _
-        "Certificates", "Certificate Underlyings" _
+        "Certificates", "Certificate Underlyings", "Company Renames" _
     )
 
     With ThisWorkbook
