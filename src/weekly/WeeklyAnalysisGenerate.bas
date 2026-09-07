@@ -1268,13 +1268,11 @@ Private Sub BuildPortfolioSection( _
     WeekDate = ResolveComparisonDate(CurrentDate - 7)
 
     '
-    ' Newest first: the current date on top, then the week, the months and
-    ' year-end, each row further back than the one above it.  The week row
-    ' is what makes the table read week on week - it sits immediately under
-    ' the current date, so the first two rows are seven days apart.  It is
-    ' dropped when the snapshots are too sparse for it to be a week of its
-    ' own - ResolveComparisonDate searches forward, so a thin week can land
-    ' on the current date or on the monthly comparison.
+    ' The week row is what makes the table read week on week: it sits
+    ' immediately under the current date, so the last two rows are seven days
+    ' apart.  It is dropped when the snapshots are too sparse for it to be a
+    ' week of its own - ResolveComparisonDate searches forward, so a thin
+    ' week can land on the current date or on the monthly comparison.
     '
     ShowWeek = _
         (WeekDate < CurrentDate) And (WeekDate <> ComparisonDate)
@@ -1287,13 +1285,13 @@ Private Sub BuildPortfolioSection( _
 
     If ShowYTD And ShowWeek Then
         RowDates = _
-            Array(CurrentDate, WeekDate, ComparisonDate, Date2, Date3, YTDDate)
+            Array(YTDDate, Date3, Date2, ComparisonDate, WeekDate, CurrentDate)
     ElseIf ShowYTD Then
-        RowDates = Array(CurrentDate, ComparisonDate, Date2, Date3, YTDDate)
+        RowDates = Array(YTDDate, Date3, Date2, ComparisonDate, CurrentDate)
     ElseIf ShowWeek Then
-        RowDates = Array(CurrentDate, WeekDate, ComparisonDate, Date2, Date3)
+        RowDates = Array(Date3, Date2, ComparisonDate, WeekDate, CurrentDate)
     Else
-        RowDates = Array(CurrentDate, ComparisonDate, Date2, Date3)
+        RowDates = Array(Date3, Date2, ComparisonDate, CurrentDate)
     End If
 
     FirstDataRow = r + 2
@@ -1311,7 +1309,7 @@ Private Sub BuildPortfolioSection( _
     Next i
 
     If ShowYTD Then
-        ws.Cells(LastDataRow, c).Value = "YE " & Year(CurrentDate) - 1
+        ws.Cells(FirstDataRow, c).Value = "YE " & Year(CurrentDate) - 1
     End If
 
     ws.Range( _
@@ -1555,17 +1553,15 @@ Private Sub BuildCollateralBreakdown( _
     WriteCollateralHeaders ws, r + 1, c
 
     '
-    ' Newest first: the current snapshot on top, then the week, then
-    ' year-end, each followed by its shares - and each comparison row
-    ' directly under the snapshot it compares the current one against, so
-    ' the change sits next to its base.  The week row carries the date it
-    ' resolved to rather than a label: when the snapshots are sparse it can
-    ' land on the current date, and repeating the date says so plainly.
-    ' Only the amounts are values; the share and change rows are formulas
-    ' over them, so the arithmetic stays in the sheet where it can be read.
+    ' Oldest to newest, each snapshot followed by its shares, then the two
+    ' changes.  The week row carries the date it resolved to rather than a
+    ' label: when the snapshots are sparse it can land on the current date,
+    ' and repeating the date says so plainly.  Only the amounts are values;
+    ' the share and change rows are formulas over them, so the arithmetic
+    ' stays in the sheet where it can be read.
     '
-    ws.Cells(r + 2, c).Value = ReportDate
-    WriteCollateralAmounts ws, r + 2, c, DictCurrent
+    ws.Cells(r + 2, c).Value = "YE " & Year(ReportDate) - 1
+    WriteCollateralAmounts ws, r + 2, c, DictYTD
 
     ws.Cells(r + 3, c).Value = "% of Portfolio"
     WriteCollateralShares ws, r + 3, c, r + 2
@@ -1576,27 +1572,27 @@ Private Sub BuildCollateralBreakdown( _
     ws.Cells(r + 5, c).Value = "% of Portfolio"
     WriteCollateralShares ws, r + 5, c, r + 4
 
-    ws.Cells(r + 6, c).Value = "% Change WoW"
-    WriteCollateralChange ws, r + 6, c, r + 2, r + 4
+    ws.Cells(r + 6, c).Value = ReportDate
+    WriteCollateralAmounts ws, r + 6, c, DictCurrent
 
-    ws.Cells(r + 7, c).Value = "YE " & Year(ReportDate) - 1
-    WriteCollateralAmounts ws, r + 7, c, DictYTD
+    ws.Cells(r + 7, c).Value = "% of Portfolio"
+    WriteCollateralShares ws, r + 7, c, r + 6
 
-    ws.Cells(r + 8, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 8, c, r + 7
+    ws.Cells(r + 8, c).Value = "% Change WoW"
+    WriteCollateralChange ws, r + 8, c, r + 6, r + 4
 
     ws.Cells(r + 9, c).Value = "% Change YTD"
-    WriteCollateralChange ws, r + 9, c, r + 2, r + 7
+    WriteCollateralChange ws, r + 9, c, r + 6, r + 2
 
     '
     ' Formatting
     '
 
-    ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 4, c)).NumberFormat = "dd/mm/yyyy"
+    ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 6, c)).NumberFormat = "dd/mm/yyyy"
 
     ws.Range( _
         ws.Cells(r + 2, c + 1), _
-        ws.Cells(r + 9, LastCol)).NumberFormat = EuroNumberFormat()
+        ws.Cells(r + 6, LastCol)).NumberFormat = EuroNumberFormat()
 
     '
     ' The three share rows and the two change rows.
@@ -1607,7 +1603,11 @@ Private Sub BuildCollateralBreakdown( _
 
     ws.Range( _
         ws.Cells(r + 5, c + 1), _
-        ws.Cells(r + 6, LastCol)).NumberFormat = "0.00%"
+        ws.Cells(r + 5, LastCol)).NumberFormat = "0.00%"
+
+    ws.Range( _
+        ws.Cells(r + 7, c + 1), _
+        ws.Cells(r + 7, LastCol)).NumberFormat = "0.00%"
 
     ws.Range( _
         ws.Cells(r + 8, c + 1), _
@@ -1619,23 +1619,15 @@ Private Sub BuildCollateralBreakdown( _
 
     FormatFirstColumn ws, r + 1, r + 9, c
 
-    '
-    ' A rule under each block: current, week with its change, year-end
-    ' with its change.
-    '
     AddBottomBorder ws, r + 3, c, LastCol
-    AddBottomBorder ws, r + 6, c, LastCol
+    AddBottomBorder ws, r + 5, c, LastCol
+    AddBottomBorder ws, r + 7, c, LastCol
 
     ws.Cells(r + 3, c).Font.Bold = False
     ws.Cells(r + 5, c).Font.Bold = False
-    ws.Cells(r + 8, c).Font.Bold = False
+    ws.Cells(r + 7, c).Font.Bold = False
 
-    With ws.Range(ws.Cells(r + 6, c), ws.Cells(r + 6, LastCol))
-        .Font.Bold = True
-        .Interior.Color = RGB(212, 212, 212)
-    End With
-
-    With ws.Range(ws.Cells(r + 9, c), ws.Cells(r + 9, LastCol))
+    With ws.Range(ws.Cells(r + 8, c), ws.Cells(r + 9, LastCol))
         .Font.Bold = True
         .Interior.Color = RGB(212, 212, 212)
     End With
@@ -11740,8 +11732,8 @@ Private Sub CreateCollateralPieChart( _
     TotalCollateral = _
         Application.WorksheetFunction.Sum( _
             ws.Range( _
-                ws.Cells(BreakdownRow + 2, FirstCategoryCol), _
-                ws.Cells(BreakdownRow + 2, LastCategoryCol)))
+                ws.Cells(BreakdownRow + 6, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 6, LastCategoryCol)))
 
     '
     ' Delete old chart
@@ -11793,8 +11785,7 @@ Private Sub CreateCollateralPieChart( _
         .SeriesCollection.NewSeries
 
         '
-        ' Categories from the header row, amounts from the current row -
-        ' the first data row, the breakdown running newest first; the
+        ' Categories from the header row, amounts from the current row; the
         ' labels show the percentages Excel works out from those amounts.
         '
 
@@ -11805,8 +11796,8 @@ Private Sub CreateCollateralPieChart( _
 
         .SeriesCollection(1).Values = _
             ws.Range( _
-                ws.Cells(BreakdownRow + 2, FirstCategoryCol), _
-                ws.Cells(BreakdownRow + 2, LastCategoryCol))
+                ws.Cells(BreakdownRow + 6, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 6, LastCategoryCol))
 
         '
         ' Clean look
