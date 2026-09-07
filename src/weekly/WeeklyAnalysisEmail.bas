@@ -177,17 +177,17 @@ Public Sub CreateWeeklyEmail()
         "</div>"
 
     '
-    ' Report blocks, in reading order - the sheet's left column first,
-    ' active loans with the two movement tables straight under them, then
-    ' the middle column.  Each one is a Layout anchor plus the height and
-    ' width of the block that starts there.
+    ' Report blocks, in reading order: the active loans with the collateral
+    ' breakdown straight under them, then the two movement tables, then
+    ' what entered.  Each one is a Layout anchor plus the height and width
+    ' of the block that starts there.
     '
 
     HTMLBody = HTMLBody & _
         BlockHtml(ws, Layout.PortfolioRow, Layout.PortfolioCol, 9, 4) & _
+        BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 9, 8) & _
         BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 3, 4) & _
         BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 3, 4) & _
-        BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 9, 8) & _
         BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 5, 8)
 
     '
@@ -869,7 +869,8 @@ Public Sub CreateWeeklyComparisonEmail()
     Dim WordRange As Object
     Dim shp As Object
 
-    Dim TopRow As Long
+    Dim LeftRow As Long
+    Dim MiddleRow As Long
 
     On Error Resume Next
     Set ws = ThisWorkbook.Worksheets(COMPARISON_SHEET)
@@ -1021,26 +1022,25 @@ Public Sub CreateWeeklyComparisonEmail()
         "</div>"
 
     '
-    ' Report blocks in the weekly email's order, each at the height it
-    ' was built: the sheet's left column, three tables one under the
-    ' other, then the middle column's two.
+    ' Report blocks in the weekly email's order - the active loans, the
+    ' breakdown, the two movement tables, what entered - each at the
+    ' height it was built, read down the sheet's left column and its
+    ' middle column in turn.
     '
 
-    TopRow = Layout.PortfolioRow
+    LeftRow = Layout.PortfolioRow
+    MiddleRow = Layout.BreakdownRow
 
     HTMLBody = HTMLBody & _
-        ComparisonBlockHtml(ws, TopRow, Layout.PortfolioCol, 4)
+        ComparisonBlockHtml(ws, LeftRow, Layout.PortfolioCol, 4)
     HTMLBody = HTMLBody & _
-        ComparisonBlockHtml(ws, TopRow, Layout.PortfolioCol, 4)
+        ComparisonBlockHtml(ws, MiddleRow, Layout.BreakdownCol, 8)
     HTMLBody = HTMLBody & _
-        ComparisonBlockHtml(ws, TopRow, Layout.PortfolioCol, 4)
-
-    TopRow = Layout.BreakdownRow
-
+        ComparisonBlockHtml(ws, LeftRow, Layout.PortfolioCol, 4)
     HTMLBody = HTMLBody & _
-        ComparisonBlockHtml(ws, TopRow, Layout.BreakdownCol, 8)
+        ComparisonBlockHtml(ws, LeftRow, Layout.PortfolioCol, 4)
     HTMLBody = HTMLBody & _
-        ComparisonBlockHtml(ws, TopRow, Layout.BreakdownCol, 8)
+        ComparisonBlockHtml(ws, MiddleRow, Layout.BreakdownCol, 8)
 
     '
     ' Pie Chart Placeholder
