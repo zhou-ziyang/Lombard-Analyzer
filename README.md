@@ -193,7 +193,7 @@ loan-movement tables and the entered-collateral table a block per window.
 The current snapshot's rows in the overview and the breakdown are
 highlighted, dark red under white. The overview and the two movement tables
 stack in the left column with the
-same five columns — loans, max approved loan, drawn amount, collateral
+same five columns — loans, approved loan, drawn amount, collateral
 value — so the three read as one; the notes box sits under them at the same
 width, the breakdown column starts one spacer column to their right, and the
 concentration block one spacer column after the breakdown.

@@ -1332,7 +1332,7 @@ Private Sub BuildPortfolioSection( _
 
     ws.Cells(r + 1, c).Value = "Date"
     ws.Cells(r + 1, c + 1).Value = "Loans"
-    ws.Cells(r + 1, c + 2).Value = "Max Approved Loan"
+    ws.Cells(r + 1, c + 2).Value = "Approved Loan"
     ws.Cells(r + 1, c + 3).Value = "Drawn Amount"
     ws.Cells(r + 1, c + 4).Value = "Collateral Value"
 
@@ -1838,7 +1838,7 @@ Private Sub WriteLoanMovementSection( _
     WriteSectionTitle ws, TopRow, LeftCol, 5, Title
 
     ws.Cells(TopRow + 1, LeftCol + 1).Value = CountHeader
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Max Approved Loan"
+    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Approved Loan"
     ws.Cells(TopRow + 1, LeftCol + 3).Value = "Drawn Amount"
     ws.Cells(TopRow + 1, LeftCol + 4).Value = "Collateral Value"
 
