@@ -142,14 +142,14 @@ Public Sub InitializeLayout()
 
     ' Risk concentration (right of the breakdown, aligned with the upper
     ' report tables).  The movement tables moved under the overview, so this
-    ' follows the breakdown's last column - its Total column - with the
-    ' single spacer column between them.
+    ' follows the breakdown's last column with the single spacer column
+    ' between them.
 
     Layout.RiskRow = _
         Layout.ReportRow + 3
 
     Layout.RiskCol = _
-        Layout.ReportCol + 17
+        Layout.ReportCol + 16
 
     ' Risk concentration excluding DPM
     ' One empty spacer column is left between the two five-column tables.

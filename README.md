@@ -158,7 +158,7 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,300 lines and 201 procedures, and it does not get split, because in
+It is 12,300 lines and 199 procedures, and it does not get split, because in
 VBA splitting it would cost more than it buys. 193 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
@@ -191,9 +191,8 @@ same `% Change WoW` and `% Change YTD` rows the collateral breakdown closes
 with, the breakdown a week snapshot and its `% Change WoW` row, the two
 loan-movement tables and the entered-collateral table a block per window.
 The current snapshot's rows in the overview and the breakdown are
-highlighted, dark red under white, and the breakdown and the entered table
-carry a *Total* column — row totals as formulas, 100% on a share row. The
-overview and the two movement tables stack in the left column with the
+highlighted, dark red under white. The overview and the two movement tables
+stack in the left column with the
 same five columns — loans, max approved loan, drawn amount, collateral
 value — so the three read as one; the notes box sits under them at the same
 width, the breakdown column starts one spacer column to their right, and the

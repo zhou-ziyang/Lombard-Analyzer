@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,303 行 / 201 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,262 行 / 199 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,303 |
-| 过程数 | 201 |
+| 行数 | 12,262 |
+| 过程数 | 199 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -23,9 +23,8 @@ Positions），然后按 `WeeklyAnalysisLayout.Layout` 里的坐标把六个区�
 表上。每个衡量变化的区块都把周环比放在月环比旁边；Overview 和 Breakdown 都以 % Change WoW、
 % Change YTD 两行收尾，都是公式。Overview、New Loans、Loans Ended 三张表在左
 栏上下叠放，五列相同（Loans、Max Approved Loan、Drawn Amount、Collateral Value），Notes 框在
-它们下面、同样五列宽；Breakdown 那一栏隔一列空开始，Breakdown 和 Entered 都多一列 Total
-（行合计公式，份额行上是 100%），集中度区块再隔一列空紧接 Total 列。Active 和 Breakdown 里当前
-日期那几行深红底白字。
+它们下面、同样五列宽；Breakdown 那一栏隔一列空开始，集中度区块再隔一列空紧接 Breakdown。
+Active 和 Breakdown 里当前日期那几行深红底白字。
 
 但真正的重量不在报表区块，而在 `BuildRiskGranularitySection` —— 它一个人占了从第 9,978 行
 往后的篇幅，加上它依赖的证书展开、实体名规范化和参照表维护，超过全模块的三分之二。
