@@ -20,7 +20,8 @@ configuration parameters (as defined names) and one button per entry point.
 | 03 Weekly Analysis | `WeeklyEndDate`, `WeeklyCompareDate` | Weekly Comparison (optional, see below) | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysisComparison` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
-`GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet,
+`GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet
+(`CreateWeeklyComparisonEmail` likewise from the *Weekly Comparison* sheet),
 `WeeklyAnalysisGenerate.InsertRenamedCompanies` from the *Insert Renamed*
 button drawn onto *New Geo-Sec Lookup* when a company has changed its name, and
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
@@ -152,16 +153,17 @@ module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
 only Public procedures with no caller in the source are the zero-argument
 entry points a button names — the eight on Home (nine with the optional
-Weekly Comparison button), plus `InsertRenamedCompanies` behind a button the
-code itself draws. Two exceptions carry a comment saying
+Weekly Comparison button), plus `InsertRenamedCompanies` and
+`CreateWeeklyComparisonEmail` behind buttons the code itself draws. Two
+exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
 a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,500 lines and 203 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 198 of those procedures are
+It is 13,400 lines and 215 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 210 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -212,16 +214,22 @@ through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three
 separate asset classifications.
 
-**Weekly Comparison** (optional) — `GenerateWeeklyAnalysisComparison` builds
-the active loans, new loans, loans ended and entered collateral twice, side
-by side on a *Weekly Comparison* sheet: as of `WeeklyEndDate`, and as of a
-second Home date, `WeeklyCompareDate`. Each block is exactly what that date's
-weekly report would show, built by the same section builders with the shared
-layout shifted sideways. The feature is one delimited block at the end of
-`WeeklyAnalysisGenerate` (between the `COMPARISON FEATURE - start` and
-`- end` banners), calls only what the report already has, and is called by
-nothing else — to drop it, delete the block, the Home button and the
-`WeeklyCompareDate` name.
+**Weekly Comparison** (optional) — `GenerateWeeklyAnalysisComparison` runs
+the weekly report onto a *Weekly Comparison* sheet with the figures of an
+earlier report slotted in: the date to compare to is a second Home date,
+`WeeklyCompareDate`, and its rows are labelled in red. The overview gains that
+date's row among its own (or marks the row it already has); the breakdown
+gains that date's amounts, shares and change since year-end; the two movement
+tables and the entered table show, for each window, that date's row over this
+report's, labelled *Week to* and *Month to* the date each window ends on. The
+exposure section, the pie, the notes and the buttons are the report's own, and
+`CreateWeeklyComparisonEmail` — behind the sheet's *Generate Email* button —
+sends the same email with the taller tables and an intro naming the date
+compared to. The feature is four marked blocks — declarations near the top
+and a block at the end of `WeeklyAnalysisGenerate` and of
+`WeeklyAnalysisEmail`, between `COMPARISON FEATURE` banners — that call only
+what the report already has and are called by nothing else; to drop it, delete
+the four, the Home button and the `WeeklyCompareDate` name.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

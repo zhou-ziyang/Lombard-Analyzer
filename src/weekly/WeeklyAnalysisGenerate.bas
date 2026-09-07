@@ -227,6 +227,48 @@ Private Enum IssuerPlaceholderMode
 
 End Enum
 
+' =====================================================================
+' COMPARISON FEATURE - declarations
+'
+' What the comparison block at the end of this module declares at module
+' level.  VBA wants every constant and type above the first procedure, so
+' they sit here rather than with the block; delete them with it.
+' =====================================================================
+
+Private Const COMPARISON_SHEET As String = "Weekly Comparison"
+Private Const COMPARISON_DATE_NAME As String = "WeeklyCompareDate"
+
+'
+' The labels of the movement and entered rows, which carry the date each
+' window ends on: date cells under a number format, like the As of rows.
+'
+Private Const COMPARISON_WEEK_FORMAT As String = """Week to ""dd/mm/yyyy"
+Private Const COMPARISON_MONTH_FORMAT As String = """Month to ""dd/mm/yyyy"
+
+'
+' One date's snapshots with the week and the month it reads against -
+' the three dates the weekly report resolves for its report date -
+' loaded once for this report's date and once for the date compared to.
+'
+Private Type ComparisonSnapshots
+
+    AsOfDate As Date
+    WeekDate As Date
+    MonthDate As Date
+
+    Accounts As Variant
+    Positions As Variant
+    WeekAccounts As Variant
+    WeekPositions As Variant
+    MonthAccounts As Variant
+    MonthPositions As Variant
+
+End Type
+
+' =====================================================================
+' COMPARISON FEATURE - end of declarations
+' =====================================================================
+
 Private Function BuildRiskSubtableVisibility() As Object
 
     Dim Visibility As Object
@@ -12264,45 +12306,50 @@ End Sub
 '
 ' Everything from here to the "COMPARISON FEATURE - end" banner belongs
 ' to GenerateWeeklyAnalysisComparison: a second entry point that builds
-' the active-loan and activity tables twice, side by side on their own
-' sheet - once as of the report date, once as of a "compare to" date
-' read from Home - so two points in time can be read against each other.
+' the whole weekly report on its own sheet with the figures of an earlier
+' report - the "compare to" date read from Home - slotted into the
+' overview and activity tables, their labels in red, so this report reads
+' against that one.  The exposure section, the pie, the notes and the
+' buttons are the weekly report's own; the email has its own entry in
+' WeeklyAnalysisEmail, marked the same way.
 '
-' It only calls what the weekly report already has (the section builders,
-' the loaders, the layout), shifting the shared layout sideways for the
-' second block and resetting it after; nothing outside this block depends
-' on it, and nothing in it is called from outside.  To remove the feature:
-' delete this block, the Home button bound to
+' It only calls what the weekly report already has - the row writers,
+' the loaders, the formatting - and moves the shared layout's anchors
+' down to make room for the extra rows, resetting it after; nothing
+' outside the marked blocks depends on them, and nothing in them is
+' called from outside.  To remove the feature: delete this block and the
+' declarations block near the top of this module, the two marked blocks
+' in WeeklyAnalysisEmail, the Home button bound to
 ' GenerateWeeklyAnalysisComparison, and the WeeklyCompareDate name.
 ' =====================================================================
 
-Private Const COMPARISON_SHEET As String = "Weekly Comparison"
-Private Const COMPARISON_DATE_NAME As String = "WeeklyCompareDate"
-Private Const COMPARISON_AS_OF_LABEL As String = "As of"
-Private Const COMPARISON_COMPARE_LABEL As String = "Compare to"
-
-'
-' Columns from one block's left edge to the next: the left column's five,
-' a spacer, the entered table's nine, a spacer.
-'
-Private Const COMPARISON_BLOCK_OFFSET As Long = 16
-
 '
 ' Bound to a Home button; Public and argument-free for it.  Reads the
-' report date from WeeklyEndDate and the second date from
-' WeeklyCompareDate, both on Home.
+' report date from WeeklyEndDate and the date to compare to from
+' WeeklyCompareDate, both on Home, and runs the weekly report with the
+' comparison rows onto the Weekly Comparison sheet.
 '
 Public Sub GenerateWeeklyAnalysisComparison()
 
     Dim OldNoteHandler As String
-    Dim AsOfDate As Date
+    Dim CurrentDate As Date
     Dim CompareDate As Date
+    Dim YTDDate As Date
+
     Dim ws As Worksheet
+
+    Dim ThisReport As ComparisonSnapshots
+    Dim PriorReport As ComparisonSnapshots
+    Dim PositionsYTD As Variant
+
     Dim UnknownAssets As Object
+
+    Dim LastRow As Long
+    Dim CurrentAmountRow As Long
 
     On Error GoTo ErrorHandler
 
-    AsOfDate = _
+    CurrentDate = _
         ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
     CompareDate = ComparisonDateFromHome()
 
@@ -12318,6 +12365,17 @@ Public Sub GenerateWeeklyAnalysisComparison()
 
     End If
 
+    If CompareDate >= CurrentDate Then
+
+        MsgBox _
+            "The date to compare to must be earlier than the report date.", _
+            vbExclamation, _
+            "Weekly Comparison"
+
+        Exit Sub
+
+    End If
+
     Application.ScreenUpdating = False
     Application.EnableEvents = False
     Application.Calculation = xlCalculationManual
@@ -12326,42 +12384,144 @@ Public Sub GenerateWeeklyAnalysisComparison()
     NoteHandler = "WriteNoteWeekly"
     Set ReportNotes = New Collection
     MissingFiles = ""
+    ResetSheetOverwriteDecision
 
     InitialiseWeeklySourceCache
-    Set UnknownAssets = CreateObject("Scripting.Dictionary")
 
-    ComparisonRequireSourceFiles AsOfDate
+    Set UnknownAssets = CreateObject("Scripting.Dictionary")
+    Set AssetTypeMapping = CreateObject("Scripting.Dictionary")
+
+    ComparisonRequireSourceFiles CurrentDate
     ComparisonRequireSourceFiles CompareDate
 
+    YTDDate = ResolveComparisonDate(GetYTDDate(CurrentDate))
+
     Set ws = CreateOrReplaceSheet(COMPARISON_SHEET)
+
     If ws Is Nothing Then GoTo ExitRoutine
 
     ws.Cells.Clear
     ws.UsedRange.UnMerge
 
-    ComparisonBuildBlock _
-        ws, AsOfDate, 0, COMPARISON_AS_OF_LABEL, UnknownAssets
-    ComparisonBuildBlock _
-        ws, CompareDate, COMPARISON_BLOCK_OFFSET, COMPARISON_COMPARE_LABEL, _
-        UnknownAssets
+    ThisReport = ComparisonLoadSnapshots(CurrentDate)
+    PriorReport = ComparisonLoadSnapshots(CompareDate)
+    PositionsYTD = LoadWeeklyPositionData(YTDDate)
 
     '
-    ' The layout back to the weekly report's own, for the notes box and
-    ' for whatever runs next.
+    ' The weekly report's layout, each anchor moved down as the table
+    ' above it is built: the tables are taller here, and by how much
+    ' depends on the dates.
     '
     InitializeLayout
 
+    BuildHeader ws, CurrentDate
+
+    ws.Cells(Layout.HeaderRow + 1, Layout.HeaderCol).Value = _
+        "As of " & Format(CurrentDate, "dd/mm/yyyy") & _
+        " - compared to " & Format(CompareDate, "dd/mm/yyyy") & _
+        ", whose figures are labelled in red"
+
+    LastRow = ComparisonBuildPortfolioSection(ws, ThisReport, CompareDate)
+
+    Layout.NewLoanRow = LastRow + 2
+    Layout.EndedLoanRow = Layout.NewLoanRow + 7
+    Layout.CommentRow = Layout.EndedLoanRow + 7
+
+    LastRow = Layout.BreakdownRow + 9
+
+    If WeeklyDataHasRows(ThisReport.Positions) And _
+       WeeklyDataHasRows(PositionsYTD) Then
+
+        LastRow = _
+            ComparisonBuildCollateralBreakdown( _
+                ws, _
+                ThisReport, _
+                PriorReport, _
+                PositionsYTD, _
+                UnknownAssets, _
+                CurrentAmountRow)
+
+        WriteAssetTypeMapping
+
+    End If
+
+    Layout.EnteredRow = LastRow + 2
+    Layout.PieRow = Layout.EnteredRow + 11
+
+    If WeeklyDataHasRows(ThisReport.Positions) Then
+
+        BuildRiskGranularitySection ws, ThisReport.Positions
+
+    End If
+
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) And _
+       WeeklyDataHasRows(ThisReport.Positions) Then
+
+        ComparisonWriteLoanMovementSection _
+            ws, _
+            Layout.NewLoanRow, _
+            Layout.NewLoanCol, _
+            "New Lombard Loans", _
+            "New Loans", _
+            PriorReport, _
+            ThisReport, _
+            False
+
+    End If
+
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) Then
+
+        ComparisonWriteLoanMovementSection _
+            ws, _
+            Layout.EndedLoanRow, _
+            Layout.EndedLoanCol, _
+            "Lombard Loans Ended", _
+            "Ended Loans", _
+            PriorReport, _
+            ThisReport, _
+            True
+
+    End If
+
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) And _
+       WeeklyDataHasRows(ThisReport.Positions) Then
+
+        ComparisonBuildEnteredCollateralSection _
+            ws, _
+            PriorReport, _
+            ThisReport, _
+            UnknownAssets
+
+    End If
+
     With ws.UsedRange
+
         .Font.name = "Aptos Display"
         .VerticalAlignment = xlCenter
         .Columns.AutoFit
         .Rows.RowHeight = 16
+
     End With
 
     ws.Rows(Layout.HeaderRow).AutoFit
+    ws.Rows(Layout.HeaderRow + 1).AutoFit
 
     BuildNotes ws
     FormatNotesBox ws
+
+    '
+    ' Last, once every column and row under it has its final size.
+    '
+    If CurrentAmountRow > 0 Then
+
+        ComparisonCreatePieChart ws, CurrentDate, CurrentAmountRow
+
+    End If
+
+    ComparisonCreateButtons ws
 
     If MissingFiles <> "" Then
 
@@ -12375,11 +12535,21 @@ Public Sub GenerateWeeklyAnalysisComparison()
 ExitRoutine:
 
     ClearWeeklySourceCache
+
     NoteHandler = OldNoteHandler
+
+    '
+    ' The anchors back to the weekly report's own, for whatever runs next.
+    '
     InitializeLayout
+
     ResetExcel
 
-    If Not ws Is Nothing Then ws.Activate
+    If Not ws Is Nothing Then
+
+        ws.Activate
+
+    End If
 
     Exit Sub
 
@@ -12424,98 +12594,763 @@ Private Sub ComparisonRequireSourceFiles( _
 End Sub
 
 '
-' One block: the active loans, new loans, loans ended and entered
-' collateral as of one date, built by the weekly report's own section
-' builders with the shared layout shifted ColumnOffset columns to the
-' right.  The same guards and the same reference dates as the weekly
-' report - a month back and a week back, resolved to snapshots that
-' exist - so a block reads exactly as that date's report would.
+' One date's snapshots: its own, a week back and a month back, the two
+' reference dates resolved the way the weekly report resolves them.
 '
-Private Sub ComparisonBuildBlock( _
+Private Function ComparisonLoadSnapshots( _
+    ByVal AsOfDate As Date) As ComparisonSnapshots
+
+    Dim Snaps As ComparisonSnapshots
+
+    Snaps.AsOfDate = AsOfDate
+    Snaps.WeekDate = ResolveComparisonDate(AsOfDate - 7)
+    Snaps.MonthDate = ResolveComparisonDate(GetComparisonDate(AsOfDate))
+
+    Snaps.Accounts = LoadWeeklyAccountData(AsOfDate)
+    Snaps.Positions = LoadWeeklyPositionData(AsOfDate)
+    Snaps.WeekAccounts = LoadWeeklyAccountData(Snaps.WeekDate)
+    Snaps.WeekPositions = LoadWeeklyPositionData(Snaps.WeekDate)
+    Snaps.MonthAccounts = LoadWeeklyAccountData(Snaps.MonthDate)
+    Snaps.MonthPositions = LoadWeeklyPositionData(Snaps.MonthDate)
+
+    ComparisonLoadSnapshots = Snaps
+
+End Function
+
+'
+' The label of a row that belongs to the date compared to: red, so the
+' eye tells that report's rows from this one's.
+'
+Private Sub ComparisonMarkLabel( _
+    ByVal Target As Range)
+
+    Target.Font.Color = RGB(192, 0, 0)
+
+End Sub
+
+'
+' The dates with one more slotted in by date, or unchanged when it is
+' already among them.
+'
+Private Function ComparisonInsertDate( _
+    ByVal Dates As Variant, _
+    ByVal NewDate As Date) As Variant
+
+    Dim Result() As Variant
+    Dim Inserted As Boolean
+    Dim n As Long
+    Dim i As Long
+
+    For i = 0 To UBound(Dates)
+
+        If CDate(Dates(i)) = NewDate Then
+
+            ComparisonInsertDate = Dates
+
+            Exit Function
+
+        End If
+
+    Next i
+
+    ReDim Result(0 To UBound(Dates) + 1)
+
+    For i = 0 To UBound(Dates)
+
+        If Not Inserted Then
+
+            If NewDate < CDate(Dates(i)) Then
+
+                Result(n) = NewDate
+                n = n + 1
+                Inserted = True
+
+            End If
+
+        End If
+
+        Result(n) = Dates(i)
+        n = n + 1
+
+    Next i
+
+    If Not Inserted Then Result(n) = NewDate
+
+    ComparisonInsertDate = Result
+
+End Function
+
+'
+' The overview as the weekly report builds it - the same rows under the
+' same rules, the same two change rows under them - with the date
+' compared to slotted in by date when it is not already one of the rows,
+' and its label in red.  Returns the table's last row.
+'
+Private Function ComparisonBuildPortfolioSection( _
     ByVal ws As Worksheet, _
-    ByVal AsOfDate As Date, _
-    ByVal ColumnOffset As Long, _
-    ByVal Label As String, _
-    ByVal UnknownAssets As Object)
+    ByRef ThisReport As ComparisonSnapshots, _
+    ByVal CompareDate As Date) As Long
 
-    Dim MonthDate As Date
-    Dim WeekDate As Date
+    Dim CurrentDate As Date
+    Dim Date2 As Date
+    Dim Date3 As Date
+    Dim YTDDate As Date
 
-    Dim AccountsCurrent As Variant
-    Dim AccountsMonth As Variant
-    Dim AccountsWeek As Variant
-    Dim PositionsCurrent As Variant
-    Dim PositionsMonth As Variant
-    Dim PositionsWeek As Variant
+    Dim RowDates As Variant
+    Dim ShowYTD As Boolean
+    Dim ShowWeek As Boolean
 
-    MonthDate = _
-        ResolveComparisonDate( _
-            GetComparisonDate(AsOfDate))
-    WeekDate = _
-        ResolveComparisonDate(AsOfDate - 7)
+    Dim FirstDataRow As Long
+    Dim LastDataRow As Long
+    Dim LastRow As Long
+    Dim RowNo As Long
 
-    AccountsCurrent = LoadWeeklyAccountData(AsOfDate)
-    AccountsMonth = LoadWeeklyAccountData(MonthDate)
-    PositionsCurrent = LoadWeeklyPositionData(AsOfDate)
-    PositionsMonth = LoadWeeklyPositionData(MonthDate)
-    AccountsWeek = LoadWeeklyAccountData(WeekDate)
-    PositionsWeek = LoadWeeklyPositionData(WeekDate)
+    Dim YTDRow As Long
+    Dim WeekRow As Long
+    Dim CompareRow As Long
 
-    InitializeLayout
+    Dim r As Long
+    Dim c As Long
+    Dim i As Long
 
-    Layout.PortfolioCol = Layout.PortfolioCol + ColumnOffset
-    Layout.NewLoanCol = Layout.NewLoanCol + ColumnOffset
-    Layout.EndedLoanCol = Layout.EndedLoanCol + ColumnOffset
-    Layout.EnteredCol = Layout.EnteredCol + ColumnOffset
+    r = Layout.PortfolioRow
+    c = Layout.PortfolioCol
+
+    CurrentDate = ThisReport.AsOfDate
+
+    Date2 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 2))
+    Date3 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 3))
+    YTDDate = ResolveComparisonDate(GetYTDDate(CurrentDate))
+
+    '
+    ' The weekly report's own rows, under its own rules - see
+    ' BuildPortfolioSection - then the date compared to among them.
+    '
+    ShowWeek = _
+        (ThisReport.WeekDate < CurrentDate) And _
+        (ThisReport.WeekDate <> ThisReport.MonthDate)
+
+    ShowYTD = (Year(Date3) = Year(CurrentDate))
+
+    If ShowYTD And ShowWeek Then
+        RowDates = _
+            Array(YTDDate, Date3, Date2, ThisReport.MonthDate, _
+                  ThisReport.WeekDate, CurrentDate)
+    ElseIf ShowYTD Then
+        RowDates = _
+            Array(YTDDate, Date3, Date2, ThisReport.MonthDate, CurrentDate)
+    ElseIf ShowWeek Then
+        RowDates = _
+            Array(Date3, Date2, ThisReport.MonthDate, ThisReport.WeekDate, _
+                  CurrentDate)
+    Else
+        RowDates = Array(Date3, Date2, ThisReport.MonthDate, CurrentDate)
+    End If
+
+    RowDates = ComparisonInsertDate(RowDates, CompareDate)
+
+    FirstDataRow = r + 2
+    LastDataRow = FirstDataRow + UBound(RowDates)
+    LastRow = LastDataRow + 2
+
+    WriteSectionTitle ws, r, c, 5, "Active Lombard Loans"
+
+    ws.Cells(r + 1, c).Value = "Date"
+    ws.Cells(r + 1, c + 1).Value = "Loans"
+    ws.Cells(r + 1, c + 2).Value = "Approved Loan"
+    ws.Cells(r + 1, c + 3).Value = "Drawn Amount"
+    ws.Cells(r + 1, c + 4).Value = "Collateral Value"
+
+    '
+    ' The rows by date, noting where the ones the change rows and the red
+    ' label refer to landed: the compare row can fall anywhere.
+    '
+    For i = 0 To UBound(RowDates)
+
+        RowNo = FirstDataRow + i
+
+        WritePortfolioRow ws, RowNo, c, CDate(RowDates(i))
+
+        If ShowYTD And (CDate(RowDates(i)) = YTDDate) Then YTDRow = RowNo
+        If ShowWeek And (CDate(RowDates(i)) = ThisReport.WeekDate) Then WeekRow = RowNo
+        If CDate(RowDates(i)) = CompareDate Then CompareRow = RowNo
+
+    Next i
+
+    If YTDRow > 0 Then
+        ws.Cells(YTDRow, c).Value = "YE " & Year(CurrentDate) - 1
+    End If
+
+    ws.Cells(LastDataRow + 1, c).Value = "% Change WoW"
+
+    If WeekRow > 0 Then
+        WriteChangeFormulas _
+            ws, LastDataRow + 1, c + 1, c + 4, LastDataRow, WeekRow
+    Else
+        ws.Range( _
+            ws.Cells(LastDataRow + 1, c + 1), _
+            ws.Cells(LastDataRow + 1, c + 4)).Value = "n/a"
+    End If
+
+    ws.Cells(LastDataRow + 2, c).Value = "% Change YTD"
+
+    If YTDRow > 0 Then
+        WriteChangeFormulas _
+            ws, LastDataRow + 2, c + 1, c + 4, LastDataRow, YTDRow
+    Else
+        ws.Range( _
+            ws.Cells(LastDataRow + 2, c + 1), _
+            ws.Cells(LastDataRow + 2, c + 4)).Value = "n/a"
+    End If
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, c), _
+        ws.Cells(LastDataRow, c)).NumberFormat = DATE_AS_OF_FORMAT
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, c + 2), _
+        ws.Cells(LastDataRow, c + 4)).NumberFormat = EuroNumberFormat()
+
+    ws.Range( _
+        ws.Cells(LastDataRow + 1, c + 1), _
+        ws.Cells(LastRow, c + 4)).NumberFormat = "0.00%"
+
+    FormatReportTable _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastRow, c + 4)), _
+        1
+
+    FormatFirstColumn ws, r + 1, LastRow, c
+
+    AddBottomBorder ws, LastDataRow, c, c + 4
+
+    With ws.Range(ws.Cells(LastDataRow + 1, c), ws.Cells(LastRow, c + 4))
+        .Font.Bold = True
+        .Interior.Color = RGB(212, 212, 212)
+    End With
+
+    HighlightCurrentRows _
+        ws.Range(ws.Cells(LastDataRow, c), ws.Cells(LastDataRow, c + 4))
+
+    ComparisonMarkLabel ws.Cells(CompareRow, c)
+
+    ComparisonBuildPortfolioSection = LastRow
+
+End Function
+
+'
+' The collateral breakdown as the weekly report builds it, with the
+' block of the date compared to - its amounts, their shares and its own
+' change since year-end, the rows that report closed with - in date order
+' among the week block and the current one; when the date compared to is
+' the week date, the week block is that block.  Returns the table's last
+' row and, through CurrentAmountRow, the row the pie is drawn from.
+'
+Private Function ComparisonBuildCollateralBreakdown( _
+    ByVal ws As Worksheet, _
+    ByRef ThisReport As ComparisonSnapshots, _
+    ByRef PriorReport As ComparisonSnapshots, _
+    ByRef YTDPositions As Variant, _
+    ByRef UnknownAssets As Object, _
+    ByRef CurrentAmountRow As Long) As Long
+
+    Dim DictCurrent As Object
+    Dim DictWeek As Object
+    Dim DictCompare As Object
+    Dim DictYTD As Object
+
+    Dim r As Long
+    Dim c As Long
+    Dim LastCol As Long
+    Dim RowNo As Long
+
+    Dim YEAmountRow As Long
+    Dim WeekAmountRow As Long
+    Dim CompareAmountRow As Long
+    Dim LastRow As Long
+
+    r = Layout.BreakdownRow
+    c = Layout.BreakdownCol
+    LastCol = c + CollateralCategoryCount()
+
+    Set DictCurrent = _
+        BuildCollateralDictionary(ThisReport.Positions, UnknownAssets)
+    Set DictWeek = _
+        BuildCollateralDictionary(ThisReport.WeekPositions, UnknownAssets)
+    Set DictCompare = _
+        BuildCollateralDictionary(PriorReport.Positions, UnknownAssets)
+    Set DictYTD = _
+        BuildCollateralDictionary(YTDPositions, UnknownAssets)
 
     WriteSectionTitle _
-        ws, _
-        Layout.HeaderRow, _
-        Layout.PortfolioCol, _
-        5, _
-        Label & " " & Format(AsOfDate, "dd/mm/yyyy")
+        ws, r, c, _
+        CollateralCategoryCount() + 1, _
+        "Collateral Breakdown"
 
-    BuildPortfolioSection ws, AsOfDate, MonthDate
+    ws.Cells(r + 1, c).Value = "Date"
+    WriteCollateralHeaders ws, r + 1, c
 
-    If WeeklyDataHasRows(AccountsCurrent) And _
-       WeeklyDataHasRows(AccountsMonth) And _
-       WeeklyDataHasRows(PositionsCurrent) Then
+    YEAmountRow = r + 2
 
-        BuildNewLoansSection _
-            ws, _
-            AccountsCurrent, _
-            AccountsWeek, _
-            AccountsMonth, _
-            PositionsCurrent
+    ws.Cells(YEAmountRow, c).Value = "YE " & Year(ThisReport.AsOfDate) - 1
+    WriteCollateralAmounts ws, YEAmountRow, c, DictYTD
+
+    ws.Cells(YEAmountRow + 1, c).Value = "% of Portfolio"
+    WriteCollateralShares ws, YEAmountRow + 1, c, YEAmountRow
+
+    RowNo = YEAmountRow + 2
+
+    '
+    ' The week block and the compare block by date, or one block when
+    ' they are the same date; the current block after them.
+    '
+    If PriorReport.AsOfDate = ThisReport.WeekDate Then
+
+        CompareAmountRow = RowNo
+        RowNo = RowNo + _
+            ComparisonWriteBreakdownBlock( _
+                ws, RowNo, c, PriorReport.AsOfDate, DictCompare, YEAmountRow)
+
+        WeekAmountRow = CompareAmountRow
+
+    ElseIf PriorReport.AsOfDate < ThisReport.WeekDate Then
+
+        CompareAmountRow = RowNo
+        RowNo = RowNo + _
+            ComparisonWriteBreakdownBlock( _
+                ws, RowNo, c, PriorReport.AsOfDate, DictCompare, YEAmountRow)
+
+        WeekAmountRow = RowNo
+        RowNo = RowNo + _
+            ComparisonWriteBreakdownBlock( _
+                ws, RowNo, c, ThisReport.WeekDate, DictWeek, 0)
+
+    Else
+
+        WeekAmountRow = RowNo
+        RowNo = RowNo + _
+            ComparisonWriteBreakdownBlock( _
+                ws, RowNo, c, ThisReport.WeekDate, DictWeek, 0)
+
+        CompareAmountRow = RowNo
+        RowNo = RowNo + _
+            ComparisonWriteBreakdownBlock( _
+                ws, RowNo, c, PriorReport.AsOfDate, DictCompare, YEAmountRow)
 
     End If
 
-    If WeeklyDataHasRows(AccountsCurrent) And _
-       WeeklyDataHasRows(AccountsMonth) Then
+    CurrentAmountRow = RowNo
+    RowNo = RowNo + _
+        ComparisonWriteBreakdownBlock( _
+            ws, RowNo, c, ThisReport.AsOfDate, DictCurrent, 0)
 
-        BuildEndedLoansSection _
-            ws, _
-            AccountsCurrent, _
-            AccountsWeek, _
-            PositionsWeek, _
-            AccountsMonth, _
-            PositionsMonth
+    ws.Cells(RowNo, c).Value = "% Change WoW"
+    WriteCollateralChange ws, RowNo, c, CurrentAmountRow, WeekAmountRow
+
+    ws.Cells(RowNo + 1, c).Value = "% Change YTD"
+    WriteCollateralChange ws, RowNo + 1, c, CurrentAmountRow, YEAmountRow
+
+    LastRow = RowNo + 1
+
+    '
+    ' Formatting: the table as a whole, then each block's own rows.
+    '
+    ws.Range( _
+        ws.Cells(r + 2, c), _
+        ws.Cells(CurrentAmountRow, c)).NumberFormat = DATE_AS_OF_FORMAT
+
+    ws.Range( _
+        ws.Cells(r + 2, c + 1), _
+        ws.Cells(LastRow, LastCol)).NumberFormat = EuroNumberFormat()
+
+    FormatReportTable _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastRow, LastCol)), _
+        1
+
+    FormatFirstColumn ws, r + 1, LastRow, c
+
+    ComparisonFormatBreakdownBlock ws, YEAmountRow, c, LastCol, False
+    ComparisonFormatBreakdownBlock ws, CompareAmountRow, c, LastCol, True
+
+    If WeekAmountRow <> CompareAmountRow Then
+        ComparisonFormatBreakdownBlock ws, WeekAmountRow, c, LastCol, False
+    End If
+
+    ComparisonFormatBreakdownBlock ws, CurrentAmountRow, c, LastCol, False
+
+    ws.Range( _
+        ws.Cells(LastRow - 1, c + 1), _
+        ws.Cells(LastRow, LastCol)).NumberFormat = "0.00%"
+
+    With ws.Range(ws.Cells(LastRow - 1, c), ws.Cells(LastRow, LastCol))
+        .Font.Bold = True
+        .Interior.Color = RGB(212, 212, 212)
+    End With
+
+    HighlightCurrentRows _
+        ws.Range( _
+            ws.Cells(CurrentAmountRow, c), _
+            ws.Cells(CurrentAmountRow + 1, LastCol))
+
+    ComparisonBuildCollateralBreakdown = LastRow
+
+End Function
+
+'
+' One snapshot's block of the breakdown: its amounts under its date, their
+' shares, and - given a year-end row to read against, which only the
+' compare block is - its change since year-end.  Returns the rows written.
+'
+Private Function ComparisonWriteBreakdownBlock( _
+    ByVal ws As Worksheet, _
+    ByVal TopRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal SnapshotDate As Date, _
+    ByVal Amounts As Object, _
+    ByVal YEAmountRow As Long) As Long
+
+    ws.Cells(TopRow, LeftCol).Value = SnapshotDate
+    WriteCollateralAmounts ws, TopRow, LeftCol, Amounts
+
+    ws.Cells(TopRow + 1, LeftCol).Value = "% of Portfolio"
+    WriteCollateralShares ws, TopRow + 1, LeftCol, TopRow
+
+    ComparisonWriteBreakdownBlock = 2
+
+    If YEAmountRow > 0 Then
+
+        ws.Cells(TopRow + 2, LeftCol).Value = "% Change YTD"
+        WriteCollateralChange ws, TopRow + 2, LeftCol, TopRow, YEAmountRow
+
+        ComparisonWriteBreakdownBlock = 3
 
     End If
 
-    If WeeklyDataHasRows(AccountsCurrent) And _
-       WeeklyDataHasRows(AccountsMonth) And _
-       WeeklyDataHasRows(PositionsCurrent) Then
+End Function
 
-        BuildEnteredCollateralSection _
-            ws, _
-            AccountsCurrent, _
-            AccountsWeek, _
-            AccountsMonth, _
-            PositionsCurrent, _
-            UnknownAssets
+'
+' A block's own formatting once the table's is on: shares in percent
+' under a plain label, a rule under the block, and for the compare block
+' its change row in the change rows' grey and its labels in red.
+'
+Private Sub ComparisonFormatBreakdownBlock( _
+    ByVal ws As Worksheet, _
+    ByVal AmountRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal LastCol As Long, _
+    ByVal IsCompare As Boolean)
+
+    Dim LastRow As Long
+
+    LastRow = AmountRow + 1
+
+    ws.Range( _
+        ws.Cells(AmountRow + 1, LeftCol + 1), _
+        ws.Cells(AmountRow + 1, LastCol)).NumberFormat = "0.00%"
+
+    ws.Cells(AmountRow + 1, LeftCol).Font.Bold = False
+
+    If IsCompare Then
+
+        LastRow = AmountRow + 2
+
+        ws.Range( _
+            ws.Cells(LastRow, LeftCol + 1), _
+            ws.Cells(LastRow, LastCol)).NumberFormat = "0.00%"
+
+        With ws.Range(ws.Cells(LastRow, LeftCol), ws.Cells(LastRow, LastCol))
+            .Font.Bold = True
+            .Interior.Color = RGB(212, 212, 212)
+        End With
+
+        ComparisonMarkLabel _
+            ws.Range(ws.Cells(AmountRow, LeftCol), ws.Cells(LastRow, LeftCol))
 
     End If
+
+    AddBottomBorder ws, LastRow, LeftCol, LastCol
+
+End Sub
+
+'
+' A movement table with the rows of the date compared to: for each
+' window, that date's row and then this report's, the first in red, so
+' like reads against like.  The rows are the weekly report's own
+' (WriteLoanMovementRow) over the same week and month; each label carries
+' the date its window ends on.
+'
+Private Sub ComparisonWriteLoanMovementSection( _
+    ByVal ws As Worksheet, _
+    ByVal TopRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal Title As String, _
+    ByVal CountHeader As String, _
+    ByRef PriorReport As ComparisonSnapshots, _
+    ByRef ThisReport As ComparisonSnapshots, _
+    ByVal Ended As Boolean)
+
+    Dim LastRow As Long
+
+    WriteSectionTitle ws, TopRow, LeftCol, 5, Title
+
+    ws.Cells(TopRow + 1, LeftCol + 1).Value = CountHeader
+    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Approved Loan"
+    ws.Cells(TopRow + 1, LeftCol + 3).Value = "Drawn Amount"
+    ws.Cells(TopRow + 1, LeftCol + 4).Value = "Collateral Value"
+
+    ComparisonWriteMovementRow ws, TopRow + 2, LeftCol, PriorReport, True, Ended
+    ComparisonWriteMovementRow ws, TopRow + 3, LeftCol, ThisReport, True, Ended
+    ComparisonWriteMovementRow ws, TopRow + 4, LeftCol, PriorReport, False, Ended
+    ComparisonWriteMovementRow ws, TopRow + 5, LeftCol, ThisReport, False, Ended
+
+    LastRow = TopRow + 5
+
+    ws.Range( _
+        ws.Cells(TopRow + 2, LeftCol + 2), _
+        ws.Cells(LastRow, LeftCol + 4)).NumberFormat = EuroNumberFormat()
+
+    FormatReportTable _
+        ws.Range( _
+            ws.Cells(TopRow + 1, LeftCol), _
+            ws.Cells(LastRow, LeftCol + 4)), _
+        1
+
+    FormatFirstColumn ws, TopRow + 1, LastRow, LeftCol
+
+    AddBottomBorder ws, TopRow + 3, LeftCol, LeftCol + 4
+
+    ComparisonMarkLabel ws.Cells(TopRow + 2, LeftCol)
+    ComparisonMarkLabel ws.Cells(TopRow + 4, LeftCol)
+
+End Sub
+
+'
+' One movement row for one date and one window.  New loans are the
+' date's accounts against the earlier snapshot's, ended loans the other
+' way round with the earlier snapshot's positions - the pairing of
+' BuildNewLoansSection and BuildEndedLoansSection.
+'
+Private Sub ComparisonWriteMovementRow( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByRef Snaps As ComparisonSnapshots, _
+    ByVal WeekWindow As Boolean, _
+    ByVal Ended As Boolean)
+
+    If Ended Then
+
+        If WeekWindow Then
+            WriteLoanMovementRow _
+                ws, RowNo, LeftCol, "", _
+                Snaps.WeekAccounts, Snaps.Accounts, Snaps.WeekPositions
+        Else
+            WriteLoanMovementRow _
+                ws, RowNo, LeftCol, "", _
+                Snaps.MonthAccounts, Snaps.Accounts, Snaps.MonthPositions
+        End If
+
+    Else
+
+        If WeekWindow Then
+            WriteLoanMovementRow _
+                ws, RowNo, LeftCol, "", _
+                Snaps.Accounts, Snaps.WeekAccounts, Snaps.Positions
+        Else
+            WriteLoanMovementRow _
+                ws, RowNo, LeftCol, "", _
+                Snaps.Accounts, Snaps.MonthAccounts, Snaps.Positions
+        End If
+
+    End If
+
+    '
+    ' The label after the row writer, which puts the window's text there:
+    ' here the window is told by the date it ends on.
+    '
+    With ws.Cells(RowNo, LeftCol)
+
+        .Value = Snaps.AsOfDate
+
+        If WeekWindow Then
+            .NumberFormat = COMPARISON_WEEK_FORMAT
+        Else
+            .NumberFormat = COMPARISON_MONTH_FORMAT
+        End If
+
+    End With
+
+End Sub
+
+'
+' The entered collateral with the rows of the date compared to: for each
+' window, that date's amounts and shares and then this report's, labelled
+' by the date the window ends on, the first pair's labels in red.
+'
+Private Sub ComparisonBuildEnteredCollateralSection( _
+    ByVal ws As Worksheet, _
+    ByRef PriorReport As ComparisonSnapshots, _
+    ByRef ThisReport As ComparisonSnapshots, _
+    ByRef UnknownAssets As Object)
+
+    Dim TopRow As Long
+    Dim LeftCol As Long
+    Dim LastCol As Long
+    Dim LastRow As Long
+    Dim i As Long
+
+    TopRow = Layout.EnteredRow
+    LeftCol = Layout.EnteredCol
+    LastCol = LeftCol + CollateralCategoryCount()
+    LastRow = TopRow + 9
+
+    WriteSectionTitle _
+        ws, TopRow, LeftCol, _
+        CollateralCategoryCount() + 1, _
+        "Collateral Entered with New NDGs"
+
+    WriteCollateralHeaders ws, TopRow + 1, LeftCol
+
+    ComparisonWriteEnteredRows ws, TopRow + 2, LeftCol, PriorReport, True, UnknownAssets
+    ComparisonWriteEnteredRows ws, TopRow + 4, LeftCol, ThisReport, True, UnknownAssets
+    ComparisonWriteEnteredRows ws, TopRow + 6, LeftCol, PriorReport, False, UnknownAssets
+    ComparisonWriteEnteredRows ws, TopRow + 8, LeftCol, ThisReport, False, UnknownAssets
+
+    ws.Range( _
+        ws.Cells(TopRow + 2, LeftCol + 1), _
+        ws.Cells(LastRow, LastCol)).NumberFormat = EuroNumberFormat()
+
+    FormatReportTable _
+        ws.Range( _
+            ws.Cells(TopRow + 1, LeftCol), _
+            ws.Cells(LastRow, LastCol)), _
+        1
+
+    FormatFirstColumn ws, TopRow + 1, LastRow, LeftCol
+
+    '
+    ' Every second row is a share row: in percent, its label plain, a rule
+    ' under it except at the foot of the table.
+    '
+    For i = TopRow + 3 To LastRow Step 2
+
+        ws.Range( _
+            ws.Cells(i, LeftCol + 1), _
+            ws.Cells(i, LastCol)).NumberFormat = "0.00%"
+
+        ws.Cells(i, LeftCol).Font.Bold = False
+
+        If i < LastRow Then AddBottomBorder ws, i, LeftCol, LastCol
+
+    Next i
+
+    ComparisonMarkLabel _
+        ws.Range(ws.Cells(TopRow + 2, LeftCol), ws.Cells(TopRow + 3, LeftCol))
+    ComparisonMarkLabel _
+        ws.Range(ws.Cells(TopRow + 6, LeftCol), ws.Cells(TopRow + 7, LeftCol))
+
+End Sub
+
+'
+' One date's pair of entered rows for one window: the amounts under the
+' date the window ends on, then their shares.
+'
+Private Sub ComparisonWriteEnteredRows( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByRef Snaps As ComparisonSnapshots, _
+    ByVal WeekWindow As Boolean, _
+    ByRef UnknownAssets As Object)
+
+    Dim Amounts As Object
+
+    If Not WeeklyDataHasRows(Snaps.Accounts) Or _
+       Not WeeklyDataHasRows(Snaps.Positions) Then
+        Set Amounts = NewCollateralDictionary()
+    ElseIf WeekWindow Then
+        Set Amounts = _
+            EnteredCollateralAmounts( _
+                Snaps.Accounts, Snaps.WeekAccounts, Snaps.Positions, _
+                UnknownAssets)
+    Else
+        Set Amounts = _
+            EnteredCollateralAmounts( _
+                Snaps.Accounts, Snaps.MonthAccounts, Snaps.Positions, _
+                UnknownAssets)
+    End If
+
+    With ws.Cells(RowNo, LeftCol)
+
+        .Value = Snaps.AsOfDate
+
+        If WeekWindow Then
+            .NumberFormat = COMPARISON_WEEK_FORMAT
+        Else
+            .NumberFormat = COMPARISON_MONTH_FORMAT
+        End If
+
+    End With
+
+    WriteCollateralAmounts ws, RowNo, LeftCol, Amounts
+
+    ws.Cells(RowNo + 1, LeftCol).Value = "%"
+    WriteCollateralShares ws, RowNo + 1, LeftCol, RowNo
+
+End Sub
+
+'
+' The pie as the weekly report draws it.  CreateCollateralPieChart reads
+' the current amounts six rows under the breakdown's anchor and the
+' categories one row under it; here the current row sits lower, so the
+' anchor is moved for the call and the categories pointed back at the
+' header row after it.
+'
+Private Sub ComparisonCreatePieChart( _
+    ByVal ws As Worksheet, _
+    ByVal ReportDate As Date, _
+    ByVal CurrentAmountRow As Long)
+
+    Dim BreakdownRow As Long
+
+    BreakdownRow = Layout.BreakdownRow
+
+    Layout.BreakdownRow = CurrentAmountRow - 6
+    CreateCollateralPieChart ws, ReportDate
+    Layout.BreakdownRow = BreakdownRow
+
+    ws.ChartObjects("CollateralPie").Chart.SeriesCollection(1).XValues = _
+        ws.Range( _
+            ws.Cells(BreakdownRow + 1, Layout.BreakdownCol + 1), _
+            ws.Cells( _
+                BreakdownRow + 1, _
+                Layout.BreakdownCol + CollateralCategoryCount()))
+
+End Sub
+
+'
+' The sheet's two buttons, like the weekly report's: the email and a
+' rerun, bound to this feature's own entry points.
+'
+Private Sub ComparisonCreateButtons( _
+    ByVal ws As Worksheet)
+
+    Dim btn As Button
+    Dim Btn2 As Button
+
+    On Error Resume Next
+    ws.Buttons("btnComparisonEmail").Delete
+    ws.Buttons("btnComparisonRerun").Delete
+    On Error GoTo 0
+
+    Set btn = ws.Buttons.Add(345, 16, 100, 26)
+    btn.name = "btnComparisonEmail"
+    btn.Characters.Text = "Generate Email"
+    btn.OnAction = "CreateWeeklyComparisonEmail"
+
+    Set Btn2 = ws.Buttons.Add(455, 16, 50, 26)
+    Btn2.name = "btnComparisonRerun"
+    Btn2.Characters.Text = "Rerun"
+    Btn2.OnAction = "GenerateWeeklyAnalysisComparison"
 
 End Sub
 

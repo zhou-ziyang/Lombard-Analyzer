@@ -6,6 +6,20 @@ Option Explicit
 Private HtmlFragmentCounter As Long
 Private HtmlStyleBlocks As String
 
+' =====================================================================
+' COMPARISON FEATURE - declarations
+'
+' What CreateWeeklyComparisonEmail, at the end of this module, reads.
+' VBA wants them above the first procedure; delete them with it.
+' =====================================================================
+
+Private Const COMPARISON_SHEET As String = "Weekly Comparison"
+Private Const COMPARISON_DATE_NAME As String = "WeeklyCompareDate"
+
+' =====================================================================
+' COMPARISON FEATURE - end of declarations
+' =====================================================================
+
 Public Sub CreateWeeklyEmail()
 
     HtmlFragmentCounter = 0
@@ -816,4 +830,369 @@ Private Function RangeToHTML( _
 End Function
 
 
+' =====================================================================
+' COMPARISON FEATURE - start
+'
+' The email for the Weekly Comparison sheet, bound to the button
+' GenerateWeeklyAnalysisComparison draws there: CreateWeeklyEmail's page
+' and blocks read from that sheet, the intro naming the date compared to,
+' and each table taken at the height it was built - the comparison rows
+' make the tables taller, and by how much depends on the dates.  Nothing
+' outside the marked blocks depends on this; delete it with them.
+' =====================================================================
 
+Public Sub CreateWeeklyComparisonEmail()
+
+    HtmlFragmentCounter = 0
+    HtmlStyleBlocks = ""
+
+    InitializeLayout
+
+    Dim ws As Worksheet
+
+    Dim OutApp As Object
+    Dim OutMail As Object
+
+    Dim HTMLBody As String
+    Dim RiskHTML As String
+
+    Dim ReportDateValue As Variant
+    Dim ReportDate As Date
+
+    Dim CompareDateValue As Variant
+    Dim CompareDate As Date
+
+    Dim ToAddresses As String
+    Dim CcAddresses As String
+
+    Dim WordEditor As Object
+    Dim WordRange As Object
+    Dim shp As Object
+
+    Dim TopRow As Long
+
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(COMPARISON_SHEET)
+    On Error GoTo 0
+
+    If ws Is Nothing Then
+
+        MsgBox _
+            "There is no " & COMPARISON_SHEET & " sheet yet. " & _
+            "Run the Weekly Comparison first.", _
+            vbExclamation
+
+        Exit Sub
+
+    End If
+
+    ReportDateValue = _
+        ThisWorkbook.Worksheets("Home") _
+        .Range("WeeklyEndDate").Value
+
+    If Not IsDate(ReportDateValue) Then
+
+        MsgBox _
+            "WeeklyEndDate does not contain a valid report date.", _
+            vbExclamation
+
+        Exit Sub
+
+    End If
+
+    ReportDate = CDate(ReportDateValue)
+
+    On Error Resume Next
+    CompareDateValue = _
+        ThisWorkbook.Worksheets("Home") _
+        .Range(COMPARISON_DATE_NAME).Value
+    On Error GoTo 0
+
+    If Not IsDate(CompareDateValue) Then
+
+        MsgBox _
+            COMPARISON_DATE_NAME & " does not contain a valid date.", _
+            vbExclamation
+
+        Exit Sub
+
+    End If
+
+    CompareDate = CDate(CompareDateValue)
+
+    ToAddresses = HomeSetting("EmailTo")
+    CcAddresses = HomeSetting("EmailCc")
+
+    If ToAddresses = "" Then
+
+        MsgBox _
+            "No recipient is configured." & vbCrLf & vbCrLf & _
+            "Add a cell on Home named EmailTo - and EmailCc if you " & _
+            "want one - holding the addresses separated by " & _
+            "semicolons. The draft opens without a recipient until " & _
+            "then.", _
+            vbInformation, _
+            "Weekly Lombard Analysis"
+
+    End If
+
+    Set OutApp = CreateObject("Outlook.Application")
+    Set OutMail = OutApp.CreateItem(0)
+
+    '
+    ' Outer page
+    '
+
+    HTMLBody = _
+        "<html>" & _
+        "<head><style>" & _
+        ".email-container,.email-container td,.email-container th{" & _
+        "font-family:Aptos Display,Aptos,UniCredit,Calibri,sans-serif " & _
+        "!important;}" & _
+        ".rth-table td,.rth-table th{" & _
+        "padding:4px 5pt !important;" & _
+        "white-space:nowrap !important;}" & _
+        ".rth-title-row td,.rth-title-row th{" & _
+        "font-size:14pt !important;" & _
+        "padding-left:2px !important;" & _
+        "margin-left:0 !important;" & _
+        "text-indent:0 !important;" & _
+        "text-align:left !important;}" & _
+        ".rth-table{border-collapse:collapse;}" & _
+        "</style>[[TABLESTYLES]]</head>" & _
+        "<body style='margin:0;" & _
+        "padding:30px;" & _
+        "font-family:Aptos Display,Aptos,UniCredit,Calibri,sans-serif;'>"
+
+    '
+    ' White container
+    '
+
+    HTMLBody = HTMLBody & _
+        "<table class='email-container' align='left' " & _
+        "width='1200' " & _
+        "cellpadding='30' " & _
+        "cellspacing='0' " & _
+        "style='width:1200px; table-layout:fixed;" & _
+        "background-color:#ffffff;" & _
+        "border:1px solid #ccc;" & _
+        "font-family:Aptos Display,Aptos,UniCredit,Calibri,sans-serif;'>" & _
+        "<tr><td>"
+
+    '
+    ' Header
+    '
+
+    HTMLBody = HTMLBody & _
+        "<div style='" & _
+        "font-size:28pt;" & _
+        "font-weight:bold;" & _
+        "margin-top:5px;" & _
+        "margin-bottom:30px;'>" & _
+        "Weekly Lombard Analysis" & _
+        "</div>"
+
+    '
+    ' Intro, naming the report compared to
+    '
+
+    HTMLBody = HTMLBody & _
+        "Ciao Rossella,<br><br>"
+
+    HTMLBody = HTMLBody & _
+        "Please find below the weekly Lombard loan portfolio analysis " & _
+        "as of " & _
+        Format(ReportDate, "dd.mm.yyyy") & _
+        ", compared to the report as of " & _
+        Format(CompareDate, "dd.mm.yyyy") & _
+        ": that report's figures are labelled in red." & _
+        "<br><br>" & _
+        "The report covers the portfolio overview, collateral breakdown, " & _
+        "and monthly loan activity, followed by the exposure concentration " & _
+        "by name, geography, and sector. Concentration results " & _
+        "are shown both for the full portfolio and for the portfolio " & _
+        "excl. aggregated accounts." & _
+        "<br><br><br>"
+
+    HTMLBody = HTMLBody & _
+        "<div style='font-size:22pt;font-weight:bold;" & _
+        "margin-top:0;margin-bottom:14px;'>" & _
+        "Portfolio Overview &amp; Activity" & _
+        "</div>"
+
+    '
+    ' Report blocks in the weekly email's order, each at the height it
+    ' was built: the sheet's left column, three tables one under the
+    ' other, then the middle column's two.
+    '
+
+    TopRow = Layout.PortfolioRow
+
+    HTMLBody = HTMLBody & _
+        ComparisonBlockHtml(ws, TopRow, Layout.PortfolioCol, 4)
+    HTMLBody = HTMLBody & _
+        ComparisonBlockHtml(ws, TopRow, Layout.PortfolioCol, 4)
+    HTMLBody = HTMLBody & _
+        ComparisonBlockHtml(ws, TopRow, Layout.PortfolioCol, 4)
+
+    TopRow = Layout.BreakdownRow
+
+    HTMLBody = HTMLBody & _
+        ComparisonBlockHtml(ws, TopRow, Layout.BreakdownCol, 8)
+    HTMLBody = HTMLBody & _
+        ComparisonBlockHtml(ws, TopRow, Layout.BreakdownCol, 8)
+
+    '
+    ' Pie Chart Placeholder
+    '
+
+    HTMLBody = HTMLBody & _
+        "<br>[[PIECHART]]<br>"
+
+    '
+    ' Exposure concentration
+    '
+
+    RiskHTML = BuildRiskAnalysisHTML(ws)
+
+    If RiskHTML <> "" Then
+
+        HTMLBody = HTMLBody & _
+            "<br><br><br>" & _
+            "<div style='font-size:22pt;font-weight:bold;" & _
+            "margin-top:0;margin-bottom:14px;'>" & _
+            "Exposure Concentration" & _
+            "</div>" & _
+            RiskHTML
+
+    End If
+
+    HTMLBody = HTMLBody & _
+        "<p>Grazie<br>SECF Trading</p>"
+
+    '
+    ' Close container
+    '
+
+    HTMLBody = HTMLBody & _
+        "</td></tr></table>" & _
+        "</body></html>"
+
+    HTMLBody = _
+        Replace( _
+            HTMLBody, _
+            "[[TABLESTYLES]]", _
+            HtmlStyleBlocks, _
+            1, _
+            -1, _
+            vbBinaryCompare)
+
+    With OutMail
+
+        .To = ToAddresses
+        .CC = CcAddresses
+
+        .Subject = _
+            "Weekly Lombard Analysis " & _
+            Format(Date, "dd/mm/yyyy")
+
+        .HTMLBody = HTMLBody
+
+        .Display
+
+    End With
+
+    '
+    ' Insert Pie Chart at Placeholder
+    '
+
+    Set WordEditor = _
+        OutMail.GetInspector.WordEditor
+
+    Set WordRange = WordEditor.Content
+
+    With WordRange.Find
+
+        .ClearFormatting
+        .Text = "[[PIECHART]]"
+
+        If .Execute Then
+
+            WordRange.Text = ""
+
+            ws.ChartObjects("CollateralPie").Chart.CopyPicture _
+                Appearance:=xlScreen, _
+                Format:=xlPicture
+
+            WordRange.Paste
+
+            Set shp = _
+                WordEditor.InlineShapes( _
+                    WordEditor.InlineShapes.Count)
+
+            shp.Width = _
+                ws.ChartObjects("CollateralPie").Width
+
+        End If
+
+    End With
+
+End Sub
+
+'
+' One table's HTML: from the first row at or under TopRow with anything
+' in it, down to the blank row that ends the table.  Leaves TopRow on the
+' row where the next table can start, so the tables of one column are
+' read one after the other whatever their heights.
+'
+Private Function ComparisonBlockHtml( _
+    ByVal ws As Worksheet, _
+    ByRef TopRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal WidthCols As Long) As String
+
+    Dim FirstRow As Long
+    Dim LastRow As Long
+
+    FirstRow = TopRow
+
+    Do While ComparisonRowIsBlank(ws, FirstRow, LeftCol, WidthCols)
+
+        FirstRow = FirstRow + 1
+
+        If FirstRow > TopRow + 60 Then Exit Function
+
+    Loop
+
+    LastRow = FirstRow
+
+    Do While Not ComparisonRowIsBlank(ws, LastRow + 1, LeftCol, WidthCols)
+
+        LastRow = LastRow + 1
+
+    Loop
+
+    ComparisonBlockHtml = _
+        BlockHtml(ws, FirstRow, LeftCol, LastRow - FirstRow, WidthCols)
+
+    TopRow = LastRow + 2
+
+End Function
+
+Private Function ComparisonRowIsBlank( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByVal WidthCols As Long) As Boolean
+
+    ComparisonRowIsBlank = _
+        (Application.CountA( _
+            ws.Range( _
+                ws.Cells(RowNo, LeftCol), _
+                ws.Cells(RowNo, LeftCol + WidthCols))) = 0)
+
+End Function
+
+' =====================================================================
+' COMPARISON FEATURE - end
+' =====================================================================

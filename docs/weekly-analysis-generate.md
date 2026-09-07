@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,525 行 / 203 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（13,360 行 / 215 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,525 |
-| 过程数 | 203 |
+| 行数 | 13,360 |
+| 过程数 | 215 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -295,12 +295,25 @@ From` 写旧名
 
 ### 可选：Weekly Comparison
 
-模块末尾 `COMPARISON FEATURE - start / end` 两条横幅之间是一个独立的入口
-`GenerateWeeklyAnalysisComparison`：读 Home 上的 `WeeklyEndDate` 和一个新的命名单元格
-`WeeklyCompareDate`，在自己的 *Weekly Comparison* 表上把 Active Loans、New Loans、Loans Ended、
-Entered Collateral 各建两份并排——每一份就是那个日期的周报会显示的样子，用的是同一批区块
-构建函数，只是把共享的 Layout 向右平移 16 列再复原。它只调用已有的东西，也没有任何东西调用它；
-不要了就删掉这一段、Home 上的按钮和 `WeeklyCompareDate` 这个名字。
+`GenerateWeeklyAnalysisComparison` 是第二个入口：读 Home 上的 `WeeklyEndDate` 和一个新的命名单元格
+`WeeklyCompareDate`，在自己的 *Weekly Comparison* 表上跑一遍完整的周报，把 compare-to 那个日期的
+数据塞进 overview 和 activity 各表，标签用红字——老板草图里的 "from last report" 那几行，
+只是那些数据没有现成的，按 compare-to 日期重新算。Active Lombard Loans 里按日期插入那一天的行
+（本来就有这一行就只标红）；Collateral Breakdown 里插入那一天的金额、占比和它自己的 YTD 变化，
+按日期排在 week 块和当前块之间（compare-to 就是 week 那天时两块合一）；New / Ended / Entered
+每个窗口先放那一天的行再放本期的行，标签是 `Week to dd/mm/yyyy` / `Month to dd/mm/yyyy`
+（日期单元格加数字格式）。Exposure 部分、饼图、Notes、按钮都是周报自己的；
+`WeeklyAnalysisEmail.CreateWeeklyComparisonEmail`（表上的 Generate Email 按钮）生成同样的邮件，
+表格按实际高度截取，开头说明比较的是哪一天。
+
+代码上它只调用已有的东西——`WritePortfolioRow`、`WriteLoanMovementRow`、
+`EnteredCollateralAmounts`、各 WriteCollateral*、`BuildRiskGranularitySection`、
+`CreateCollateralPieChart`（把 `Layout.BreakdownRow` 临时挪到当前金额行上方 6 行再调用，
+然后把类别轴指回表头行）——共享的 `Layout` 各锚点随着上面的表建完往下挪，退出时 `InitializeLayout`
+复原。所有东西集中在四段 `COMPARISON FEATURE` 横幅之间：本模块顶部的声明段（常量和
+`ComparisonSnapshots` 类型——VBA 要求模块级声明在第一个过程之前，所以不能和块放在一起）、本模块
+末尾的块、`WeeklyAnalysisEmail` 顶部的常量和末尾的邮件块。没有任何东西调用它们；不要了就删掉
+这四段、Home 上的按钮和 `WeeklyCompareDate` 这个名字。
 
 ---
 
