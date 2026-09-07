@@ -924,12 +924,31 @@ Private Sub CalculateWeeklyPortfolioStats( _
     ByVal SnapshotDate As Date, _
     ByRef LoanCount As Long, _
     ByRef DrawnAmount As Double, _
-    ByRef ApprovedAmount As Double)
+    ByRef ApprovedAmount As Double, _
+    ByRef CollateralValue As Double)
 
     Dim AccountData As Variant
+    Dim PositionData As Variant
     Dim NDGs As Object
     Dim NDG As String
     Dim r As Long
+
+    '
+    ' Collateral is the whole positions snapshot for the date - the same
+    ' figure the movement tables sum for the loans that moved, taken over
+    ' every loan in the book.  The loader caches, so the dates the rest of
+    ' the report already reads cost nothing extra.
+    '
+    PositionData = LoadWeeklyPositionData(SnapshotDate)
+
+    If WeeklyDataHasRows(PositionData) Then
+
+        For r = LBound(PositionData, 1) To UBound(PositionData, 1)
+            CollateralValue = CollateralValue + _
+                CDbl(PositionData(r, WeeklyPosPositionValue))
+        Next r
+
+    End If
 
     AccountData = LoadWeeklyAccountData(SnapshotDate)
 
@@ -1297,12 +1316,18 @@ Private Sub BuildPortfolioSection( _
     FirstDataRow = r + 2
     LastDataRow = FirstDataRow + UBound(RowDates)
 
-    WriteSectionTitle ws, r, c, 4, "Overview"
+    '
+    ' The same five columns, in the same order and under the same names, as
+    ' the two movement tables below it, so the three read as one column of
+    ' figures.
+    '
+    WriteSectionTitle ws, r, c, 5, "Overview"
 
     ws.Cells(r + 1, c).Value = "Date"
     ws.Cells(r + 1, c + 1).Value = "Loans"
-    ws.Cells(r + 1, c + 2).Value = "Drawn"
-    ws.Cells(r + 1, c + 3).Value = "Approved"
+    ws.Cells(r + 1, c + 2).Value = "Max Approved Loan"
+    ws.Cells(r + 1, c + 3).Value = "Drawn Amount"
+    ws.Cells(r + 1, c + 4).Value = "Collateral Value"
 
     For i = 0 To UBound(RowDates)
         WritePortfolioRow ws, FirstDataRow + i, c, CDate(RowDates(i))
@@ -1318,10 +1343,10 @@ Private Sub BuildPortfolioSection( _
 
     ws.Range( _
         ws.Cells(FirstDataRow, c + 2), _
-        ws.Cells(LastDataRow, c + 3)).NumberFormat = EuroNumberFormat()
+        ws.Cells(LastDataRow, c + 4)).NumberFormat = EuroNumberFormat()
 
     FormatReportTable _
-        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastDataRow, c + 3)), _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastDataRow, c + 4)), _
         1
 
     FormatFirstColumn ws, r + 1, LastDataRow, c
@@ -1337,17 +1362,20 @@ Private Sub WritePortfolioRow( _
     Dim LoanCount As Long
     Dim DrawnAmount As Double
     Dim ApprovedAmount As Double
+    Dim CollateralValue As Double
 
     CalculateWeeklyPortfolioStats _
         RefDate, _
         LoanCount, _
         DrawnAmount, _
-        ApprovedAmount
+        ApprovedAmount, _
+        CollateralValue
 
     ws.Cells(TargetRow, StartCol).Value = RefDate
     ws.Cells(TargetRow, StartCol + 1).Value = LoanCount
-    ws.Cells(TargetRow, StartCol + 2).Value = DrawnAmount
-    ws.Cells(TargetRow, StartCol + 3).Value = ApprovedAmount
+    ws.Cells(TargetRow, StartCol + 2).Value = ApprovedAmount
+    ws.Cells(TargetRow, StartCol + 3).Value = DrawnAmount
+    ws.Cells(TargetRow, StartCol + 4).Value = CollateralValue
 
 End Sub
 

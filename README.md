@@ -158,7 +158,7 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,100 lines and 197 procedures, and it does not get split, because in
+It is 12,200 lines and 197 procedures, and it does not get split, because in
 VBA splitting it would cost more than it buys. 193 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
@@ -189,6 +189,10 @@ the exposure concentration block. Every section that measures change carries
 the week beside the month: the overview gains a row seven days back, the
 collateral breakdown a week snapshot and a `% Change WoW` row, the two
 loan-movement tables and the entered-collateral table a block per window.
+The overview and the two movement tables stack in the left column with the
+same five columns — loans, max approved loan, drawn amount, collateral
+value — so the three read as one; the notes box sits under them, and the
+concentration block starts right after the breakdown.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
 merged (diacritics, legal suffixes, share class suffixes, prefix matching,

@@ -96,21 +96,24 @@ Public Sub InitializeLayout()
     Layout.EnteredCol = _
         Layout.ReportCol + 5
 
-    ' New Lombards (right top)
+    ' New Lombards (left, under the overview)
+    ' The overview runs to six data rows, so its last row is ReportRow + 10;
+    ' one blank row, then this.  Same five columns as the overview, so the
+    ' three tables read as one column of figures.
 
     Layout.NewLoanRow = _
-        Layout.ReportRow + 3
+        Layout.ReportRow + 12
 
     Layout.NewLoanCol = _
-        Layout.ReportCol + 15
+        Layout.ReportCol
 
-    ' Ended Lombards (right bottom)
+    ' Ended Lombards (left, under the new loans)
 
     Layout.EndedLoanRow = _
-        Layout.ReportRow + 8
+        Layout.ReportRow + 17
 
     Layout.EndedLoanCol = _
-        Layout.ReportCol + 15
+        Layout.ReportCol
 
     ' Pie Chart
     ' Below the entered table, which is six rows now that it carries a window
@@ -125,23 +128,25 @@ Public Sub InitializeLayout()
     Layout.PieHeightRows = 22
         
     ' Comments
+    ' Under the ended loans; the box runs from the row after this to the
+    ' bottom of the pie, so it is shorter now that two tables sit above it.
 
     Layout.CommentRow = _
-        Layout.ReportRow + 12
+        Layout.ReportRow + 22
 
     Layout.CommentCol = _
         Layout.ReportCol
 
-    ' Risk concentration (far right, aligned with the upper report tables)
-    ' The movement tables to its left are five columns wide since they gained
-    ' a window label, so this starts one column further out to keep the single
-    ' spacer column between them.
+    ' Risk concentration (right of the breakdown, aligned with the upper
+    ' report tables).  The movement tables moved under the overview, so this
+    ' follows the breakdown's last column with the single spacer column
+    ' between them.
 
     Layout.RiskRow = _
         Layout.ReportRow + 3
 
     Layout.RiskCol = _
-        Layout.ReportCol + 21
+        Layout.ReportCol + 15
 
     ' Risk concentration excluding DPM
     ' One empty spacer column is left between the two five-column tables.
