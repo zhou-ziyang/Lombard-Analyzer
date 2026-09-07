@@ -1323,7 +1323,7 @@ Private Sub BuildPortfolioSection( _
     ' the two movement tables below it, so the three read as one column of
     ' figures.
     '
-    WriteSectionTitle ws, r, c, 5, "Overview"
+    WriteSectionTitle ws, r, c, 5, "Active Lombard Loans"
 
     ws.Cells(r + 1, c).Value = "Date"
     ws.Cells(r + 1, c + 1).Value = "Loans"

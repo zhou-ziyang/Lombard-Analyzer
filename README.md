@@ -183,7 +183,7 @@ Historical Events tables. It is kept only for reference.
 
 **Weekly** — `GenerateWeeklyAnalysis` loads the current, one-week, one-month
 and year-end snapshots, then builds the report sections in place on one sheet
-using the coordinates in `WeeklyAnalysisLayout.Layout`: portfolio overview,
+using the coordinates in `WeeklyAnalysisLayout.Layout`: the active loan book (titled *Active Lombard Loans*, beside *New Lombard Loans* and *Lombard Loans Ended*),
 collateral breakdown, new/ended loans, entered collateral, the pie chart, and
 the exposure concentration block. Every section that measures change carries
 the week beside the month: the overview gains a row seven days back and the
