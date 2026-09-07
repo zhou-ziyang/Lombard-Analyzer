@@ -191,8 +191,9 @@ collateral breakdown a week snapshot and a `% Change WoW` row, the two
 loan-movement tables and the entered-collateral table a block per window.
 The overview and the two movement tables stack in the left column with the
 same five columns — loans, max approved loan, drawn amount, collateral
-value — so the three read as one; the notes box sits under them, and the
-concentration block starts right after the breakdown.
+value — so the three read as one; the notes box sits under them at the same
+width, the breakdown column starts one spacer column to their right, and the
+concentration block one spacer column after the breakdown.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
 merged (diacritics, legal suffixes, share class suffixes, prefix matching,

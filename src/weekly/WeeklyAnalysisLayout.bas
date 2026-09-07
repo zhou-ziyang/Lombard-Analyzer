@@ -79,12 +79,14 @@ Public Sub InitializeLayout()
     
 
     ' Breakdown (middle top)
+    ' The left column's tables are five wide now, so this starts one column
+    ' further out to keep the single spacer column between them.
 
     Layout.BreakdownRow = _
         Layout.ReportRow + 3
 
     Layout.BreakdownCol = _
-        Layout.ReportCol + 5
+        Layout.ReportCol + 6
 
     ' Entered (middle bottom)
     ' The breakdown above it is ten rows now that it carries a week block and
@@ -94,7 +96,7 @@ Public Sub InitializeLayout()
         Layout.ReportRow + 14
 
     Layout.EnteredCol = _
-        Layout.ReportCol + 5
+        Layout.ReportCol + 6
 
     ' New Lombards (left, under the overview)
     ' The overview runs to six data rows, so its last row is ReportRow + 10;
@@ -123,13 +125,14 @@ Public Sub InitializeLayout()
         Layout.ReportRow + 21
 
     Layout.PieCol = _
-        Layout.ReportCol + 5
+        Layout.ReportCol + 6
         
     Layout.PieHeightRows = 22
         
     ' Comments
-    ' Under the ended loans; the box runs from the row after this to the
-    ' bottom of the pie, so it is shorter now that two tables sit above it.
+    ' Under the ended loans, as wide as the three tables above it (five
+    ' columns); the box runs from the row after this to the bottom of the
+    ' pie, so it is shorter now that two tables sit above it.
 
     Layout.CommentRow = _
         Layout.ReportRow + 22
@@ -146,7 +149,7 @@ Public Sub InitializeLayout()
         Layout.ReportRow + 3
 
     Layout.RiskCol = _
-        Layout.ReportCol + 15
+        Layout.ReportCol + 16
 
     ' Risk concentration excluding DPM
     ' One empty spacer column is left between the two five-column tables.

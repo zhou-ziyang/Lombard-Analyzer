@@ -22,7 +22,7 @@ YTD 日（上年末），加载七份快照数据（当前、上周、上月各�
 Positions），然后按 `WeeklyAnalysisLayout.Layout` 里的坐标把六个区块写到同一张 *Weekly Analysis*
 表上。每个衡量变化的区块都把周环比放在月环比旁边。Overview、New Loans、Loans Ended 三张表在左
 栏上下叠放，五列相同（Loans、Max Approved Loan、Drawn Amount、Collateral Value），Notes 框在
-它们下面；集中度区块紧接 Breakdown 右侧。
+它们下面、同样五列宽；Breakdown 那一栏隔一列空开始，集中度区块再隔一列空紧接 Breakdown。
 
 但真正的重量不在报表区块，而在 `BuildRiskGranularitySection` —— 它一个人占了从第 9,978 行
 往后的篇幅，加上它依赖的证书展开、实体名规范化和参照表维护，超过全模块的三分之二。

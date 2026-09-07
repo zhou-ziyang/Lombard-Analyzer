@@ -12039,7 +12039,7 @@ Private Sub BuildNotes( _
     LastRow = Layout.PieRow + _
               Layout.PieHeightRows - 1
     FirstCol = Layout.CommentCol
-    LastCol = Layout.CommentCol + 3
+    LastCol = Layout.CommentCol + 4
 
     WriteSectionTitle _
         ws, _
@@ -12122,8 +12122,7 @@ Private Sub FormatNotesBox( _
               Layout.PieHeightRows - 1
 
     FirstCol = Layout.CommentCol
-
-    LastCol = Layout.CommentCol + 3
+    LastCol = Layout.CommentCol + 4
 
     ws.Range( _
         ws.Cells(FirstRow, 1), _
