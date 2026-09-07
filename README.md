@@ -17,6 +17,7 @@ configuration parameters (as defined names) and one button per entry point.
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `DeltaRevenue.BuildRevenueSummary` |
 | 03 Weekly Analysis | `WeeklyEndDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
+| 03 Weekly Analysis | `WeeklyEndDate`, `WeeklyCompareDate` | Weekly Comparison (optional, see below) | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysisComparison` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
 `GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet,
@@ -61,8 +62,8 @@ not generated:
 | Certificates | — | Certificate ISIN → its underlying RIC(s) |
 | Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
 
-Generated sheets (*Weekly Analysis*, *Asset Type Mapping*, *New Geo-Sec
-Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
+Generated sheets (*Weekly Analysis*, *Weekly Comparison*, *Asset Type
+Mapping*, *New Geo-Sec Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
 
@@ -150,16 +151,17 @@ to reach across for (`ReadAllLines`, `FindHeaderIndex`, `FormatReportTable`,
 module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
 only Public procedures with no caller in the source are the zero-argument
-entry points a button names — the eight on Home, plus `InsertRenamedCompanies`
-behind a button the code itself draws. Two exceptions carry a comment saying
+entry points a button names — the eight on Home (nine with the optional
+Weekly Comparison button), plus `InsertRenamedCompanies` behind a button the
+code itself draws. Two exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
 a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,300 lines and 199 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 193 of those procedures are
+It is 12,500 lines and 203 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 198 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -209,6 +211,17 @@ assembles the Outlook message. `docs/weekly-analysis-generate.md` walks
 through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three
 separate asset classifications.
+
+**Weekly Comparison** (optional) — `GenerateWeeklyAnalysisComparison` builds
+the active loans, new loans, loans ended and entered collateral twice, side
+by side on a *Weekly Comparison* sheet: as of `WeeklyEndDate`, and as of a
+second Home date, `WeeklyCompareDate`. Each block is exactly what that date's
+weekly report would show, built by the same section builders with the shared
+layout shifted sideways. The feature is one delimited block at the end of
+`WeeklyAnalysisGenerate` (between the `COMPARISON FEATURE - start` and
+`- end` banners), calls only what the report already has, and is called by
+nothing else — to drop it, delete the block, the Home button and the
+`WeeklyCompareDate` name.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

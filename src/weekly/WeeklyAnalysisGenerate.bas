@@ -12259,3 +12259,266 @@ Private Sub CreateWeeklyEmailButton(ByVal ws As Worksheet)
 End Sub
 
 
+' =====================================================================
+' COMPARISON FEATURE - start
+'
+' Everything from here to the "COMPARISON FEATURE - end" banner belongs
+' to GenerateWeeklyAnalysisComparison: a second entry point that builds
+' the active-loan and activity tables twice, side by side on their own
+' sheet - once as of the report date, once as of a "compare to" date
+' read from Home - so two points in time can be read against each other.
+'
+' It only calls what the weekly report already has (the section builders,
+' the loaders, the layout), shifting the shared layout sideways for the
+' second block and resetting it after; nothing outside this block depends
+' on it, and nothing in it is called from outside.  To remove the feature:
+' delete this block, the Home button bound to
+' GenerateWeeklyAnalysisComparison, and the WeeklyCompareDate name.
+' =====================================================================
+
+Private Const COMPARISON_SHEET As String = "Weekly Comparison"
+Private Const COMPARISON_DATE_NAME As String = "WeeklyCompareDate"
+Private Const COMPARISON_AS_OF_LABEL As String = "As of"
+Private Const COMPARISON_COMPARE_LABEL As String = "Compare to"
+
+'
+' Columns from one block's left edge to the next: the left column's five,
+' a spacer, the entered table's nine, a spacer.
+'
+Private Const COMPARISON_BLOCK_OFFSET As Long = 16
+
+'
+' Bound to a Home button; Public and argument-free for it.  Reads the
+' report date from WeeklyEndDate and the second date from
+' WeeklyCompareDate, both on Home.
+'
+Public Sub GenerateWeeklyAnalysisComparison()
+
+    Dim OldNoteHandler As String
+    Dim AsOfDate As Date
+    Dim CompareDate As Date
+    Dim ws As Worksheet
+    Dim UnknownAssets As Object
+
+    On Error GoTo ErrorHandler
+
+    AsOfDate = _
+        ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
+    CompareDate = ComparisonDateFromHome()
+
+    If CompareDate = 0 Then
+
+        MsgBox _
+            "Add a cell named '" & COMPARISON_DATE_NAME & "' on Home " & _
+            "holding the date to compare to, then run this again.", _
+            vbExclamation, _
+            "Weekly Comparison"
+
+        Exit Sub
+
+    End If
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    OldNoteHandler = NoteHandler
+    NoteHandler = "WriteNoteWeekly"
+    Set ReportNotes = New Collection
+    MissingFiles = ""
+
+    InitialiseWeeklySourceCache
+    Set UnknownAssets = CreateObject("Scripting.Dictionary")
+
+    ComparisonRequireSourceFiles AsOfDate
+    ComparisonRequireSourceFiles CompareDate
+
+    Set ws = CreateOrReplaceSheet(COMPARISON_SHEET)
+    If ws Is Nothing Then GoTo ExitRoutine
+
+    ws.Cells.Clear
+    ws.UsedRange.UnMerge
+
+    ComparisonBuildBlock _
+        ws, AsOfDate, 0, COMPARISON_AS_OF_LABEL, UnknownAssets
+    ComparisonBuildBlock _
+        ws, CompareDate, COMPARISON_BLOCK_OFFSET, COMPARISON_COMPARE_LABEL, _
+        UnknownAssets
+
+    '
+    ' The layout back to the weekly report's own, for the notes box and
+    ' for whatever runs next.
+    '
+    InitializeLayout
+
+    With ws.UsedRange
+        .Font.name = "Aptos Display"
+        .VerticalAlignment = xlCenter
+        .Columns.AutoFit
+        .Rows.RowHeight = 16
+    End With
+
+    ws.Rows(Layout.HeaderRow).AutoFit
+
+    BuildNotes ws
+    FormatNotesBox ws
+
+    If MissingFiles <> "" Then
+
+        MsgBox _
+            "Weekly Comparison completed with warnings." & vbCrLf & vbCrLf & _
+            "Missing source files:" & vbCrLf & MissingFiles, _
+            vbExclamation
+
+    End If
+
+ExitRoutine:
+
+    ClearWeeklySourceCache
+    NoteHandler = OldNoteHandler
+    InitializeLayout
+    ResetExcel
+
+    If Not ws Is Nothing Then ws.Activate
+
+    Exit Sub
+
+ErrorHandler:
+
+    ResetExcel
+
+    MsgBox _
+        Err.Description, _
+        vbCritical, _
+        "Weekly Comparison"
+
+    GoTo ExitRoutine
+
+End Sub
+
+'
+' The date to compare to, from the named cell on Home; zero when the name
+' is missing or does not hold a date.
+'
+Private Function ComparisonDateFromHome() As Date
+
+    On Error Resume Next
+    ComparisonDateFromHome = _
+        CDate(ThisWorkbook.Worksheets("Home").Range(COMPARISON_DATE_NAME).Value)
+    On Error GoTo 0
+
+End Function
+
+Private Sub ComparisonRequireSourceFiles( _
+    ByVal SnapshotDate As Date)
+
+    If Not SourceFileExists(SnapshotDate, "POSITIONS") _
+       Or Not SourceFileExists(SnapshotDate, "ACCOUNTS") Then
+
+        Fatal _
+            "Source files not found for " & _
+            Format(SnapshotDate, "dd/mm/yyyy")
+
+    End If
+
+End Sub
+
+'
+' One block: the active loans, new loans, loans ended and entered
+' collateral as of one date, built by the weekly report's own section
+' builders with the shared layout shifted ColumnOffset columns to the
+' right.  The same guards and the same reference dates as the weekly
+' report - a month back and a week back, resolved to snapshots that
+' exist - so a block reads exactly as that date's report would.
+'
+Private Sub ComparisonBuildBlock( _
+    ByVal ws As Worksheet, _
+    ByVal AsOfDate As Date, _
+    ByVal ColumnOffset As Long, _
+    ByVal Label As String, _
+    ByVal UnknownAssets As Object)
+
+    Dim MonthDate As Date
+    Dim WeekDate As Date
+
+    Dim AccountsCurrent As Variant
+    Dim AccountsMonth As Variant
+    Dim AccountsWeek As Variant
+    Dim PositionsCurrent As Variant
+    Dim PositionsMonth As Variant
+    Dim PositionsWeek As Variant
+
+    MonthDate = _
+        ResolveComparisonDate( _
+            GetComparisonDate(AsOfDate))
+    WeekDate = _
+        ResolveComparisonDate(AsOfDate - 7)
+
+    AccountsCurrent = LoadWeeklyAccountData(AsOfDate)
+    AccountsMonth = LoadWeeklyAccountData(MonthDate)
+    PositionsCurrent = LoadWeeklyPositionData(AsOfDate)
+    PositionsMonth = LoadWeeklyPositionData(MonthDate)
+    AccountsWeek = LoadWeeklyAccountData(WeekDate)
+    PositionsWeek = LoadWeeklyPositionData(WeekDate)
+
+    InitializeLayout
+
+    Layout.PortfolioCol = Layout.PortfolioCol + ColumnOffset
+    Layout.NewLoanCol = Layout.NewLoanCol + ColumnOffset
+    Layout.EndedLoanCol = Layout.EndedLoanCol + ColumnOffset
+    Layout.EnteredCol = Layout.EnteredCol + ColumnOffset
+
+    WriteSectionTitle _
+        ws, _
+        Layout.HeaderRow, _
+        Layout.PortfolioCol, _
+        5, _
+        Label & " " & Format(AsOfDate, "dd/mm/yyyy")
+
+    BuildPortfolioSection ws, AsOfDate, MonthDate
+
+    If WeeklyDataHasRows(AccountsCurrent) And _
+       WeeklyDataHasRows(AccountsMonth) And _
+       WeeklyDataHasRows(PositionsCurrent) Then
+
+        BuildNewLoansSection _
+            ws, _
+            AccountsCurrent, _
+            AccountsWeek, _
+            AccountsMonth, _
+            PositionsCurrent
+
+    End If
+
+    If WeeklyDataHasRows(AccountsCurrent) And _
+       WeeklyDataHasRows(AccountsMonth) Then
+
+        BuildEndedLoansSection _
+            ws, _
+            AccountsCurrent, _
+            AccountsWeek, _
+            PositionsWeek, _
+            AccountsMonth, _
+            PositionsMonth
+
+    End If
+
+    If WeeklyDataHasRows(AccountsCurrent) And _
+       WeeklyDataHasRows(AccountsMonth) And _
+       WeeklyDataHasRows(PositionsCurrent) Then
+
+        BuildEnteredCollateralSection _
+            ws, _
+            AccountsCurrent, _
+            AccountsWeek, _
+            AccountsMonth, _
+            PositionsCurrent, _
+            UnknownAssets
+
+    End If
+
+End Sub
+
+' =====================================================================
+' COMPARISON FEATURE - end
+' =====================================================================

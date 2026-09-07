@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,262 行 / 199 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,525 行 / 203 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,262 |
-| 过程数 | 199 |
+| 行数 | 12,525 |
+| 过程数 | 203 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -292,6 +292,15 @@ F / H 两格显示老行的地理行业而不是 Bloomberg 公式。有这种行
 From` 写旧名
 （列不存在就建），然后删掉 lookup 上那一行。新名已有行、旧名找不到的，跳过并在弹窗里说明。
 按完要重建一次 staging。
+
+### 可选：Weekly Comparison
+
+模块末尾 `COMPARISON FEATURE - start / end` 两条横幅之间是一个独立的入口
+`GenerateWeeklyAnalysisComparison`：读 Home 上的 `WeeklyEndDate` 和一个新的命名单元格
+`WeeklyCompareDate`，在自己的 *Weekly Comparison* 表上把 Active Loans、New Loans、Loans Ended、
+Entered Collateral 各建两份并排——每一份就是那个日期的周报会显示的样子，用的是同一批区块
+构建函数，只是把共享的 Layout 向右平移 16 列再复原。它只调用已有的东西，也没有任何东西调用它；
+不要了就删掉这一段、Home 上的按钮和 `WeeklyCompareDate` 这个名字。
 
 ---
 
