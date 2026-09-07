@@ -189,6 +189,9 @@ the exposure concentration block. Every section that measures change carries
 the week beside the month: the overview gains a row seven days back, the
 collateral breakdown a week snapshot and a `% Change WoW` row, the two
 loan-movement tables and the entered-collateral table a block per window.
+Both time-series tables run newest first — the current date on top — and in
+the breakdown each change row sits directly under the snapshot it compares
+the current one against.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
 merged (diacritics, legal suffixes, share class suffixes, prefix matching,
