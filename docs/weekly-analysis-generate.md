@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,441 行 / 202 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,158 行 / 197 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,441 |
-| 过程数 | 202 |
+| 行数 | 12,158 |
+| 过程数 | 197 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -266,49 +266,26 @@ append-only，已有的人工填写不会被覆盖——**只有一个例外**�
   `SetFundLookupFormula` 先试 `Formula2`（逗号分隔），失败再退到 `FormulaLocal`（分号分隔）
   ——处理的是 Excel 区域设置差异。
 
-### 两个 Name Variants 说的是同一件事
+### 改了名的公司
 
-Companies 一行的 Name Variants，和 Name Variants 表的 Manual Override 列，陈述的是同一种事实：
-这几种写法（包括不同的法律形式）是一家公司，要算在一起。以前只有一个方向通：Manual Override
-进 `BuildCanonicalEntityNameMap`，影响规范名，进而影响 Companies 的匹配；Companies 的变体却
-只在模糊合并**之后**才按精确键查，帮不上模糊那一步，Name Variants 表记的规范名也和报表显示的
-对不上。现在 `LoadCompaniesLookup` 提前到 `BuildCanonicalEntityNameMap` 之前，Companies 每行
-的 Name 和每个变体都先注册进同一张规范名映射（`RegisterMaintainedSpelling`，和 Manual
-Override 走同一个函数），Manual Override 后注册，冲突时它说了算。效果：一个新写法只要归一化
-后像某个已登记的变体，就直接继承 Companies 的名字；Name Variants 表记的规范名就是报表用的。
+Companies 只按 Name 和 Name Variants 匹配，改了名的公司会被当成陌生人：进 New Geo-Sec
+Lookup 重新查地理行业，Country / Sector 归 Others。`DetectRenamedCompanies` 在读完 Companies
+之后、对 Companies 规范化之前跑：名字和变体都对不上的实体，再试两座桥——债券 issuer 的
+`PreviousNames`（Bond Issuers 覆盖 Issuer Name 时留在 `Previous Names` 列里的旧名）对
+Companies 的名字和变体；以及它的 ISIN 候选对 Companies 的 Reference ISIN（只算 Issued /
+Underlying security，基金的 ISIN 认的是基金不是母公司）。搭上桥、且新名不只是那行 Name 的
+另一种写法（`NamesLookAlike`），就是改名。
 
-那两张表还是各有用处：公司在 Companies 里的，写法记在那一行；不在 Companies 里的、或者要
-把模糊合并错并的名字钉住的，用 Manual Override。
-
-### Companies 只按 ISIN 或旧名认识的名字
-
-改了名的公司到 Companies 这里是陌生名字。`DetectCompanyRenames` 在规范化之后、对 Companies
-规范化之前跑：名字和变体都对不上的实体，再试两座桥——债券 issuer 的 `PreviousNames`（Bond
-Issuers 覆盖 Issuer Name 时留在 `Previous Names` 列里的旧名）对 Companies 的名字和变体；以及
-它的 ISIN 候选对 Companies 的 Reference ISIN（只算 Issued / Underlying security，基金的 ISIN
-认的是基金不是母公司）。
-
-搭上桥之后只问一件事：新名是不是那行 Name 的另一种写法（`NamesLookAlike`：`NormalizeEntityKey`
-相等，或 `IsLikelyEntityPrefixMatch`）。是 → 当变体（`Add variant`），登记进内存映射，报表显示
-原名；不是 → 公司改名了（`Rename`），把那行复制一份、换上新名登记进去，报表显示新名。两种情况
-Country / Sector 都取自那行，Companies 表本身一个字不动。缩写认不出来，所以 Action 留着可以改。
-
-New Geo-Sec Lookup 列出每一条匹配，J–N 五列：Action、Company Row、New Name、Evidence、
-Seen On（这次报表的日期）。有匹配行时表上画一个 **Apply Renames** 按钮，绑到
-`ApplyCompanyRenames`——代码写 Companies 的唯一入口，只处理人按了按钮时表上的行，按 Action
-办：Rename 改 Name、旧名并进 Name Variants；Add variant 只并变体；两者都并 Exposure Type，
-Geography / Sector 不碰，然后删掉 lookup 上那一行。行找不到、Rename 目标已是另一行、一行里有
-多个新名要 Rename 的，跳过并在弹窗里说明。按完要重建一次 staging。
-
-### 改名不改写过去的报表
-
-Rename 同时往 **Company Renames** 表追加一行：旧名、新名、生效日期（= Seen On）、证据、
-应用日期。`LoadCompaniesLookup` 读 Companies 时拿报表自己的日期对这张账：某个 Rename 的新名
-等于该行现在的 Name、且生效日期晚于报表日期 → 这份报表里这家公司叫旧名（`CompanyNameAtDate`，
-沿着名字往回走，连续改名也能走通）。条目里 "Name" 是那个日期的名字，"SheetName" 是表里现在
-的名字——要写 Companies、写 lookup 表的地方一律用后者。于是：跑上周的报表，看到的是上周的
-名字；跑今天的，看到新名；这张账也就是"这家公司以前叫什么"的记录，以后跨期比较不用重扫
-快照。真实改名日期早于第一次看到的那份报表的，手动把生效日期改早即可。
+改名的公司**当作另一家公司**处理。这一次运行里，把那行 Companies 复制一份、换上新名登记进
+内存映射（`RenamedCompanyEntry`：只带走 Geography / Sector，变体和 ISIN 用这次看到的），
+所以报表显示新名、不归 Others。老行不动：还叫旧名的持仓照旧对到老行，跑早先日期的报表和
+从前一样。New Geo-Sec Lookup 列出新名，`Renamed From` 填旧名——这一列放在和 Companies
+里同样的位置（Companies 已有该列就用它的位置，没有就是表尾下一列），整行可以直接复制粘贴；
+F / H 两格显示老行的地理行业而不是 Bloomberg 公式。有这种行时表上画一个 **Insert Renamed**
+按钮，绑到 `InsertRenamedCompanies`——代码写 Companies 的唯一入口，而且只做加法：把老行整行
+复制成新行，换上新名、这次看到的变体 / Exposure Type / Reference ISIN，`Renamed From` 写旧名
+（列不存在就建），然后删掉 lookup 上那一行。新名已有行、旧名找不到的，跳过并在弹窗里说明。
+按完要重建一次 staging。
 
 ---
 

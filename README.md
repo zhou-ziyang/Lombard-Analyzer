@@ -20,8 +20,8 @@ configuration parameters (as defined names) and one button per entry point.
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
 `GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet,
-`WeeklyAnalysisGenerate.ApplyCompanyRenames` from the *Apply Renames* button
-drawn onto *New Geo-Sec Lookup* when a company has changed its name, and
+`WeeklyAnalysisGenerate.InsertRenamedCompanies` from the *Insert Renamed*
+button drawn onto *New Geo-Sec Lookup* when a company has changed its name, and
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
 buttons that `AddPositionAnalysisButtons` draws onto *NDG Journey* and the
 dashboard's history table.
@@ -52,7 +52,7 @@ not generated:
 
 | Sheet | Table(s) | Purpose |
 | --- | --- | --- |
-| Companies | `Companies` | Master entity table: canonical name, name variants, exposure types, reference ISIN and its relationship, country of risk and sector with fallbacks |
+| Companies | `Companies` | Master entity table: canonical name, name variants, exposure types, reference ISIN and its relationship, country of risk and sector with fallbacks; *Renamed From* on a row inserted for a renamed company names the row it was copied from |
 | Bond Issuers | `BondIssuers` | Issuer ticker → issuer name and Corporate/Sovereign type; *Previous Names* keeps every name Sophis has since corrected |
 | Fund Parent Companies | `FundParentCompanies`, `Funds` | Fund name prefix → parent company, plus per-fund overrides |
 | Equity Names | `UnmappedEquities` | Queue of equity ISINs that resolved to no company; filled in by hand |
@@ -60,7 +60,6 @@ not generated:
 | Name Variants | — | Manual entity-name variant overrides |
 | Certificates | — | Certificate ISIN → its underlying RIC(s) |
 | Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
-| Company Renames | — | Old name → new name with the report date it was first seen on; written by *Apply Renames*, read so a report shows each company under the name in force on its own date |
 
 Generated sheets (*Weekly Analysis*, *Asset Type Mapping*, *New Geo-Sec
 Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
@@ -80,52 +79,35 @@ so they resolve on a machine with a Bloomberg terminal; *Fallback Geography*
 ever copied from Companies. An entity missing from Companies still ranks by
 name; its Country of Risk and Sector fall to *Others* until the row is added.
 
-*Name Variants* on a Companies row and *Manual Override* on the *Name
-Variants* sheet state the same kind of fact — these spellings, legal forms
-included, are one company and count together — and both feed the one
-canonical map (`BuildCanonicalEntityNameMap`), ahead of the fuzzy pass. So a
-spelling that normalises like a maintained one inherits the maintained name,
-the *Name Variants* sheet logs the same canonical the report shows, and a
-row in Companies is the place to record a spelling for a company Companies
-has; the sheet's *Manual Override* is for a company it does not have, or for
-pinning a name the fuzzy matcher would otherwise fold wrongly. Where the two
-disagree, the override has the last word.
+*Name Variants* on a Companies row are the spellings and legal forms that
+count as one company; the *Name Variants* sheet is the fuzzy merge's own log,
+with a *Manual Override* column for the cases the merge gets wrong.
 
-### Names Companies knows only by ISIN or by a previous name
+### Renamed companies
 
-A renamed company arrives as a name Companies has never heard of. Two things
-vouch for it: for a bond issuer, the name *Bond Issuers* held before Sophis
-corrected it — `UpdateRiskReferenceDatabases` now keeps that in *Previous
-Names* instead of discarding it — and, for anything, the ISIN of what it
-issued against Companies' *Reference ISIN* (issued and underlying securities;
-a fund's ISIN names the fund, not its parent). `DetectCompanyRenames` runs
-the two bridges over every entity that resolves by neither name nor variant.
-A match is read one way: if the new name is only another spelling of the
-row's *Name* — the fuzzy matcher's call — it is a variant; otherwise the
-company was renamed, and the new name is what it is counted under, as the
-latest Sophis name already is for bonds.
+A renamed company arrives as a name Companies has never heard of, and would
+be looked up afresh and shown under *Others* until someone added it. Two
+things vouch for it: for a bond issuer, the name *Bond Issuers* held before
+Sophis corrected it — `UpdateRiskReferenceDatabases` now keeps that in
+*Previous Names* instead of discarding it — and, for anything, the ISIN of
+what it issued against Companies' *Reference ISIN* (issued and underlying
+securities; a fund's ISIN names the fund, not its parent).
 
-Either way the name is grouped under the row for this run, in memory —
-geography and sector resolve — and the report shows the new name when it is
-a rename. The lookup sheet lists each match with five columns: *Action*
-(`Rename` or `Add variant`, the code's reading), *Company Row*, *New Name*,
-*Evidence* and *Seen On* (the report date), and draws an *Apply Renames*
-button. Change *Action* first if the reading is wrong — an abbreviation,
-say, that the matcher cannot tell from a new name. Pressing the button is
-the one way the code writes to Companies: `Rename` gives the row the new
-name and keeps the old one among the variants; `Add variant` adds the name
-and leaves the row's name alone. Both merge the exposure types and leave
-geography and sector as they are.
-
-**A rename does not rewrite past reports.** `Rename` also appends a row to
-*Company Renames* — old name, new name, the *Seen On* date as the effective
-date, the evidence, and when it was applied. `LoadCompaniesLookup` reads the
-ledger against the report's own date: a report dated before the effective
-date shows the old name, one dated on or after it the new name, and a chain
-of renames is walked back by name. The ledger is also the record of what a
-company used to be called, so a later comparison across dates needs no
-rescan. Edit the effective date by hand if the legal rename is known to have
-happened earlier than the report that first saw it.
+A renamed company is **a company of its own**. `DetectRenamedCompanies` runs
+the two bridges over every entity Companies does not know; a match whose name
+is not merely another spelling of the row's own name is registered for this
+run as a copy of that row under the new name, so the report shows the new
+name with the old row's geography and sector rather than *Others*. The old
+row is never touched: positions that still carry the old name keep resolving
+to it, and a report for an earlier date reads as it always did. The lookup
+sheet lists the new name with *Renamed From* filled — in the same column
+Companies has (or will get) for it, so rows paste across whole — with the
+old row's geography and sector shown in place of the Bloomberg formula, and
+draws an *Insert Renamed* button. Pressing it is the one way the code writes
+to Companies, and it only adds: a new row copied whole from the old one, with
+the new name, the variants, exposure types and reference ISIN the run saw,
+and *Renamed From* recording where it came from. The column is created the
+first time it is needed. The weekly Notes list the renames.
 
 ## Layout
 
@@ -166,7 +148,7 @@ to reach across for (`ReadAllLines`, `FindHeaderIndex`, `FormatReportTable`,
 module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
 only Public procedures with no caller in the source are the zero-argument
-entry points a button names — the eight on Home, plus `ApplyCompanyRenames`
+entry points a button names — the eight on Home, plus `InsertRenamedCompanies`
 behind a button the code itself draws. Two exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
@@ -174,8 +156,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,400 lines and 202 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 198 of those procedures are
+It is 12,200 lines and 197 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 193 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
