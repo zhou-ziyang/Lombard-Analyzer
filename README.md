@@ -79,48 +79,41 @@ so they resolve on a machine with a Bloomberg terminal; *Fallback Geography*
 ever copied from Companies. An entity missing from Companies still ranks by
 name; its Country of Risk and Sector fall to *Others* until the row is added.
 
-A Companies row is a group, not a spelling: *Name* is the head the report
-ranks under, and *Name Variants* holds its members — other spellings of the
-head, and subsidiaries whose exposure counts toward it. That is the
-statistical basis, and it is a different thing from the *Name Variants*
-sheet, which only logs the spellings the fuzzy merge folded together.
+*Name Variants* on a Companies row and *Manual Override* on the *Name
+Variants* sheet state the same kind of fact — these spellings, legal forms
+included, are one company and count together — and both feed the one
+canonical map (`BuildCanonicalEntityNameMap`), ahead of the fuzzy pass. So a
+spelling that normalises like a maintained one inherits the maintained name,
+the *Name Variants* sheet logs the same canonical the report shows, and a
+row in Companies is the place to record a spelling for a company Companies
+has; the sheet's *Manual Override* is for a company it does not have, or for
+pinning a name the fuzzy matcher would otherwise fold wrongly. Where the two
+disagree, the override has the last word.
 
 ### Names Companies knows only by ISIN or by a previous name
 
-A renamed company, or a subsidiary not yet listed, arrives as a name Companies
-has never heard of. Two things vouch for it: for a bond issuer, the name
-*Bond Issuers* held before Sophis corrected it — `UpdateRiskReferenceDatabases`
-now keeps that in *Previous Names* instead of discarding it — and, for
-anything, the ISIN of what it issued against Companies' *Reference ISIN*
-(issued and underlying securities; a fund's ISIN names the fund, not its
-parent). `DetectCompanyRenames` runs the two bridges over every entity that
-resolves by neither name nor variant, and reads the match through the group
-model. *Name Variants* mixes two kinds of member — other spellings of the
-head and subsidiaries — so a previous name found there is put to the fuzzy
-matcher, whose job that is: a previous name that reads like the head means
-the **head was renamed**; one that does not means a **member was**, and the
-head stands; an ISIN says nothing about which member issued it, unless the
-row has no members but its head. A new name that is only another spelling of
-the head is a variant whatever vouched for it. An abbreviation (VW for
-Volkswagen) is not caught, which is one reason *Action* stays editable.
+A renamed company arrives as a name Companies has never heard of. Two things
+vouch for it: for a bond issuer, the name *Bond Issuers* held before Sophis
+corrected it — `UpdateRiskReferenceDatabases` now keeps that in *Previous
+Names* instead of discarding it — and, for anything, the ISIN of what it
+issued against Companies' *Reference ISIN* (issued and underlying securities;
+a fund's ISIN names the fund, not its parent). `DetectCompanyRenames` runs
+the two bridges over every entity that resolves by neither name nor variant.
+A match is read one way: if the new name is only another spelling of the
+row's *Name* — the fuzzy matcher's call — it is a variant; otherwise the
+company was renamed, and the new name is what it is counted under, as the
+latest Sophis name already is for bonds.
 
 Either way the name is grouped under the row for this run, in memory —
-geography and sector resolve, and the exposure counts toward the head — and
-the report shows the new name only when it is the head that was renamed. The
-lookup sheet lists each match with four columns: *Action* (`Rename` or `Add
-variant`, the code's reading), *Company Row*, *New Name* and *Evidence*, and
-draws an *Apply Renames* button. Change *Action* first if the reading is
-wrong. Pressing the button is the one way the code writes to Companies:
-`Rename` gives the row the new name and keeps the old one among the variants;
-`Add variant` adds the name to the variants and leaves the head alone. Both
-merge the exposure types and leave geography and sector as they are.
-
-`CoreClean` keeps only the sheets on its own list and deletes everything else,
-*Risk Exposure* and *New Geo-Sec Lookup* included — those are caches, and
-rebuilding them is the intended behaviour. The list also names sheets that
-are not in this workbook (`Code`, `DateRange`, `PEC List`, `Database`,
-`Report`, `CLN`, …) on purpose, so the same module can be dropped into the
-other Lombard workbooks without editing it.
+geography and sector resolve — and the report shows the new name when it is
+a rename. The lookup sheet lists each match with four columns: *Action*
+(`Rename` or `Add variant`, the code's reading), *Company Row*, *New Name*
+and *Evidence*, and draws an *Apply Renames* button. Change *Action* first
+if the reading is wrong — an abbreviation, say, that the matcher cannot
+tell from a new name. Pressing the button is the one way the code writes to
+Companies: `Rename` gives the row the new name and keeps the old one among
+the variants; `Add variant` adds the name and leaves the row's name alone.
+Both merge the exposure types and leave geography and sector as they are.
 
 ## Layout
 

@@ -6695,16 +6695,29 @@ Private Function FindEntityPrefixCanonicalName( _
 
 End Function
 
+'
+' One map from every spelling the run met to the name it will be counted
+' under.  Two hand-maintained sources say which spellings are one company,
+' and they state the same kind of fact: a Companies row (its Name and
+' each entry in its Name Variants) and a Manual Override on the Name
+' Variants sheet.  Both are registered here, ahead of the fuzzy pass, so a
+' new spelling that normalises like a known one inherits the maintained
+' name, and the Name Variants sheet logs the same canonical the report
+' will show.  Companies goes first and the overrides after, so an override
+' has the last word where the two disagree.
+'
 Private Function BuildCanonicalEntityNameMap( _
-    ByVal GeographyEntries As Object) As Object
+    ByVal GeographyEntries As Object, _
+    ByVal CompaniesByName As Object) As Object
 
     Dim CanonicalByVariant As Object
     Dim EntityByKey As Object
     Dim ManualVariantMap As Object
     Dim VariantSet As Object
     Dim Entry As Object
-
+    Dim CompanyEntry As Object
     Dim GeographyKey As Variant
+    Dim CompanyKey As Variant
     Dim ManualKey As Variant
     Dim Parts As Variant
     Dim Part As Variant
@@ -6726,32 +6739,43 @@ Private Function BuildCanonicalEntityNameMap( _
     Set VariantSet = CreateObject("Scripting.Dictionary")
     VariantSet.CompareMode = vbBinaryCompare
 
+    If Not CompaniesByName Is Nothing Then
+
+        For Each CompanyKey In CompaniesByName.Keys
+
+            Set CompanyEntry = CompaniesByName(CompanyKey)
+            CanonicalName = CStr(CompanyEntry("Name"))
+
+            RegisterMaintainedSpelling _
+                CanonicalByVariant, _
+                EntityByKey, _
+                CanonicalName, _
+                CanonicalName
+
+            Parts = Split(CStr(CompanyEntry("NameVariants")), ";")
+
+            For Each Part In Parts
+
+                RegisterMaintainedSpelling _
+                    CanonicalByVariant, _
+                    EntityByKey, _
+                    Trim(CStr(Part)), _
+                    CanonicalName
+
+            Next Part
+
+        Next CompanyKey
+
+    End If
+
     For Each ManualKey In ManualVariantMap.Keys
 
-        CanonicalName = _
+        RegisterMaintainedSpelling _
+            CanonicalByVariant, _
+            EntityByKey, _
+            CStr(ManualKey), _
             StandardizeEntityDisplayName( _
                 CStr(ManualVariantMap(ManualKey)))
-        CanonicalByVariant(CStr(ManualKey)) = CanonicalName
-
-        ' Register both sides of a maintained override. This lets another
-        ' spelling that normalizes like the maintained variant inherit the
-        ' same canonical name, even when the canonical display name itself
-        ' has a substantially different form.
-        EntityKey = NormalizeEntityKey(CStr(ManualKey))
-
-        If EntityKey <> "" Then
-
-            EntityByKey(EntityKey) = CanonicalName
-
-        End If
-
-        CanonicalEntityKey = NormalizeEntityKey(CanonicalName)
-
-        If CanonicalEntityKey <> "" Then
-
-            EntityByKey(CanonicalEntityKey) = CanonicalName
-
-        End If
 
     Next ManualKey
 
@@ -6849,6 +6873,36 @@ Private Function BuildCanonicalEntityNameMap( _
     Set BuildCanonicalEntityNameMap = CanonicalByVariant
 
 End Function
+
+'
+' Register both sides of a maintained spelling: the exact spelling, and
+' the entity keys of the spelling and of its canonical name, so another
+' spelling that normalises like either inherits the same canonical name
+' even when the display name itself has a substantially different form.
+'
+Private Sub RegisterMaintainedSpelling( _
+    ByVal CanonicalByVariant As Object, _
+    ByVal EntityByKey As Object, _
+    ByVal Spelling As String, _
+    ByVal CanonicalName As String)
+
+    Dim VariantKey As String
+    Dim EntityKey As String
+
+    If Spelling = "" Or CanonicalName = "" Then Exit Sub
+
+    VariantKey = NormalizeExactNameKey(Spelling)
+    If VariantKey = "" Then Exit Sub
+
+    CanonicalByVariant(VariantKey) = CanonicalName
+
+    EntityKey = NormalizeEntityKey(Spelling)
+    If EntityKey <> "" Then EntityByKey(EntityKey) = CanonicalName
+
+    EntityKey = NormalizeEntityKey(CanonicalName)
+    If EntityKey <> "" Then EntityByKey(EntityKey) = CanonicalName
+
+End Sub
 
 Private Function ResolveCanonicalEntityName( _
     ByVal RawName As String, _
@@ -8366,21 +8420,17 @@ End Sub
 ' A name the positions carry that Companies does not know is a stranger
 ' until something vouches for it.  Two things do: for a bond issuer, the
 ' name Bond Issuers held before Sophis corrected it; for anything, the
-' ISIN of what it issued against Companies' Reference ISIN.  What a match
-' means depends on what a Companies row is.  Its Name is the head the
-' report groups under, and its Name Variants are the members - other
-' spellings of the head, and subsidiaries whose exposure counts toward
-' it.  IsHeadRename reads the match through that: a previous name that
-' reads like the head says the head was renamed; one that does not says
-' a member was, and the head stands; an ISIN says nothing about which
-' member issued it, unless the row has no members but its head.
+' ISIN of what it issued against Companies' Reference ISIN.  A match is
+' read one way: if the new name is only another spelling of the row's
+' Name - the fuzzy matcher's call - it is a variant; otherwise the company
+' was renamed, and the new name is what it will be counted under, as the
+' latest Sophis name already is for bonds.
 '
-' Either way the name is grouped under the row from here on - a member is
-' registered as a variant in memory, a renamed head as a copy of the row
-' under the new name - so it resolves, geography and sector included, and
-' its exposure counts where the row says it should.  Companies itself is
-' not touched; the lookup sheet lists each match with its action, and a
-' person applies it.
+' Either way the name is grouped under the row from here on - a variant is
+' registered in memory, a renamed company as a copy of the row under the
+' new name - so it resolves, geography and sector included.  Companies
+' itself is not touched; the lookup sheet lists each match with its
+' action, and a person applies it.
 '
 Private Function DetectCompanyRenames( _
     ByVal GeographyEntries As Object, _
@@ -8395,10 +8445,9 @@ Private Function DetectCompanyRenames( _
     Dim RenamedEntry As Object
     Dim NewName As String
     Dim Evidence As String
-    Dim MatchedName As String
     Dim LookupKey As String
     Dim MatchKey As String
-    Dim HeadRenamed As Boolean
+    Dim Renamed As Boolean
 
     Set Matches = NewExactNameMap()
     Set DetectCompanyRenames = Matches
@@ -8421,15 +8470,13 @@ Private Function DetectCompanyRenames( _
                     CompaniesByVariant) Is Nothing Then
 
                 Evidence = ""
-                MatchedName = ""
 
                 Set CompanyEntry = _
                     MatchCompanyByPreviousName( _
                         Entry, _
                         CompaniesByName, _
                         CompaniesByVariant, _
-                        Evidence, _
-                        MatchedName)
+                        Evidence)
 
                 If CompanyEntry Is Nothing Then
                     Set CompanyEntry = _
@@ -8441,10 +8488,12 @@ Private Function DetectCompanyRenames( _
 
                 If Not CompanyEntry Is Nothing Then
 
-                    HeadRenamed = _
-                        IsHeadRename(CompanyEntry, MatchedName, NewName)
+                    Renamed = _
+                        Not NamesLookAlike( _
+                            NewName, _
+                            CStr(CompanyEntry("Name")))
 
-                    If HeadRenamed Then
+                    If Renamed Then
 
                         Set RenamedEntry = _
                             RenamedCompanyEntry( _
@@ -8470,7 +8519,7 @@ Private Function DetectCompanyRenames( _
                     RecordCompanyMatch _
                         Matches, _
                         MatchKey, _
-                        IIf(HeadRenamed, _
+                        IIf(Renamed, _
                             MATCH_ACTION_RENAME, _
                             MATCH_ACTION_ADD_VARIANT), _
                         CStr(CompanyEntry("Name")), _
@@ -8488,45 +8537,10 @@ Private Function DetectCompanyRenames( _
 End Function
 
 '
-' Whether a match means the head of the row changed its name, or a member
-' did.  Name Variants mixes two kinds of member - other spellings of the
-' head, and subsidiaries - and a previous name found there could be
-' either; telling spellings apart is what the fuzzy matcher is for, so it
-' decides.  A new name that is only another spelling of the head is a
-' variant whatever vouched for it.  Otherwise a previous name that reads
-' like the head means the head was renamed, one that does not means a
-' member was; and an ISIN cannot say which member issued it, unless the
-' row has no members but its head.
-'
-Private Function IsHeadRename( _
-    ByVal CompanyEntry As Object, _
-    ByVal MatchedName As String, _
-    ByVal NewName As String) As Boolean
-
-    Dim HeadName As String
-
-    HeadName = CStr(CompanyEntry("Name"))
-
-    If NamesLookAlike(NewName, HeadName) Then Exit Function
-
-    If MatchedName <> "" Then
-
-        IsHeadRename = NamesLookAlike(MatchedName, HeadName)
-
-    Else
-
-        IsHeadRename = _
-            (Trim(CStr(CompanyEntry("NameVariants"))) = "")
-
-    End If
-
-End Function
-
-'
 ' The fuzzy matcher's own test, on two names: the same once legal
 ' suffixes, share classes and diacritics are gone, or one the prefix of
-' the other by its rules.  An abbreviation is not caught - VW does not
-' read like Volkswagen - which is why Action stays editable.
+' the other by its rules.  An abbreviation is not caught, which is one
+' reason Action stays editable on the lookup sheet.
 '
 Private Function NamesLookAlike( _
     ByVal FirstName As String, _
@@ -8548,8 +8562,8 @@ End Function
 
 '
 ' One record per row the lookup sheet will show, keyed by the name the
-' entry resolves to from here on: the new name for a renamed head, the
-' head's name for a new member.  Several members joining one head share
+' entry resolves to from here on: the new name for a renamed company, the
+' row's name for a new spelling.  Several spellings joining one row share
 ' a record.
 '
 Private Sub RecordCompanyMatch( _
@@ -8635,16 +8649,13 @@ End Function
 '
 ' The names the entry was known by before, against Companies by name and
 ' by variant.  Today only bond issuers carry these, from the Previous
-' Names column Bond Issuers keeps when Sophis corrects a name.  The name
-' that matched is handed back: whether it was the head or a member decides
-' what the match means.
+' Names column Bond Issuers keeps when Sophis corrects a name.
 '
 Private Function MatchCompanyByPreviousName( _
     ByVal Entry As Object, _
     ByVal CompaniesByName As Object, _
     ByVal CompaniesByVariant As Object, _
-    ByRef Evidence As String, _
-    ByRef MatchedName As String) As Object
+    ByRef Evidence As String) As Object
 
     Dim Parts As Variant
     Dim Part As Variant
@@ -8668,7 +8679,6 @@ Private Function MatchCompanyByPreviousName( _
 
                 Evidence = _
                     "previous issuer name '" & PreviousName & "'"
-                MatchedName = PreviousName
 
                 Exit Function
 
@@ -11218,8 +11228,19 @@ Private Sub BuildRiskGranularitySection( _
     Next r
 
 
+    '
+    ' Companies first: its Name Variants are spellings to count together,
+    ' the same fact a Manual Override states, and the canonical map takes
+    ' both.
+    '
+    LoadCompaniesLookup _
+        CompaniesByName, _
+        CompaniesByVariant, _
+        CompaniesByIsin, _
+        CompaniesReady
+
     Set CanonicalNameMap = _
-        BuildCanonicalEntityNameMap(GeographyEntries)
+        BuildCanonicalEntityNameMap(GeographyEntries, CompaniesByName)
 
 
     UpdateNameVariantsWorksheet _
@@ -11233,17 +11254,11 @@ Private Sub BuildRiskGranularitySection( _
             CanonicalNameMap)
 
 
-    LoadCompaniesLookup _
-        CompaniesByName, _
-        CompaniesByVariant, _
-        CompaniesByIsin, _
-        CompaniesReady
-
     '
-    ' Before the entries are canonicalised against Companies: a name the
-    ' rows know only by ISIN or by a previous name is registered first, so
-    ' the step below groups it where it belongs - under the head, or under
-    ' the new name when it is the head that was renamed.
+    ' Before the entries are canonicalised against Companies: a name a row
+    ' knows only by ISIN or by a previous name is registered first, so the
+    ' step below groups it under that row - or under the new name, when
+    ' the company was renamed.
     '
     Set CompanyRenames = _
         DetectCompanyRenames( _
