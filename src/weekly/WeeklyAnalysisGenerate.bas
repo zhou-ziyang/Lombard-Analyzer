@@ -1397,6 +1397,9 @@ Private Sub BuildPortfolioSection( _
         .Interior.Color = RGB(212, 212, 212)
     End With
 
+    HighlightCurrentRows _
+        ws.Range(ws.Cells(LastDataRow, c), ws.Cells(LastDataRow, c + 4))
+
 End Sub
 
 Private Sub WritePortfolioRow( _
@@ -1569,9 +1572,53 @@ Private Sub WriteCollateralChange( _
         ws, _
         RowNo, _
         LeftCol + 1, _
-        LeftCol + CollateralCategoryCount(), _
+        CollateralTotalCol(LeftCol), _
         CurrentRow, _
         BaseRow
+
+End Sub
+
+'
+' The current snapshot's rows, in the two tables that carry one: dark red
+' under white, so the eye lands on "now" before anything else.  The change
+' rows under them keep their grey.
+'
+Private Sub HighlightCurrentRows( _
+    ByVal Target As Range)
+
+    With Target
+        .Interior.Color = RGB(128, 0, 32)
+        .Font.Color = RGB(255, 255, 255)
+    End With
+
+End Sub
+
+'
+' The column after the categories, where a collateral table carries its
+' row totals; also the table's last column.
+'
+Private Function CollateralTotalCol( _
+    ByVal LeftCol As Long) As Long
+
+    CollateralTotalCol = LeftCol + CollateralCategoryCount() + 1
+
+End Function
+
+'
+' The row's total over the category columns, as a formula in the total
+' column.  On a share row it reads 100%.
+'
+Private Sub WriteRowTotal( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long)
+
+    ws.Cells(RowNo, CollateralTotalCol(LeftCol)).Formula = _
+        "=SUM(" & _
+        ws.Range( _
+            ws.Cells(RowNo, LeftCol + 1), _
+            ws.Cells(RowNo, LeftCol + CollateralCategoryCount())) _
+            .Address(False, False) & ")"
 
 End Sub
 
@@ -1617,13 +1664,14 @@ Private Sub BuildCollateralBreakdown( _
     Dim r As Long
     Dim c As Long
     Dim LastCol As Long
+    Dim i As Long
 
     If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
     If Not WeeklyDataHasRows(YTDPositions) Then Exit Sub
 
     r = Layout.BreakdownRow
     c = Layout.BreakdownCol
-    LastCol = c + CollateralCategoryCount()
+    LastCol = CollateralTotalCol(c)
 
     ReportDate = _
         ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
@@ -1637,11 +1685,12 @@ Private Sub BuildCollateralBreakdown( _
 
     WriteSectionTitle _
         ws, r, c, _
-        CollateralCategoryCount() + 1, _
+        CollateralCategoryCount() + 2, _
         "Collateral Breakdown"
 
     ws.Cells(r + 1, c).Value = "Date"
     WriteCollateralHeaders ws, r + 1, c
+    ws.Cells(r + 1, LastCol).Value = "Total"
 
     '
     ' Oldest to newest, each snapshot followed by its shares, then the two
@@ -1674,6 +1723,14 @@ Private Sub BuildCollateralBreakdown( _
 
     ws.Cells(r + 9, c).Value = "% Change YTD"
     WriteCollateralChange ws, r + 9, c, r + 6, r + 2
+
+    '
+    ' Every amounts and share row totals across the categories; the two
+    ' change rows already run over the total column.
+    '
+    For i = r + 2 To r + 7
+        WriteRowTotal ws, i, c
+    Next i
 
     '
     ' Formatting
@@ -1722,6 +1779,9 @@ Private Sub BuildCollateralBreakdown( _
         .Font.Bold = True
         .Interior.Color = RGB(212, 212, 212)
     End With
+
+    HighlightCurrentRows _
+        ws.Range(ws.Cells(r + 6, c), ws.Cells(r + 7, LastCol))
 
 End Sub
 
@@ -2148,15 +2208,17 @@ Private Sub WriteEnteredCollateralLayout( _
     ByVal LeftCol As Long)
 
     Dim LastCol As Long
+    Dim i As Long
 
-    LastCol = LeftCol + CollateralCategoryCount()
+    LastCol = CollateralTotalCol(LeftCol)
 
     WriteSectionTitle _
         ws, TopRow, LeftCol, _
-        CollateralCategoryCount() + 1, _
+        CollateralCategoryCount() + 2, _
         "Collateral Entered with New NDGs"
 
     WriteCollateralHeaders ws, TopRow + 1, LeftCol
+    ws.Cells(TopRow + 1, LastCol).Value = "Total"
 
     ws.Cells(TopRow + 2, LeftCol).Value = "Past week"
     WriteCollateralAmounts ws, TopRow + 2, LeftCol, WeekAmounts
@@ -2169,6 +2231,10 @@ Private Sub WriteEnteredCollateralLayout( _
 
     ws.Cells(TopRow + 5, LeftCol).Value = "%"
     WriteCollateralShares ws, TopRow + 5, LeftCol, TopRow + 4
+
+    For i = TopRow + 2 To TopRow + 5
+        WriteRowTotal ws, i, LeftCol
+    Next i
 
     ws.Range( _
         ws.Cells(TopRow + 2, LeftCol + 1), _
@@ -11837,8 +11903,8 @@ Private Sub CreateCollateralPieChart( _
 
     '
     ' The frame: the pie's rows, from the pie's column out to the last
-    ' column of the breakdown and the entered table above, bordered like the
-    ' notes box beside it.  The chart takes the frame's geometry, drawn in
+    ' column of the breakdown and the entered table above - their total
+    ' column - bordered like the notes box beside it.  The chart takes the frame's geometry, drawn in
     ' by a couple of points so its own area does not paint over the border.
     '
 
@@ -11847,7 +11913,7 @@ Private Sub CreateCollateralPieChart( _
             ws.Cells(Layout.PieRow, Layout.PieCol), _
             ws.Cells( _
                 Layout.PieRow + Layout.PieHeightRows - 1, _
-                Layout.EnteredCol + CollateralCategoryCount()))
+                CollateralTotalCol(Layout.EnteredCol)))
 
     Frame.BorderAround _
         LineStyle:=xlContinuous, _

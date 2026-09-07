@@ -173,8 +173,8 @@ Public Sub CreateWeeklyEmail()
         BlockHtml(ws, Layout.PortfolioRow, Layout.PortfolioCol, 9, 4) & _
         BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 3, 4) & _
         BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 3, 4) & _
-        BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 9, 8) & _
-        BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 5, 8)
+        BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 9, 9) & _
+        BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 5, 9)
 
     '
     ' Pie Chart Placeholder
