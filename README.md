@@ -95,10 +95,14 @@ anything, the ISIN of what it issued against Companies' *Reference ISIN*
 (issued and underlying securities; a fund's ISIN names the fund, not its
 parent). `DetectCompanyRenames` runs the two bridges over every entity that
 resolves by neither name nor variant, and reads the match through the group
-model: a previous name that was the head's own name means the **head was
-renamed**; a previous name found among the members means a **member was**,
-and the head stands; an ISIN says nothing about which member issued it,
-unless the row has no members but its head.
+model. *Name Variants* mixes two kinds of member — other spellings of the
+head and subsidiaries — so a previous name found there is put to the fuzzy
+matcher, whose job that is: a previous name that reads like the head means
+the **head was renamed**; one that does not means a **member was**, and the
+head stands; an ISIN says nothing about which member issued it, unless the
+row has no members but its head. A new name that is only another spelling of
+the head is a variant whatever vouched for it. An abbreviation (VW for
+Volkswagen) is not caught, which is one reason *Action* stays editable.
 
 Either way the name is grouped under the row for this run, in memory —
 geography and sector resolve, and the exposure counts toward the head — and
@@ -165,8 +169,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,200 lines and 196 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 192 of those procedures are
+It is 12,200 lines and 197 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 193 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut

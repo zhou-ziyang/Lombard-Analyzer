@@ -8369,11 +8369,11 @@ End Sub
 ' ISIN of what it issued against Companies' Reference ISIN.  What a match
 ' means depends on what a Companies row is.  Its Name is the head the
 ' report groups under, and its Name Variants are the members - other
-' spellings, and subsidiaries whose exposure counts toward the head.  So
-' a previous name that was the head's own name says the head was renamed;
-' a previous name found among the members says a member was, and the head
-' stands.  An ISIN says nothing about which member issued it, unless the
-' row has no members but its head.
+' spellings of the head, and subsidiaries whose exposure counts toward
+' it.  IsHeadRename reads the match through that: a previous name that
+' reads like the head says the head was renamed; one that does not says
+' a member was, and the head stands; an ISIN says nothing about which
+' member issued it, unless the row has no members but its head.
 '
 ' Either way the name is grouped under the row from here on - a member is
 ' registered as a variant in memory, a renamed head as a copy of the row
@@ -8442,7 +8442,7 @@ Private Function DetectCompanyRenames( _
                 If Not CompanyEntry Is Nothing Then
 
                     HeadRenamed = _
-                        IsHeadRename(CompanyEntry, MatchedName)
+                        IsHeadRename(CompanyEntry, MatchedName, NewName)
 
                     If HeadRenamed Then
 
@@ -8487,15 +8487,31 @@ Private Function DetectCompanyRenames( _
 
 End Function
 
+'
+' Whether a match means the head of the row changed its name, or a member
+' did.  Name Variants mixes two kinds of member - other spellings of the
+' head, and subsidiaries - and a previous name found there could be
+' either; telling spellings apart is what the fuzzy matcher is for, so it
+' decides.  A new name that is only another spelling of the head is a
+' variant whatever vouched for it.  Otherwise a previous name that reads
+' like the head means the head was renamed, one that does not means a
+' member was; and an ISIN cannot say which member issued it, unless the
+' row has no members but its head.
+'
 Private Function IsHeadRename( _
     ByVal CompanyEntry As Object, _
-    ByVal MatchedName As String) As Boolean
+    ByVal MatchedName As String, _
+    ByVal NewName As String) As Boolean
+
+    Dim HeadName As String
+
+    HeadName = CStr(CompanyEntry("Name"))
+
+    If NamesLookAlike(NewName, HeadName) Then Exit Function
 
     If MatchedName <> "" Then
 
-        IsHeadRename = _
-            (NormalizeExactNameKey(MatchedName) = _
-             NormalizeExactNameKey(CStr(CompanyEntry("Name"))))
+        IsHeadRename = NamesLookAlike(MatchedName, HeadName)
 
     Else
 
@@ -8503,6 +8519,30 @@ Private Function IsHeadRename( _
             (Trim(CStr(CompanyEntry("NameVariants"))) = "")
 
     End If
+
+End Function
+
+'
+' The fuzzy matcher's own test, on two names: the same once legal
+' suffixes, share classes and diacritics are gone, or one the prefix of
+' the other by its rules.  An abbreviation is not caught - VW does not
+' read like Volkswagen - which is why Action stays editable.
+'
+Private Function NamesLookAlike( _
+    ByVal FirstName As String, _
+    ByVal SecondName As String) As Boolean
+
+    Dim FirstKey As String
+    Dim SecondKey As String
+
+    FirstKey = NormalizeEntityKey(FirstName)
+    SecondKey = NormalizeEntityKey(SecondName)
+
+    If FirstKey = "" Or SecondKey = "" Then Exit Function
+
+    NamesLookAlike = _
+        (FirstKey = SecondKey) Or _
+        IsLikelyEntityPrefixMatch(FirstKey, SecondKey)
 
 End Function
 

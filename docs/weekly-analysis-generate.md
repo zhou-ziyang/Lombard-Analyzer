@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,180 行 / 196 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,220 行 / 197 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,180 |
-| 过程数 | 196 |
+| 行数 | 12,220 |
+| 过程数 | 197 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -280,9 +280,12 @@ Companies 一行是一个**组**：Name 是报表里排名的那个头，Name Va
 `Previous Names` 列里的旧名）对 Companies 的名字和变体；以及它的 ISIN 候选对 Companies 的
 Reference ISIN（只算 Issued / Underlying security，基金的 ISIN 认的是基金不是母公司）。
 
-搭上桥之后按分组模型读这次匹配：旧名就是那行的 Name → **头改名了**（`Rename`）；旧名在变体
-里 → **某个成员改名了**，头不动（`Add variant`）；ISIN 说不出是哪个成员发的，除非那行除了头
-没有别的成员。`Rename` 把那行 Companies 复制一份、换上新名，登记进内存映射，报表显示新名；
+搭上桥之后按分组模型读这次匹配。Name Variants 里混着两种成员——头的其他写法，和子公司——
+旧名在里面到底是哪种，交给模糊匹配（`NamesLookAlike`：`NormalizeEntityKey` 相等，或
+`IsLikelyEntityPrefixMatch`）判断：旧名读起来像头 → **头改名了**（`Rename`）；不像 → **某个
+成员改名了**，头不动（`Add variant`）；ISIN 说不出是哪个成员发的，除非那行除了头没有别的
+成员。新名本身只是头的另一种写法的，一律当变体。缩写（VW 对 Volkswagen）认不出来——所以
+Action 留着可以改。`Rename` 把那行 Companies 复制一份、换上新名，登记进内存映射，报表显示新名；
 `Add variant` 直接把新名登记成那行的变体，报表显示头。两种情况下 Country / Sector 都取自那行，
 暴露都算到头上——Companies 表本身一个字不动。
 
