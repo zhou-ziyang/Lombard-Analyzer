@@ -133,6 +133,11 @@ Private Const UNKNOWN_UNDERLYING_NOTE_LIMIT As Long = 10
 
 Private Const RISK_FORMULA_INDENT As String = "    "
 Private Const RISK_BIND_WIDTH As Long = 6
+'
+' Air between the pie and the edge of its chart, in points - one report row,
+' so the plot no longer runs from the title to the bottom edge.
+'
+Private Const PIE_INSET_POINTS As Double = 16
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
@@ -1130,6 +1135,16 @@ YTDDate = _
         BuildNotes ws
         FormatNotesBox ws
 
+        '
+        ' Last, once every column and row under it has its final size.
+        '
+        If WeeklyDataHasRows(PositionsCurrent) And _
+           WeeklyDataHasRows(PositionsYTD) Then
+
+            CreateCollateralPieChart ws, CurrentDate
+
+        End If
+
     End If
 
     CreateWeeklyEmailButton ws
@@ -1389,16 +1404,6 @@ Private Function NewCollateralDictionary() As Object
 
 End Function
 
-Private Function CollateralTotal(ByVal Amounts As Object) As Double
-
-    Dim Category As Variant
-
-    For Each Category In CollateralCategories()
-        CollateralTotal = CollateralTotal + Amounts(Category(0))
-    Next Category
-
-End Function
-
 '
 ' The four row shapes every collateral table is built from. Each writes the
 ' category columns only; the caller owns the row label in LeftCol.
@@ -1436,54 +1441,67 @@ Private Sub WriteCollateralAmounts( _
 
 End Sub
 
+'
+' Each category's share of the amount row above, as a formula: Excel does
+' the division and a reader can see what was divided by what.  A row that
+' sums to nothing shows blank rather than an error.
+'
 Private Sub WriteCollateralShares( _
     ByVal ws As Worksheet, _
     ByVal RowNo As Long, _
     ByVal LeftCol As Long, _
-    ByVal Amounts As Object, _
-    ByVal Total As Double)
+    ByVal AmountRow As Long)
 
-    Dim Categories As Variant
-    Dim i As Long
+    Dim FirstCol As Long
+    Dim LastCol As Long
+    Dim TotalText As String
 
-    If Total = 0 Then Exit Sub
+    FirstCol = LeftCol + 1
+    LastCol = LeftCol + CollateralCategoryCount()
 
-    Categories = CollateralCategories()
+    TotalText = _
+        "SUM(" & _
+        ws.Range( _
+            ws.Cells(AmountRow, FirstCol), _
+            ws.Cells(AmountRow, LastCol)).Address(True, True) & ")"
 
-    For i = 0 To UBound(Categories)
-        ws.Cells(RowNo, LeftCol + 1 + i).Value = _
-            Amounts(Categories(i)(0)) / Total
-    Next i
+    '
+    ' One relative formula over the whole row: Excel shifts the amount
+    ' reference across the categories while the total stays anchored.
+    '
+    ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
+        "=IF(" & TotalText & "=0,""""," & _
+        ws.Cells(AmountRow, FirstCol).Address(False, False) & _
+        "/" & TotalText & ")"
 
 End Sub
 
 '
-' Percentage change against a base period. A category the base period did not
-' hold has no meaningful change, so its cell is left empty.
+' The change from the base row to the current row, category by category, as
+' a formula.  A category with no base amount shows blank: there is no change
+' to speak of from nothing.
 '
 Private Sub WriteCollateralChange( _
     ByVal ws As Worksheet, _
     ByVal RowNo As Long, _
     ByVal LeftCol As Long, _
-    ByVal Amounts As Object, _
-    ByVal BaseAmounts As Object)
+    ByVal CurrentRow As Long, _
+    ByVal BaseRow As Long)
 
-    Dim Categories As Variant
-    Dim BaseValue As Double
-    Dim i As Long
+    Dim FirstCol As Long
+    Dim LastCol As Long
+    Dim CurrentText As String
+    Dim BaseText As String
 
-    Categories = CollateralCategories()
+    FirstCol = LeftCol + 1
+    LastCol = LeftCol + CollateralCategoryCount()
 
-    For i = 0 To UBound(Categories)
+    CurrentText = ws.Cells(CurrentRow, FirstCol).Address(False, False)
+    BaseText = ws.Cells(BaseRow, FirstCol).Address(False, False)
 
-        BaseValue = BaseAmounts(Categories(i)(0))
-
-        If BaseValue <> 0 Then
-            ws.Cells(RowNo, LeftCol + 1 + i).Value = _
-                (Amounts(Categories(i)(0)) - BaseValue) / BaseValue
-        End If
-
-    Next i
+    ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
+        "=IF(" & BaseText & "=0,""""," & _
+        CurrentText & "/" & BaseText & "-1)"
 
 End Sub
 
@@ -1498,10 +1516,6 @@ Private Sub BuildCollateralBreakdown( _
     Dim DictCurrent As Object
     Dim DictWeek As Object
     Dim DictYTD As Object
-
-    Dim TotalCurrent As Double
-    Dim TotalWeek As Double
-    Dim TotalYTD As Double
 
     Dim ReportDate As Date
 
@@ -1526,10 +1540,6 @@ Private Sub BuildCollateralBreakdown( _
     Set DictYTD = _
         BuildCollateralDictionary(YTDPositions, UnknownAssets)
 
-    TotalCurrent = CollateralTotal(DictCurrent)
-    TotalWeek = CollateralTotal(DictWeek)
-    TotalYTD = CollateralTotal(DictYTD)
-
     WriteSectionTitle _
         ws, r, c, _
         CollateralCategoryCount() + 1, _
@@ -1542,31 +1552,33 @@ Private Sub BuildCollateralBreakdown( _
     ' Oldest to newest, each snapshot followed by its shares, then the two
     ' changes.  The week row carries the date it resolved to rather than a
     ' label: when the snapshots are sparse it can land on the current date,
-    ' and repeating the date says so plainly.
+    ' and repeating the date says so plainly.  Only the amounts are values;
+    ' the share and change rows are formulas over them, so the arithmetic
+    ' stays in the sheet where it can be read.
     '
     ws.Cells(r + 2, c).Value = "YE " & Year(ReportDate) - 1
     WriteCollateralAmounts ws, r + 2, c, DictYTD
 
     ws.Cells(r + 3, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 3, c, DictYTD, TotalYTD
+    WriteCollateralShares ws, r + 3, c, r + 2
 
     ws.Cells(r + 4, c).Value = WeekDate
     WriteCollateralAmounts ws, r + 4, c, DictWeek
 
     ws.Cells(r + 5, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 5, c, DictWeek, TotalWeek
+    WriteCollateralShares ws, r + 5, c, r + 4
 
     ws.Cells(r + 6, c).Value = ReportDate
     WriteCollateralAmounts ws, r + 6, c, DictCurrent
 
     ws.Cells(r + 7, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 7, c, DictCurrent, TotalCurrent
+    WriteCollateralShares ws, r + 7, c, r + 6
 
     ws.Cells(r + 8, c).Value = "% Change WoW"
-    WriteCollateralChange ws, r + 8, c, DictCurrent, DictWeek
+    WriteCollateralChange ws, r + 8, c, r + 6, r + 4
 
     ws.Cells(r + 9, c).Value = "% Change YTD"
-    WriteCollateralChange ws, r + 9, c, DictCurrent, DictYTD
+    WriteCollateralChange ws, r + 9, c, r + 6, r + 2
 
     '
     ' Formatting
@@ -1615,8 +1627,6 @@ Private Sub BuildCollateralBreakdown( _
         .Font.Bold = True
         .Interior.Color = RGB(212, 212, 212)
     End With
-
-    CreateCollateralPieChart ws, DictCurrent, ReportDate
 
 End Sub
 
@@ -2058,15 +2068,13 @@ Private Sub WriteEnteredCollateralLayout( _
     WriteCollateralAmounts ws, TopRow + 2, LeftCol, WeekAmounts
 
     ws.Cells(TopRow + 3, LeftCol).Value = "%"
-    WriteCollateralShares _
-        ws, TopRow + 3, LeftCol, WeekAmounts, CollateralTotal(WeekAmounts)
+    WriteCollateralShares ws, TopRow + 3, LeftCol, TopRow + 2
 
     ws.Cells(TopRow + 4, LeftCol).Value = "Past month"
     WriteCollateralAmounts ws, TopRow + 4, LeftCol, MonthAmounts
 
     ws.Cells(TopRow + 5, LeftCol).Value = "%"
-    WriteCollateralShares _
-        ws, TopRow + 5, LeftCol, MonthAmounts, CollateralTotal(MonthAmounts)
+    WriteCollateralShares ws, TopRow + 5, LeftCol, TopRow + 4
 
     ws.Range( _
         ws.Cells(TopRow + 2, LeftCol + 1), _
@@ -10953,34 +10961,42 @@ Private Function WriteTopExposureGroup( _
 End Function
 
 
+'
+' The pie sits on a framed block of cells under the entered-collateral table
+' and is drawn from the breakdown's current row.  It is created last, after
+' the column widths and row heights are final, because it is sized from
+' them: created any earlier it kept the geometry of cells that AutoFit then
+' changed, and its right edge drifted off the tables it lines up with.
+'
 Private Sub CreateCollateralPieChart( _
     ByVal ws As Worksheet, _
-    ByVal DictCurrent As Object, _
     ByVal ReportDate As Date)
 
     Dim ChartObj As ChartObject
+    Dim Frame As Range
 
     Dim TotalCollateral As Double
 
-    Dim TopPos As Double
-    Dim LeftPos As Double
-    Dim RightPos As Double
-
     Dim BreakdownRow As Long
-    Dim BreakdownCol As Long
+    Dim FirstCategoryCol As Long
+    Dim LastCategoryCol As Long
 
     Dim SliceColors As Variant
     Dim i As Long
 
     BreakdownRow = Layout.BreakdownRow
-    BreakdownCol = Layout.BreakdownCol
+    FirstCategoryCol = Layout.BreakdownCol + 1
+    LastCategoryCol = Layout.BreakdownCol + CollateralCategoryCount()
 
     '
-    ' Total Collateral
+    ' Total Collateral, from the same row the pie is drawn from
     '
 
-    TotalCollateral = CollateralTotal(DictCurrent)
-
+    TotalCollateral = _
+        Application.WorksheetFunction.Sum( _
+            ws.Range( _
+                ws.Cells(BreakdownRow + 6, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 6, LastCategoryCol)))
 
     '
     ' Delete old chart
@@ -10993,38 +11009,29 @@ Private Sub CreateCollateralPieChart( _
     On Error GoTo 0
 
     '
-    ' Position
+    ' The frame: the pie's rows, from the pie's column out to the last
+    ' column of the breakdown and the entered table above, bordered like the
+    ' notes box beside it.  The chart takes the frame's geometry, drawn in
+    ' by a couple of points so its own area does not paint over the border.
     '
 
-    TopPos = ws.Rows(Layout.PieRow).Top
+    Set Frame = _
+        ws.Range( _
+            ws.Cells(Layout.PieRow, Layout.PieCol), _
+            ws.Cells( _
+                Layout.PieRow + Layout.PieHeightRows - 1, _
+                Layout.EnteredCol + CollateralCategoryCount()))
 
-    LeftPos = ws.Columns(Layout.PieCol).Left
-
-    RightPos = _
-        ws.Columns(Layout.EnteredCol + 7).Left + _
-        ws.Columns(Layout.EnteredCol + 7).Width
-
-    '
-    ' Create Chart
-    '
-    
-    Dim PieHeight As Double
-
-    PieHeight = 0
-    
-    For i = Layout.PieRow To _
-             Layout.PieRow + Layout.PieHeightRows - 1
-    
-        PieHeight = PieHeight + _
-                    ws.Rows(i).Height
-    
-    Next i
+    Frame.BorderAround _
+        LineStyle:=xlContinuous, _
+        Weight:=xlMedium, _
+        Color:=RGB(60, 60, 60)
 
     Set ChartObj = ws.ChartObjects.Add( _
-        Left:=LeftPos, _
-        Top:=TopPos, _
-        Width:=RightPos - LeftPos, _
-        Height:=PieHeight)
+        Left:=Frame.Left + 2, _
+        Top:=Frame.Top + 2, _
+        Width:=Frame.Width - 4, _
+        Height:=Frame.Height - 4)
 
     ChartObj.name = "CollateralPie"
 
@@ -11041,26 +11048,19 @@ Private Sub CreateCollateralPieChart( _
         .SeriesCollection.NewSeries
 
         '
-        ' Categories
+        ' Categories from the header row, amounts from the current row; the
+        ' labels show the percentages Excel works out from those amounts.
         '
 
         .SeriesCollection(1).XValues = _
             ws.Range( _
-                ws.Cells(BreakdownRow + 1, BreakdownCol + 1), _
-                ws.Cells( _
-                    BreakdownRow + 1, _
-                    BreakdownCol + CollateralCategoryCount()))
-
-        '
-        ' Current Amounts
-        '
+                ws.Cells(BreakdownRow + 1, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 1, LastCategoryCol))
 
         .SeriesCollection(1).Values = _
             ws.Range( _
-                ws.Cells(BreakdownRow + 5, BreakdownCol + 1), _
-                ws.Cells( _
-                    BreakdownRow + 5, _
-                    BreakdownCol + CollateralCategoryCount()))
+                ws.Cells(BreakdownRow + 6, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 6, LastCategoryCol))
 
         '
         ' Clean look
@@ -11090,16 +11090,6 @@ Private Sub CreateCollateralPieChart( _
         End With
 
         '
-        ' Move pie slightly down
-        '
-
-        On Error Resume Next
-
-        .PlotArea.Top = .PlotArea.Top + 15
-
-        On Error GoTo 0
-
-        '
         ' Legend
         '
 
@@ -11127,22 +11117,41 @@ Private Sub CreateCollateralPieChart( _
             On Error GoTo 0
 
         End With
-        
+
         With .SeriesCollection(1).DataLabels
 
             .Font.name = "Aptos Display"
             .Font.Size = 9
             .Font.Bold = True
             .Font.Color = RGB(40, 40, 40)
-        
+
         End With
-        
+
         With .Legend.Font
-        
+
             .name = "Aptos Display"
             .Size = 9
-        
+
         End With
+
+        '
+        ' Air around the pie.  Left to itself the plot runs from the title
+        ' to the bottom edge; pulling the inside area in on all four sides
+        ' leaves a margin whichever dimension bounds the circle.
+        '
+
+        On Error Resume Next
+
+        With .PlotArea
+
+            .InsideLeft = .InsideLeft + PIE_INSET_POINTS
+            .InsideTop = .InsideTop + PIE_INSET_POINTS
+            .InsideWidth = .InsideWidth - 2 * PIE_INSET_POINTS
+            .InsideHeight = .InsideHeight - 2 * PIE_INSET_POINTS
+
+        End With
+
+        On Error GoTo 0
 
     End With
 
@@ -11159,17 +11168,17 @@ Private Sub CreateCollateralPieChart( _
             '
             ' White separators
             '
-            
+
             .Format.Line.Visible = msoTrue
-            
+
             .Format.Line.ForeColor.RGB = _
                 RGB(255, 255, 255)
-            
+
             .Format.Line.Weight = 0.75
-            
+
             .Format.Line.DashStyle = _
                 msoLineDash
-                
+
         End With
 
     Next i
@@ -11184,36 +11193,36 @@ Private Sub CreateCollateralPieChart( _
             ChartObj.Height - 55, _
             210, _
             35)
-    
+
         With .TextFrame
-    
+
             .Characters.Text = _
                 "Total Collateral Value:" & vbLf & _
                 Application.WorksheetFunction.Text( _
                     TotalCollateral, _
                     EuroNumberFormat())
-    
+
             .HorizontalAlignment = xlRight
-            
+
             .Characters(1, Len("Total Collateral Value:")). _
                 Font.Bold = True
-                
+
             .Characters( _
                 Len("Total Collateral Value:") + 2). _
                 Font.Bold = False
-    
+
             .Characters.Font.name = "Aptos Display"
-    
+
             .Characters.Font.Size = 11
-    
+
         End With
-    
+
         .Line.Visible = msoFalse
-    
+
         .Fill.Visible = msoTrue
-    
+
         .Fill.ForeColor.RGB = RGB(245, 245, 245)
-    
+
     End With
 
 End Sub
