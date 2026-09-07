@@ -1273,6 +1273,7 @@ Private Sub BuildPortfolioSection( _
 
     Dim FirstDataRow As Long
     Dim LastDataRow As Long
+    Dim LastRow As Long
 
     Dim r As Long
     Dim c As Long
@@ -1315,6 +1316,7 @@ Private Sub BuildPortfolioSection( _
 
     FirstDataRow = r + 2
     LastDataRow = FirstDataRow + UBound(RowDates)
+    LastRow = LastDataRow + 2
 
     '
     ' The same five columns, in the same order and under the same names, as
@@ -1337,6 +1339,34 @@ Private Sub BuildPortfolioSection( _
         ws.Cells(FirstDataRow, c).Value = "YE " & Year(CurrentDate) - 1
     End If
 
+    '
+    ' Week on week and year to date, the two rows the collateral breakdown
+    ' closes with, as formulas over the rows above: the current row is the
+    ' last one, the week the row before it, year-end the first.  A
+    ' comparison whose base row is not in the table reads n/a.
+    '
+    ws.Cells(LastDataRow + 1, c).Value = "% Change WoW"
+
+    If ShowWeek Then
+        WriteChangeFormulas _
+            ws, LastDataRow + 1, c + 1, c + 4, LastDataRow, LastDataRow - 1
+    Else
+        ws.Range( _
+            ws.Cells(LastDataRow + 1, c + 1), _
+            ws.Cells(LastDataRow + 1, c + 4)).Value = "n/a"
+    End If
+
+    ws.Cells(LastDataRow + 2, c).Value = "% Change YTD"
+
+    If ShowYTD Then
+        WriteChangeFormulas _
+            ws, LastDataRow + 2, c + 1, c + 4, LastDataRow, FirstDataRow
+    Else
+        ws.Range( _
+            ws.Cells(LastDataRow + 2, c + 1), _
+            ws.Cells(LastDataRow + 2, c + 4)).Value = "n/a"
+    End If
+
     ws.Range( _
         ws.Cells(FirstDataRow, c), _
         ws.Cells(LastDataRow, c)).NumberFormat = "dd/mm/yyyy"
@@ -1345,11 +1375,22 @@ Private Sub BuildPortfolioSection( _
         ws.Cells(FirstDataRow, c + 2), _
         ws.Cells(LastDataRow, c + 4)).NumberFormat = EuroNumberFormat()
 
+    ws.Range( _
+        ws.Cells(LastDataRow + 1, c + 1), _
+        ws.Cells(LastRow, c + 4)).NumberFormat = "0.00%"
+
     FormatReportTable _
-        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastDataRow, c + 4)), _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastRow, c + 4)), _
         1
 
-    FormatFirstColumn ws, r + 1, LastDataRow, c
+    FormatFirstColumn ws, r + 1, LastRow, c
+
+    AddBottomBorder ws, LastDataRow, c, c + 4
+
+    With ws.Range(ws.Cells(LastDataRow + 1, c), ws.Cells(LastRow, c + 4))
+        .Font.Bold = True
+        .Interior.Color = RGB(212, 212, 212)
+    End With
 
 End Sub
 
@@ -1510,8 +1551,7 @@ End Sub
 
 '
 ' The change from the base row to the current row, category by category, as
-' a formula.  A category with no base amount shows blank: there is no change
-' to speak of from nothing.
+' a formula.
 '
 Private Sub WriteCollateralChange( _
     ByVal ws As Worksheet, _
@@ -1520,13 +1560,31 @@ Private Sub WriteCollateralChange( _
     ByVal CurrentRow As Long, _
     ByVal BaseRow As Long)
 
-    Dim FirstCol As Long
-    Dim LastCol As Long
+    WriteChangeFormulas _
+        ws, _
+        RowNo, _
+        LeftCol + 1, _
+        LeftCol + CollateralCategoryCount(), _
+        CurrentRow, _
+        BaseRow
+
+End Sub
+
+'
+' The change from the base row to the current row, column by column, as one
+' relative formula over the row.  A column with no base amount shows blank:
+' there is no change to speak of from nothing.
+'
+Private Sub WriteChangeFormulas( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal FirstCol As Long, _
+    ByVal LastCol As Long, _
+    ByVal CurrentRow As Long, _
+    ByVal BaseRow As Long)
+
     Dim CurrentText As String
     Dim BaseText As String
-
-    FirstCol = LeftCol + 1
-    LastCol = LeftCol + CollateralCategoryCount()
 
     CurrentText = ws.Cells(CurrentRow, FirstCol).Address(False, False)
     BaseText = ws.Cells(BaseRow, FirstCol).Address(False, False)

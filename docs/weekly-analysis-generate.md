@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,176 行 / 197 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,233 行 / 198 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,7 +8,7 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,176 |
+| 行数 | 12,233 |
 | 过程数 | 197 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
@@ -20,7 +20,8 @@ v82，之后的改动只在 git 记录里）。
 入口只有一个：`GenerateWeeklyAnalysis`。它读 `Home!WeeklyEndDate`，解析出上周、上月两个比较日和
 YTD 日（上年末），加载七份快照数据（当前、上周、上月各一份 Accounts 加一份 Positions，YTD 只要
 Positions），然后按 `WeeklyAnalysisLayout.Layout` 里的坐标把六个区块写到同一张 *Weekly Analysis*
-表上。每个衡量变化的区块都把周环比放在月环比旁边。Overview、New Loans、Loans Ended 三张表在左
+表上。每个衡量变化的区块都把周环比放在月环比旁边；Overview 和 Breakdown 都以 % Change WoW、
+% Change YTD 两行收尾，都是公式。Overview、New Loans、Loans Ended 三张表在左
 栏上下叠放，五列相同（Loans、Max Approved Loan、Drawn Amount、Collateral Value），Notes 框在
 它们下面、同样五列宽；Breakdown 那一栏隔一列空开始，集中度区块再隔一列空紧接 Breakdown。
 

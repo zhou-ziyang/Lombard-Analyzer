@@ -99,12 +99,12 @@ Public Sub InitializeLayout()
         Layout.ReportCol + 6
 
     ' New Lombards (left, under the overview)
-    ' The overview runs to six data rows, so its last row is ReportRow + 10;
-    ' one blank row, then this.  Same five columns as the overview, so the
-    ' three tables read as one column of figures.
+    ' The overview runs to six data rows and two change rows, so its last
+    ' row is ReportRow + 12; one blank row, then this.  Same five columns as
+    ' the overview, so the three tables read as one column of figures.
 
     Layout.NewLoanRow = _
-        Layout.ReportRow + 12
+        Layout.ReportRow + 14
 
     Layout.NewLoanCol = _
         Layout.ReportCol
@@ -112,7 +112,7 @@ Public Sub InitializeLayout()
     ' Ended Lombards (left, under the new loans)
 
     Layout.EndedLoanRow = _
-        Layout.ReportRow + 17
+        Layout.ReportRow + 19
 
     Layout.EndedLoanCol = _
         Layout.ReportCol
@@ -135,7 +135,7 @@ Public Sub InitializeLayout()
     ' pie, so it is shorter now that two tables sit above it.
 
     Layout.CommentRow = _
-        Layout.ReportRow + 22
+        Layout.ReportRow + 24
 
     Layout.CommentCol = _
         Layout.ReportCol
