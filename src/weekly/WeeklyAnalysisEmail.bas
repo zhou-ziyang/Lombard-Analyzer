@@ -1005,7 +1005,7 @@ Public Sub CreateWeeklyComparisonEmail()
         Format(ReportDate, "dd.mm.yyyy") & _
         ", compared to the report as of " & _
         Format(CompareDate, "dd.mm.yyyy") & _
-        ": that report's figures are labelled in red." & _
+        "." & _
         "<br><br>" & _
         "The report covers the portfolio overview, collateral breakdown, " & _
         "and monthly loan activity, followed by the exposure concentration " & _

@@ -162,8 +162,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 13,400 lines and 215 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 210 of those procedures are
+It is 13,200 lines and 214 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 209 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -217,19 +217,21 @@ separate asset classifications.
 **Weekly Comparison** (optional) — `GenerateWeeklyAnalysisComparison` runs
 the weekly report onto a *Weekly Comparison* sheet with the figures of an
 earlier report slotted in: the date to compare to is a second Home date,
-`WeeklyCompareDate`, and its rows are labelled in red. The overview gains that
-date's row among its own (or marks the row it already has); the breakdown
-gains that date's amounts, shares and change since year-end; the two movement
-tables and the entered table show, for each window, that date's row over this
-report's, labelled *Week to* and *Month to* the date each window ends on. The
-exposure section, the pie, the notes and the buttons are the report's own, and
-`CreateWeeklyComparisonEmail` — behind the sheet's *Generate Email* button —
-sends the same email with the taller tables and an intro naming the date
-compared to. The feature is four marked blocks — declarations near the top
-and a block at the end of `WeeklyAnalysisGenerate` and of
-`WeeklyAnalysisEmail`, between `COMPARISON FEATURE` banners — that call only
-what the report already has and are called by nothing else; to drop it, delete
-the four, the Home button and the `WeeklyCompareDate` name.
+`WeeklyCompareDate`. The overview shows that date's row among its own (or
+simply the row it already has) and no change rows; the breakdown gains that
+date's amounts and shares beside the week block, or nothing when the two
+dates coincide; *New Lombard Loans in the past month*, *Lombard Loans Ended in
+the past month* and the entered table each show that date's row over this
+report's, both over the past month, and close with a *% Change WoW* row
+between the two. The exposure section, the pie, the notes and the buttons are
+the report's own, and `CreateWeeklyComparisonEmail` — behind the sheet's
+*Generate Email* button — sends the same email with the tables at the height
+they were built and an intro naming the date compared to. The feature is four
+marked blocks — declarations near the top and a block at the end of
+`WeeklyAnalysisGenerate` and of `WeeklyAnalysisEmail`, between `COMPARISON
+FEATURE` banners — that call only what the report already has and are called
+by nothing else; to drop it, delete the four, the Home button and the
+`WeeklyCompareDate` name.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears
