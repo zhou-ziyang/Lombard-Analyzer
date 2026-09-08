@@ -2901,15 +2901,8 @@ Private Function BuildRiskPositionCache( _
 End Function
 
 Private Sub UpdateRiskReferenceDatabases( _
-    '
-    ' The issuer names this run overwrote, ticker by ticker, for the
-    ' lookup sheet to record: remembered for the run, kept on no sheet.
-    '
-    Set IssuerRenames = NewExactNameMap()
-
     ByRef PositionData As Variant, _
     ByRef RiskPositionData As Variant, _
-    ByRef IssuerRenames As Object, _
     ByVal PreferredWorkbook As Workbook)
 
     Dim EquityCandidates As Object
@@ -2933,6 +2926,7 @@ Private Sub UpdateRiskReferenceDatabases( _
     Dim BondNameCol As Long
     Dim BondIssuerCol As Long
     Dim BondTypeCol As Long
+    Dim BondPrevCol As Long
     Dim FundNameCol As Long
     Dim FundIsinCol As Long
     Dim FundPrefixCol As Long
@@ -3142,6 +3136,19 @@ Private Sub UpdateRiskReferenceDatabases( _
            BondNameCol > 0 And BondIssuerCol > 0 And _
            BondTypeCol > 0 Then
 
+            '
+            ' Previous Names is added to the table the first time it is
+            ' needed.  It is the only column here the code creates, and it
+            ' holds only what the code itself is about to overwrite.
+            '
+            BondPrevCol = _
+                GetTableColumnIndex(DataTable, "Previous Names")
+
+            If BondPrevCol = 0 Then
+                BondPrevCol = DataTable.ListColumns.Add.Index
+                DataTable.ListColumns(BondPrevCol).name = "Previous Names"
+            End If
+
             Set ExistingRows = _
                 BuildTableKeyIndex(DataTable, "Issuer Ticker")
 
@@ -3208,10 +3215,9 @@ Private Sub UpdateRiskReferenceDatabases( _
 
                 ' Sophis may later supply a corrected issuer name; this is
                 ' the only populated field intentionally allowed to update.
-                ' The name it replaces is what lets the issuer be matched
-                ' back to its row in Companies, and what the lookup sheet
-                ' records: it is remembered for this run, not written to
-                ' the sheet.
+                ' The name it replaces goes to Previous Names: it is what
+                ' lets the issuer be matched back to its row in Companies
+                ' once nothing else about it reads the same.
                 If CStr(Candidate("IssuerName")) <> "" Then
 
                     CurrentValue = _
@@ -3223,8 +3229,12 @@ Private Sub UpdateRiskReferenceDatabases( _
                        NormalizeExactNameKey( _
                             CStr(Candidate("IssuerName"))) Then
 
-                        IssuerRenames(NormalizeExactNameKey(CStr(Item))) = _
-                            CurrentValue
+                        DataRow.Range.Cells(1, BondPrevCol).Value = _
+                            MergeDelimitedText( _
+                                SafeText( _
+                                    DataRow.Range.Cells( _
+                                        1, BondPrevCol).Value), _
+                                CurrentValue)
 
                     End If
 
@@ -5543,6 +5553,7 @@ End Function
 Private Sub LoadBondIssuerMaps( _
     ByRef IssuerMapping As Object, _
     ByRef TypeMapping As Object, _
+    ByRef PreviousNameMapping As Object, _
     ByRef MappingReady As Boolean, _
     ByVal PreferredWorkbook As Workbook)
 
@@ -5551,13 +5562,16 @@ Private Sub LoadBondIssuerMaps( _
     Dim TickerColumn As Long
     Dim IssuerColumn As Long
     Dim TypeColumn As Long
+    Dim PreviousColumn As Long
     Dim r As Long
     Dim LookupKey As String
     Dim IssuerName As String
     Dim IssuerType As String
+    Dim PreviousNames As String
 
     Set IssuerMapping = NewExactNameMap()
     Set TypeMapping = NewExactNameMap()
+    Set PreviousNameMapping = NewExactNameMap()
 
     Set DataTable = _
         GetReferenceDataTable( _
@@ -5573,6 +5587,10 @@ Private Sub LoadBondIssuerMaps( _
         GetTableColumnIndex(DataTable, "Issuer Name")
     TypeColumn = _
         GetTableColumnIndex(DataTable, "Bond Type")
+
+    ' Optional: present once an issuer name has ever been corrected.
+    PreviousColumn = _
+        GetTableColumnIndex(DataTable, "Previous Names")
 
     If TickerColumn = 0 Or IssuerColumn = 0 Or _
        TypeColumn = 0 Or DataTable.DataBodyRange Is Nothing Then
@@ -5609,6 +5627,18 @@ Private Sub LoadBondIssuerMaps( _
             If IssuerType <> "" Then
 
                 TypeMapping(LookupKey) = IssuerType
+
+            End If
+
+            If PreviousColumn > 0 Then
+
+                PreviousNames = _
+                    SafeText( _
+                        TableData(r, PreviousColumn))
+
+                If PreviousNames <> "" Then
+                    PreviousNameMapping(LookupKey) = PreviousNames
+                End If
 
             End If
 
@@ -8298,8 +8328,8 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
                     '
                     ' A name Companies has never had, that Bond Issuers
-                    ' held under an earlier one until this run: the rename
-                    ' goes on record here, with no row to copy from.
+                    ' remembers under an earlier one: the rename goes on
+                    ' record here, with no row to copy from.
                     '
                     Output(OutputRow, RenamedCol) = _
                         EntryText(GeographyEntry, "PreviousNames")
@@ -8706,8 +8736,8 @@ End Function
 
 '
 ' The names the entry was known by before, against Companies by name and
-' by variant.  Today only bond issuers carry these: the name Bond Issuers
-' held until this run's update overwrote it with Sophis's.
+' by variant.  Today only bond issuers carry these, from the Previous
+' Names column Bond Issuers keeps when Sophis corrects a name.
 '
 Private Function MatchCompanyByPreviousName( _
     ByVal Entry As Object, _
@@ -10836,7 +10866,7 @@ Private Sub BuildRiskGranularitySection( _
     Dim EquityNameMap As Object
     Dim BondIssuerMap As Object
     Dim BondIssuerTypeMap As Object
-    Dim BondIssuerRenames As Object
+    Dim BondPreviousNameMap As Object
     Dim FundMap As Object
     Dim CertificateUnderlyingReferenceIsinMap As Object
     Dim CertificateUnderlyingAssetClassMap As Object
@@ -10934,7 +10964,6 @@ Private Sub BuildRiskGranularitySection( _
     UpdateRiskReferenceDatabases _
         PositionData, _
         RiskPositionData, _
-        BondIssuerRenames, _
         ThisWorkbook
 
 
@@ -10953,6 +10982,7 @@ Private Sub BuildRiskGranularitySection( _
     LoadBondIssuerMaps _
         BondIssuerMap, _
         BondIssuerTypeMap, _
+        BondPreviousNameMap, _
         BondIssuerMapReady, _
         ThisWorkbook
 
@@ -11157,7 +11187,7 @@ Private Sub BuildRiskGranularitySection( _
                         PreviousNames:= _
                             ResolveExactName( _
                                 IssuerTicker, _
-                                BondIssuerRenames)
+                                BondPreviousNameMap)
 
                     AppendRiskStageRow _
                         StageRows, _
