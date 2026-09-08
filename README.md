@@ -224,21 +224,23 @@ separate asset classifications.
 **Weekly Comparison** (optional) — `GenerateWeeklyAnalysisComparison` runs
 the weekly report onto a *Weekly Comparison* sheet with the figures of an
 earlier report slotted in: the date to compare to is a second Home date,
-`WeeklyCompareDate`. The overview shows that date's row among its own (or
-simply the row it already has) and no change rows; the breakdown gains that
-date's amounts and shares beside the week block, or nothing when the two
-dates coincide; *New Lombard Loans in the Past Month*, *Lombard Loans Ended in
-the Past Month* and *Collateral Entered with New NDGs in the Past Month* each show that date's row over this
-report's, both over the past month, and close with a *% Change WoW* row
-between the two. The exposure section, the pie, the notes and the buttons are
-the report's own, and `CreateWeeklyComparisonEmail` — behind the sheet's
-*Generate Email* button — sends the same email with the tables at the height
-they were built and an intro naming the date compared to. The feature is four
-marked blocks — declarations near the top and a block at the end of
-`WeeklyAnalysisGenerate` and of `WeeklyAnalysisEmail`, between `COMPARISON
-FEATURE` banners — that call only what the report already has and are called
-by nothing else; to drop it, delete the four, the Home button and the
-`WeeklyCompareDate` name.
+`WeeklyCompareDate`, and on this sheet it stands where the report's week row
+stands. The overview shows year-end, the three months, that date and the
+current date, with no change rows; the breakdown shows year-end, that date
+and the current date with their shares, then the change against that date
+(*% Change WoW*) and against year-end; *New Lombard Loans in the Past Month*,
+*Lombard Loans Ended in the Past Month* and *Collateral Entered with New NDGs
+in the Past Month* each show that date's row over this report's, both over
+the past month, and close with a *% Change WoW* row between the two. Every
+date column is headed *As of* over bare dates. The exposure section, the
+pie, the notes and the buttons are the report's own, and
+`CreateWeeklyComparisonEmail` — behind the sheet's *Generate Email* button —
+sends the same email with the tables at the height they were built and an
+intro naming the date compared to. The feature is four marked blocks —
+declarations near the top and a block at the end of `WeeklyAnalysisGenerate`
+and of `WeeklyAnalysisEmail`, between `COMPARISON FEATURE` banners — that
+call only what the report already has and are called by nothing else; to
+drop it, delete the four, the Home button and the `WeeklyCompareDate` name.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

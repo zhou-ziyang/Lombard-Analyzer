@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（13,227 行 / 214 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（13,190 行 / 214 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,7 +8,7 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 13,227 |
+| 行数 | 13,190 |
 | 过程数 | 214 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
@@ -303,13 +303,15 @@ DHL AG，而 Companies 里两个名字都没有）：按普通新公司列出—
 `GenerateWeeklyAnalysisComparison` 是第二个入口：读 Home 上的 `WeeklyEndDate` 和一个新的命名单元格
 `WeeklyCompareDate`，在自己的 *Weekly Comparison* 表上跑一遍完整的周报，把 compare-to 那个日期的
 数据塞进 overview 和 activity 各表——老板草图里 "from last report" 那几行，只是那些数据没有现成的，
-按 compare-to 日期重新算。Active Lombard Loans 按日期插入那一天的行（本来就有这一行就什么都不加），
-不带 WoW / YTD 两行；Collateral Breakdown 插入那一天的金额和占比两行，按日期排在 week 块旁边
-（compare-to 就是 week 那天时不加）；*New Lombard Loans in the Past Month*、*Lombard Loans Ended in
-the Past Month* 和 *Collateral Entered with New NDGs in the Past Month* 各是那一天的行（Entered 是金额加占比两行）、本期的行，最后一行
-`% Change WoW` 是两者之差，窗口都是过去一个月，标签是 `As of dd/mm/yyyy`。Exposure 部分、饼图、
-Notes、按钮都是周报自己的；`WeeklyAnalysisEmail.CreateWeeklyComparisonEmail`（表上的 Generate Email
-按钮）生成同样的邮件，表格按实际高度截取，开头说明比较的是哪一天。
+按 compare-to 日期重新算。这张表上 compare-to 日期占的是周报里 week 行的位置，没有单独的一周前
+那一行：Active Lombard Loans 是年末、三个月、compare-to（按日期插入）、本期，不带 WoW / YTD；
+Collateral Breakdown 是年末、compare-to、本期各两行（金额、占比），再 `% Change WoW`（对 compare-to）
+和 `% Change YTD`；*New Lombard Loans in the Past Month*、*Lombard Loans Ended in the Past Month* 和
+*Collateral Entered with New NDGs in the Past Month* 各是 compare-to 那一天的行（Entered 是金额加
+占比两行）、本期的行，最后一行 `% Change WoW` 是两者之差，窗口都是过去一个月。日期列表头是
+`As of`，日期本身不带前缀。Exposure 部分、饼图、Notes、按钮都是周报自己的；
+`WeeklyAnalysisEmail.CreateWeeklyComparisonEmail`（表上的 Generate Email 按钮）生成同样的邮件，
+表格按实际高度截取，开头说明比较的是哪一天。
 
 代码上它只调用已有的东西——`WritePortfolioRow`、`WriteLoanMovementRow`、
 `EnteredCollateralAmounts`、各 WriteCollateral*、`WriteChangeFormulas`、
