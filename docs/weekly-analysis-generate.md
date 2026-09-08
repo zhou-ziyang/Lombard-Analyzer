@@ -26,7 +26,7 @@ v82，之后的改动只在 git 记录里）。
 没有变化行；Collateral Breakdown 是年末、比较日期、本期各两行（金额、占比），再 `% Change WoW`
 （对比较日期）和 `% Change YTD`；New / Ended / Entered 三张 "in the Past Month" 的表各是比较日期
 那一行（Entered 是金额加占比两行）、本期的行，最后一行 `% Change WoW` 是两者之差，窗口都是过去
-一个月。比例都是公式，分母为 0 显示空白。Overview、New Loans、Loans Ended 三张表在左栏上下叠放，
+一个月。比例都是公式，分母为 0 或小于半分钱（`ZERO_BASE_TOLERANCE`，分摊留下的零头）显示空白。Overview、New Loans、Loans Ended 三张表在左栏上下叠放，
 五列相同（Loans、Approved Loan、Drawn Amount、Collateral Value），Notes 框在它们下面、同样五列宽；
 Breakdown 那一栏隔一列空开始，Entered 和饼图在它下面，集中度区块再隔一列空紧接 Breakdown。
 Active 和 Breakdown 里当前日期那几行深红底（#943634）白字。

@@ -138,6 +138,15 @@ Private Const RENAME_NOTE_LIMIT As Long = 10
 Private Const REPORT_DATE_FORMAT As String = "dd/mm/yyyy"
 
 '
+' A base an Excel ratio divides by counts as nothing below this: the sums
+' the sheet divides by are made of allocations that can leave a few
+' millionths of a euro behind where there is no exposure at all, and a
+' change against that reads in the billions of percent.  Half a cent is
+' under what any cell shows.
+'
+Private Const ZERO_BASE_TOLERANCE As String = "0.005"
+
+'
 ' The Home name holding the date the report is compared to.
 '
 Private Const COMPARE_DATE_NAME As String = "WeeklyCompareDate"
@@ -1616,7 +1625,8 @@ End Sub
 '
 ' Each category's share of the amount row above, as a formula: Excel does
 ' the division and a reader can see what was divided by what.  A row that
-' sums to nothing shows blank rather than an error.
+' sums to nothing - or to a residue below ZERO_BASE_TOLERANCE - shows
+' blank rather than an error or a nonsense.
 '
 Private Sub WriteCollateralShares( _
     ByVal ws As Worksheet, _
@@ -1642,7 +1652,7 @@ Private Sub WriteCollateralShares( _
     ' reference across the categories while the total stays anchored.
     '
     ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
-        "=IF(" & TotalText & "=0,""""," & _
+        "=IF(ABS(" & TotalText & ")<" & ZERO_BASE_TOLERANCE & ",""""," & _
         ws.Cells(AmountRow, FirstCol).Address(False, False) & _
         "/" & TotalText & ")"
 
@@ -1686,8 +1696,9 @@ End Sub
 
 '
 ' The change from the base row to the current row, column by column, as one
-' relative formula over the row.  A column with no base amount shows blank:
-' there is no change to speak of from nothing.
+' relative formula over the row.  A column with no base amount - none, or
+' a residue below ZERO_BASE_TOLERANCE - shows blank: there is no change
+' to speak of from nothing.
 '
 Private Sub WriteChangeFormulas( _
     ByVal ws As Worksheet, _
@@ -1704,7 +1715,7 @@ Private Sub WriteChangeFormulas( _
     BaseText = ws.Cells(BaseRow, FirstCol).Address(False, False)
 
     ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
-        "=IF(" & BaseText & "=0,""""," & _
+        "=IF(ABS(" & BaseText & ")<" & ZERO_BASE_TOLERANCE & ",""""," & _
         CurrentText & "/" & BaseText & "-1)"
 
 End Sub
