@@ -130,9 +130,28 @@ Private Const UNKNOWN_UNDERLYING_TYPE As String = _
 Private Const NON_DPM_SCOPE As String = "Non-DPM"
 
 Private Const UNKNOWN_UNDERLYING_NOTE_LIMIT As Long = 10
+Private Const RENAME_NOTE_LIMIT As Long = 10
+'
+' The date cells that label a snapshot row: bare dates under an "As of"
+' header.
+'
+Private Const REPORT_DATE_FORMAT As String = "dd/mm/yyyy"
+
+'
+' The Home name holding the date the report is compared to.
+'
+Private Const COMPARE_DATE_NAME As String = "WeeklyCompareDate"
 
 Private Const RISK_FORMULA_INDENT As String = "    "
 Private Const RISK_BIND_WIDTH As Long = 6
+'
+' Where the pie sits in its chart, in points: the gap under the title and the
+' gap above the bottom edge.  Excel's own layout centres the circle in what
+' is left under the title, which leaves far more air below it than above;
+' these two numbers replace that with a placement that can be read and tuned.
+'
+Private Const PIE_TOP_GAP_POINTS As Double = 30
+Private Const PIE_BOTTOM_GAP_POINTS As Double = 8
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
@@ -212,6 +231,23 @@ Private Enum IssuerPlaceholderMode
     PlaceholderFromSecurityName = 2
 
 End Enum
+
+'
+' One date's snapshots with the month it reads against, resolved the way
+' the report resolves its own.  Two of these per run: the report date's
+' and the compared date's.
+'
+Private Type ReportSnapshots
+
+    AsOfDate As Date
+    MonthDate As Date
+
+    Accounts As Variant
+    Positions As Variant
+    MonthAccounts As Variant
+    MonthPositions As Variant
+
+End Type
 
 Private Function BuildRiskSubtableVisibility() As Object
 
@@ -915,12 +951,31 @@ Private Sub CalculateWeeklyPortfolioStats( _
     ByVal SnapshotDate As Date, _
     ByRef LoanCount As Long, _
     ByRef DrawnAmount As Double, _
-    ByRef ApprovedAmount As Double)
+    ByRef ApprovedAmount As Double, _
+    ByRef CollateralValue As Double)
 
     Dim AccountData As Variant
+    Dim PositionData As Variant
     Dim NDGs As Object
     Dim NDG As String
     Dim r As Long
+
+    '
+    ' Collateral is the whole positions snapshot for the date - the same
+    ' figure the movement tables sum for the loans that moved, taken over
+    ' every loan in the book.  The loader caches, so the dates the rest of
+    ' the report already reads cost nothing extra.
+    '
+    PositionData = LoadWeeklyPositionData(SnapshotDate)
+
+    If WeeklyDataHasRows(PositionData) Then
+
+        For r = LBound(PositionData, 1) To UBound(PositionData, 1)
+            CollateralValue = CollateralValue + _
+                CDbl(PositionData(r, WeeklyPosPositionValue))
+        Next r
+
+    End If
 
     AccountData = LoadWeeklyAccountData(SnapshotDate)
 
@@ -963,38 +1018,18 @@ Public Sub GenerateWeeklyAnalysis()
 
     Dim OldNoteHandler As String
     Dim CurrentDate As Date
-    Dim ComparisonDate As Date
-    Dim WeekDate As Date
+    Dim CompareDate As Date
     Dim YTDDate As Date
 
     Dim ws As Worksheet
 
-    Dim AccountsCurrent As Variant
-    Dim AccountsCompare As Variant
-    Dim AccountsWeek As Variant
-    Dim PositionsWeek As Variant
-    Dim PositionsCurrent As Variant
-    Dim PositionsCompare As Variant
+    Dim ThisReport As ReportSnapshots
+    Dim PriorReport As ReportSnapshots
     Dim PositionsYTD As Variant
 
     Dim UnknownAssets As Object
 
     On Error GoTo ErrorHandler
-
-    Application.ScreenUpdating = False
-    Application.EnableEvents = False
-    Application.Calculation = xlCalculationManual
-    
-    OldNoteHandler = NoteHandler
-    NoteHandler = "WriteNoteWeekly"
-    Set ReportNotes = New Collection
-    MissingFiles = ""
-    ResetSheetOverwriteDecision
-
-    InitialiseWeeklySourceCache
-
-    Set UnknownAssets = CreateObject("Scripting.Dictionary")
-    Set AssetTypeMapping = CreateObject("Scripting.Dictionary")
 
     '
     ' ThisWorkbook, not the active one.  This process opens the certificate
@@ -1006,25 +1041,54 @@ Public Sub GenerateWeeklyAnalysis()
     CurrentDate = _
         ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
 
-If Not SourceFileExists(CurrentDate, "POSITIONS") _
-   Or Not SourceFileExists(CurrentDate, "ACCOUNTS") Then
+    '
+    ' The report reads against an earlier one - normally the last - whose
+    ' date is a second Home name.
+    '
+    CompareDate = CompareDateFromHome()
 
-    Fatal _
-        "Analysis end date source files not found:" & vbCrLf & _
-        Format(CurrentDate, "dd/mm/yyyy")
+    If CompareDate = 0 Then
 
-End If
+        MsgBox _
+            "Add a cell named '" & COMPARE_DATE_NAME & "' on Home " & _
+            "holding the date to compare to, then run this again.", _
+            vbExclamation, _
+            "Weekly Analysis"
 
-ComparisonDate = _
-    ResolveComparisonDate( _
-        GetComparisonDate(CurrentDate))
+        Exit Sub
 
-WeekDate = _
-    ResolveComparisonDate(CurrentDate - 7)
+    End If
 
-YTDDate = _
-    ResolveComparisonDate( _
-        GetYTDDate(CurrentDate))
+    If CompareDate >= CurrentDate Then
+
+        MsgBox _
+            "The date to compare to must be earlier than the report date.", _
+            vbExclamation, _
+            "Weekly Analysis"
+
+        Exit Sub
+
+    End If
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    OldNoteHandler = NoteHandler
+    NoteHandler = "WriteNoteWeekly"
+    Set ReportNotes = New Collection
+    MissingFiles = ""
+    ResetSheetOverwriteDecision
+
+    InitialiseWeeklySourceCache
+
+    Set UnknownAssets = CreateObject("Scripting.Dictionary")
+    Set AssetTypeMapping = CreateObject("Scripting.Dictionary")
+
+    RequireSourceFiles CurrentDate
+    RequireSourceFiles CompareDate
+
+    YTDDate = ResolveComparisonDate(GetYTDDate(CurrentDate))
 
     Set ws = CreateOrReplaceSheet("Weekly Analysis")
 
@@ -1033,75 +1097,57 @@ YTDDate = _
     ws.Cells.Clear
     ws.UsedRange.UnMerge
 
-    AccountsCurrent = LoadWeeklyAccountData(CurrentDate)
-    AccountsCompare = LoadWeeklyAccountData(ComparisonDate)
-    PositionsCurrent = LoadWeeklyPositionData(CurrentDate)
-    PositionsCompare = LoadWeeklyPositionData(ComparisonDate)
-    AccountsWeek = LoadWeeklyAccountData(WeekDate)
-    PositionsWeek = LoadWeeklyPositionData(WeekDate)
+    ThisReport = LoadReportSnapshots(CurrentDate)
+    PriorReport = LoadReportSnapshots(CompareDate)
     PositionsYTD = LoadWeeklyPositionData(YTDDate)
-    
-    InitializeLayout
-    BuildHeader ws, CurrentDate
-    BuildPortfolioSection ws, CurrentDate, ComparisonDate
 
-    If WeeklyDataHasRows(PositionsCurrent) And _
+    InitializeLayout
+    BuildHeader ws, CurrentDate, CompareDate
+    BuildPortfolioSection ws, ThisReport, CompareDate
+
+    If WeeklyDataHasRows(ThisReport.Positions) And _
        WeeklyDataHasRows(PositionsYTD) Then
 
         BuildCollateralBreakdown _
             ws, _
-            PositionsCurrent, _
-            PositionsWeek, _
+            ThisReport, _
+            PriorReport, _
             PositionsYTD, _
-            WeekDate, _
             UnknownAssets
 
         WriteAssetTypeMapping
 
     End If
 
-    If WeeklyDataHasRows(PositionsCurrent) Then
+    If WeeklyDataHasRows(ThisReport.Positions) Then
 
-        BuildRiskGranularitySection ws, PositionsCurrent
-
-    End If
-    
-    If WeeklyDataHasRows(AccountsCurrent) And _
-       WeeklyDataHasRows(AccountsCompare) And _
-       WeeklyDataHasRows(PositionsCurrent) Then
-
-        BuildNewLoansSection _
-            ws, _
-            AccountsCurrent, _
-            AccountsWeek, _
-            AccountsCompare, _
-            PositionsCurrent
+        BuildRiskGranularitySection ws, ThisReport.Positions
 
     End If
-    
-    If WeeklyDataHasRows(AccountsCurrent) And _
-       WeeklyDataHasRows(AccountsCompare) Then
 
-        BuildEndedLoansSection _
-            ws, _
-            AccountsCurrent, _
-            AccountsWeek, _
-            PositionsWeek, _
-            AccountsCompare, _
-            PositionsCompare
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) And _
+       WeeklyDataHasRows(ThisReport.Positions) Then
+
+        BuildNewLoansSection ws, PriorReport, ThisReport
 
     End If
-        
-    If WeeklyDataHasRows(AccountsCurrent) And _
-       WeeklyDataHasRows(AccountsCompare) And _
-       WeeklyDataHasRows(PositionsCurrent) Then
+
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) Then
+
+        BuildEndedLoansSection ws, PriorReport, ThisReport
+
+    End If
+
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) And _
+       WeeklyDataHasRows(ThisReport.Positions) Then
 
         BuildEnteredCollateralSection _
             ws, _
-            AccountsCurrent, _
-            AccountsWeek, _
-            AccountsCompare, _
-            PositionsCurrent, _
+            PriorReport, _
+            ThisReport, _
             UnknownAssets
 
     End If
@@ -1112,23 +1158,29 @@ YTDDate = _
         .VerticalAlignment = xlCenter
         .Columns.AutoFit
         .Rows.RowHeight = 16
-    
+
     End With
-    
+
     '
     ' Main title
     '
     ws.Rows(Layout.HeaderRow).AutoFit
-    
+
     '
     ' As of row
     '
     ws.Rows(Layout.HeaderRow + 1).AutoFit
 
-    If Not ws Is Nothing Then
+    BuildNotes ws
+    FormatNotesBox ws
 
-        BuildNotes ws
-        FormatNotesBox ws
+    '
+    ' Last, once every column and row under it has its final size.
+    '
+    If WeeklyDataHasRows(ThisReport.Positions) And _
+       WeeklyDataHasRows(PositionsYTD) Then
+
+        CreateCollateralPieChart ws, CurrentDate
 
     End If
 
@@ -1169,6 +1221,106 @@ ErrorHandler:
 
 End Sub
 
+'
+' The date the report is compared to, from the named cell on Home; zero
+' when the name is missing or does not hold a date.
+'
+Private Function CompareDateFromHome() As Date
+
+    On Error Resume Next
+    CompareDateFromHome = _
+        CDate(ThisWorkbook.Worksheets("Home").Range(COMPARE_DATE_NAME).Value)
+    On Error GoTo 0
+
+End Function
+
+Private Sub RequireSourceFiles( _
+    ByVal SnapshotDate As Date)
+
+    If Not SourceFileExists(SnapshotDate, "POSITIONS") _
+       Or Not SourceFileExists(SnapshotDate, "ACCOUNTS") Then
+
+        Fatal _
+            "Source files not found for " & _
+            Format(SnapshotDate, "dd/mm/yyyy")
+
+    End If
+
+End Sub
+
+'
+' One date's snapshots: its own and a month back, the month resolved to a
+' snapshot that exists.
+'
+Private Function LoadReportSnapshots( _
+    ByVal AsOfDate As Date) As ReportSnapshots
+
+    Dim Snaps As ReportSnapshots
+
+    Snaps.AsOfDate = AsOfDate
+    Snaps.MonthDate = ResolveComparisonDate(GetComparisonDate(AsOfDate))
+
+    Snaps.Accounts = LoadWeeklyAccountData(AsOfDate)
+    Snaps.Positions = LoadWeeklyPositionData(AsOfDate)
+    Snaps.MonthAccounts = LoadWeeklyAccountData(Snaps.MonthDate)
+    Snaps.MonthPositions = LoadWeeklyPositionData(Snaps.MonthDate)
+
+    LoadReportSnapshots = Snaps
+
+End Function
+
+'
+' The dates with one more slotted in by date, or unchanged when it is
+' already among them.
+'
+Private Function InsertRowDate( _
+    ByVal Dates As Variant, _
+    ByVal NewDate As Date) As Variant
+
+    Dim Result() As Variant
+    Dim Inserted As Boolean
+    Dim n As Long
+    Dim i As Long
+
+    For i = 0 To UBound(Dates)
+
+        If CDate(Dates(i)) = NewDate Then
+
+            InsertRowDate = Dates
+
+            Exit Function
+
+        End If
+
+    Next i
+
+    ReDim Result(0 To UBound(Dates) + 1)
+
+    For i = 0 To UBound(Dates)
+
+        If Not Inserted Then
+
+            If NewDate < CDate(Dates(i)) Then
+
+                Result(n) = NewDate
+                n = n + 1
+                Inserted = True
+
+            End If
+
+        End If
+
+        Result(n) = Dates(i)
+        n = n + 1
+
+    Next i
+
+    If Not Inserted Then Result(n) = NewDate
+
+    InsertRowDate = Result
+
+End Function
+
 Private Sub WriteSectionTitle(ByVal ws As Worksheet, ByVal RowNo As Long, ByVal ColNo As Long, ByVal Width As Long, ByVal Title As String)
 
     With ws.Range(ws.Cells(RowNo, ColNo), ws.Cells(RowNo, ColNo + Width - 1))
@@ -1186,7 +1338,8 @@ End Sub
 
 Private Sub BuildHeader( _
     ByVal ws As Worksheet, _
-    ByVal ReportDate As Date)
+    ByVal ReportDate As Date, _
+    ByVal CompareDate As Date)
 
     With ws.Range( _
         ws.Cells(Layout.HeaderRow, Layout.HeaderCol), _
@@ -1211,7 +1364,9 @@ Private Sub BuildHeader( _
         .HorizontalAlignment = xlLeft
         .VerticalAlignment = xlCenter
 
-        .Value = "As of " & Format(ReportDate, "dd/mm/yyyy")
+        .Value = _
+            "As of " & Format(ReportDate, "dd/mm/yyyy") & _
+            ", compared to " & Format(CompareDate, "dd/mm/yyyy")
 
         .Font.Size = 14
 
@@ -1221,17 +1376,16 @@ End Sub
 
 Private Sub BuildPortfolioSection( _
     ByVal ws As Worksheet, _
-    ByVal CurrentDate As Date, _
-    ByVal ComparisonDate As Date)
+    ByRef ThisReport As ReportSnapshots, _
+    ByVal CompareDate As Date)
 
+    Dim CurrentDate As Date
     Dim Date2 As Date
     Dim Date3 As Date
     Dim YTDDate As Date
-    Dim WeekDate As Date
 
     Dim RowDates As Variant
     Dim ShowYTD As Boolean
-    Dim ShowWeek As Boolean
 
     Dim FirstDataRow As Long
     Dim LastDataRow As Long
@@ -1243,20 +1397,11 @@ Private Sub BuildPortfolioSection( _
     r = Layout.PortfolioRow
     c = Layout.PortfolioCol
 
+    CurrentDate = ThisReport.AsOfDate
+
     Date2 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 2))
     Date3 = ResolveComparisonDate(GetComparisonDate(CurrentDate, 3))
     YTDDate = ResolveComparisonDate(GetYTDDate(CurrentDate))
-    WeekDate = ResolveComparisonDate(CurrentDate - 7)
-
-    '
-    ' The week row is what makes the table read week on week: it sits
-    ' immediately under the current date, so the last two rows are seven days
-    ' apart.  It is dropped when the snapshots are too sparse for it to be a
-    ' week of its own - ResolveComparisonDate searches forward, so a thin
-    ' week can land on the current date or on the monthly comparison.
-    '
-    ShowWeek = _
-        (WeekDate < CurrentDate) And (WeekDate <> ComparisonDate)
 
     '
     ' Three months of history already reaches into the previous year, so a
@@ -1264,48 +1409,63 @@ Private Sub BuildPortfolioSection( _
     '
     ShowYTD = (Year(Date3) = Year(CurrentDate))
 
-    If ShowYTD And ShowWeek Then
+    '
+    ' Year-end, the three months back and the current date; the date the
+    ' report is compared to slotted in by date - normally between the
+    ' month and the current date - unless it is one of them already.  No
+    ' change rows: the figures are read against the compared row.
+    '
+    If ShowYTD Then
         RowDates = _
-            Array(YTDDate, Date3, Date2, ComparisonDate, WeekDate, CurrentDate)
-    ElseIf ShowYTD Then
-        RowDates = Array(YTDDate, Date3, Date2, ComparisonDate, CurrentDate)
-    ElseIf ShowWeek Then
-        RowDates = Array(Date3, Date2, ComparisonDate, WeekDate, CurrentDate)
+            Array(YTDDate, Date3, Date2, ThisReport.MonthDate, CurrentDate)
     Else
-        RowDates = Array(Date3, Date2, ComparisonDate, CurrentDate)
+        RowDates = Array(Date3, Date2, ThisReport.MonthDate, CurrentDate)
     End If
+
+    RowDates = InsertRowDate(RowDates, CompareDate)
 
     FirstDataRow = r + 2
     LastDataRow = FirstDataRow + UBound(RowDates)
 
-    WriteSectionTitle ws, r, c, 4, "Overview"
+    '
+    ' The same five columns, in the same order and under the same names, as
+    ' the two movement tables below it, so the three read as one column of
+    ' figures.
+    '
+    WriteSectionTitle ws, r, c, 5, "Active Lombard Loans"
 
-    ws.Cells(r + 1, c).Value = "Date"
+    ws.Cells(r + 1, c).Value = "As of"
     ws.Cells(r + 1, c + 1).Value = "Loans"
-    ws.Cells(r + 1, c + 2).Value = "Drawn"
-    ws.Cells(r + 1, c + 3).Value = "Approved"
+    ws.Cells(r + 1, c + 2).Value = "Approved Loan"
+    ws.Cells(r + 1, c + 3).Value = "Drawn Amount"
+    ws.Cells(r + 1, c + 4).Value = "Collateral Value"
 
     For i = 0 To UBound(RowDates)
-        WritePortfolioRow ws, FirstDataRow + i, c, CDate(RowDates(i))
-    Next i
 
-    If ShowYTD Then
-        ws.Cells(FirstDataRow, c).Value = "YE " & Year(CurrentDate) - 1
-    End If
+        WritePortfolioRow ws, FirstDataRow + i, c, CDate(RowDates(i))
+
+        If ShowYTD And (CDate(RowDates(i)) = YTDDate) Then
+            ws.Cells(FirstDataRow + i, c).Value = "YE " & Year(CurrentDate) - 1
+        End If
+
+    Next i
 
     ws.Range( _
         ws.Cells(FirstDataRow, c), _
-        ws.Cells(LastDataRow, c)).NumberFormat = "dd/mm/yyyy"
+        ws.Cells(LastDataRow, c)).NumberFormat = REPORT_DATE_FORMAT
 
     ws.Range( _
         ws.Cells(FirstDataRow, c + 2), _
-        ws.Cells(LastDataRow, c + 3)).NumberFormat = EuroNumberFormat()
+        ws.Cells(LastDataRow, c + 4)).NumberFormat = EuroNumberFormat()
 
     FormatReportTable _
-        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastDataRow, c + 3)), _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastDataRow, c + 4)), _
         1
 
     FormatFirstColumn ws, r + 1, LastDataRow, c
+
+    HighlightCurrentRows _
+        ws.Range(ws.Cells(LastDataRow, c), ws.Cells(LastDataRow, c + 4))
 
 End Sub
 
@@ -1318,17 +1478,20 @@ Private Sub WritePortfolioRow( _
     Dim LoanCount As Long
     Dim DrawnAmount As Double
     Dim ApprovedAmount As Double
+    Dim CollateralValue As Double
 
     CalculateWeeklyPortfolioStats _
         RefDate, _
         LoanCount, _
         DrawnAmount, _
-        ApprovedAmount
+        ApprovedAmount, _
+        CollateralValue
 
     ws.Cells(TargetRow, StartCol).Value = RefDate
     ws.Cells(TargetRow, StartCol + 1).Value = LoanCount
-    ws.Cells(TargetRow, StartCol + 2).Value = DrawnAmount
-    ws.Cells(TargetRow, StartCol + 3).Value = ApprovedAmount
+    ws.Cells(TargetRow, StartCol + 2).Value = ApprovedAmount
+    ws.Cells(TargetRow, StartCol + 3).Value = DrawnAmount
+    ws.Cells(TargetRow, StartCol + 4).Value = CollateralValue
 
 End Sub
 
@@ -1389,16 +1552,6 @@ Private Function NewCollateralDictionary() As Object
 
 End Function
 
-Private Function CollateralTotal(ByVal Amounts As Object) As Double
-
-    Dim Category As Variant
-
-    For Each Category In CollateralCategories()
-        CollateralTotal = CollateralTotal + Amounts(Category(0))
-    Next Category
-
-End Function
-
 '
 ' The four row shapes every collateral table is built from. Each writes the
 ' category columns only; the caller owns the row label in LeftCol.
@@ -1436,258 +1589,284 @@ Private Sub WriteCollateralAmounts( _
 
 End Sub
 
+'
+' Each category's share of the amount row above, as a formula: Excel does
+' the division and a reader can see what was divided by what.  A row that
+' sums to nothing shows blank rather than an error.
+'
 Private Sub WriteCollateralShares( _
     ByVal ws As Worksheet, _
     ByVal RowNo As Long, _
     ByVal LeftCol As Long, _
-    ByVal Amounts As Object, _
-    ByVal Total As Double)
+    ByVal AmountRow As Long)
 
-    Dim Categories As Variant
-    Dim i As Long
+    Dim FirstCol As Long
+    Dim LastCol As Long
+    Dim TotalText As String
 
-    If Total = 0 Then Exit Sub
+    FirstCol = LeftCol + 1
+    LastCol = LeftCol + CollateralCategoryCount()
 
-    Categories = CollateralCategories()
+    TotalText = _
+        "SUM(" & _
+        ws.Range( _
+            ws.Cells(AmountRow, FirstCol), _
+            ws.Cells(AmountRow, LastCol)).Address(True, True) & ")"
 
-    For i = 0 To UBound(Categories)
-        ws.Cells(RowNo, LeftCol + 1 + i).Value = _
-            Amounts(Categories(i)(0)) / Total
-    Next i
+    '
+    ' One relative formula over the whole row: Excel shifts the amount
+    ' reference across the categories while the total stays anchored.
+    '
+    ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
+        "=IF(" & TotalText & "=0,""""," & _
+        ws.Cells(AmountRow, FirstCol).Address(False, False) & _
+        "/" & TotalText & ")"
 
 End Sub
 
 '
-' Percentage change against a base period. A category the base period did not
-' hold has no meaningful change, so its cell is left empty.
+' The change from the base row to the current row, category by category, as
+' a formula.
 '
 Private Sub WriteCollateralChange( _
     ByVal ws As Worksheet, _
     ByVal RowNo As Long, _
     ByVal LeftCol As Long, _
-    ByVal Amounts As Object, _
-    ByVal BaseAmounts As Object)
+    ByVal CurrentRow As Long, _
+    ByVal BaseRow As Long)
 
-    Dim Categories As Variant
-    Dim BaseValue As Double
-    Dim i As Long
+    WriteChangeFormulas _
+        ws, _
+        RowNo, _
+        LeftCol + 1, _
+        LeftCol + CollateralCategoryCount(), _
+        CurrentRow, _
+        BaseRow
 
-    Categories = CollateralCategories()
+End Sub
 
-    For i = 0 To UBound(Categories)
+'
+' The current snapshot's rows, in the two tables that carry one: dark red
+' (#943634) under white, so the eye lands on "now" before anything else.
+' The change rows under them keep their grey.
+'
+Private Sub HighlightCurrentRows( _
+    ByVal Target As Range)
 
-        BaseValue = BaseAmounts(Categories(i)(0))
+    With Target
+        .Interior.Color = RGB(148, 54, 52)
+        .Font.Color = RGB(255, 255, 255)
+    End With
 
-        If BaseValue <> 0 Then
-            ws.Cells(RowNo, LeftCol + 1 + i).Value = _
-                (Amounts(Categories(i)(0)) - BaseValue) / BaseValue
-        End If
+End Sub
 
-    Next i
+'
+' The change from the base row to the current row, column by column, as one
+' relative formula over the row.  A column with no base amount shows blank:
+' there is no change to speak of from nothing.
+'
+Private Sub WriteChangeFormulas( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal FirstCol As Long, _
+    ByVal LastCol As Long, _
+    ByVal CurrentRow As Long, _
+    ByVal BaseRow As Long)
+
+    Dim CurrentText As String
+    Dim BaseText As String
+
+    CurrentText = ws.Cells(CurrentRow, FirstCol).Address(False, False)
+    BaseText = ws.Cells(BaseRow, FirstCol).Address(False, False)
+
+    ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
+        "=IF(" & BaseText & "=0,""""," & _
+        CurrentText & "/" & BaseText & "-1)"
 
 End Sub
 
 Private Sub BuildCollateralBreakdown( _
     ByVal ws As Worksheet, _
-    ByRef CurrentPositions As Variant, _
-    ByRef WeekPositions As Variant, _
+    ByRef ThisReport As ReportSnapshots, _
+    ByRef PriorReport As ReportSnapshots, _
     ByRef YTDPositions As Variant, _
-    ByVal WeekDate As Date, _
     ByRef UnknownAssets As Object)
 
     Dim DictCurrent As Object
-    Dim DictWeek As Object
+    Dim DictCompare As Object
     Dim DictYTD As Object
-
-    Dim TotalCurrent As Double
-    Dim TotalWeek As Double
-    Dim TotalYTD As Double
-
-    Dim ReportDate As Date
 
     Dim r As Long
     Dim c As Long
     Dim LastCol As Long
+    Dim LastRow As Long
 
-    If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
+    If Not WeeklyDataHasRows(ThisReport.Positions) Then Exit Sub
     If Not WeeklyDataHasRows(YTDPositions) Then Exit Sub
 
     r = Layout.BreakdownRow
     c = Layout.BreakdownCol
     LastCol = c + CollateralCategoryCount()
-
-    ReportDate = _
-        ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
+    LastRow = r + 9
 
     Set DictCurrent = _
-        BuildCollateralDictionary(CurrentPositions, UnknownAssets)
-    Set DictWeek = _
-        BuildCollateralDictionary(WeekPositions, UnknownAssets)
+        BuildCollateralDictionary(ThisReport.Positions, UnknownAssets)
+    Set DictCompare = _
+        BuildCollateralDictionary(PriorReport.Positions, UnknownAssets)
     Set DictYTD = _
         BuildCollateralDictionary(YTDPositions, UnknownAssets)
-
-    TotalCurrent = CollateralTotal(DictCurrent)
-    TotalWeek = CollateralTotal(DictWeek)
-    TotalYTD = CollateralTotal(DictYTD)
 
     WriteSectionTitle _
         ws, r, c, _
         CollateralCategoryCount() + 1, _
         "Collateral Breakdown"
 
-    ws.Cells(r + 1, c).Value = "Date"
+    ws.Cells(r + 1, c).Value = "As of"
     WriteCollateralHeaders ws, r + 1, c
 
     '
-    ' Oldest to newest, each snapshot followed by its shares, then the two
-    ' changes.  The week row carries the date it resolved to rather than a
-    ' label: when the snapshots are sparse it can land on the current date,
-    ' and repeating the date says so plainly.
+    ' Year-end, the date compared to, the current date, each with its
+    ' shares; then the change against the compared date and against
+    ' year-end.  Only the amounts are values; the share and change rows are
+    ' formulas over them, so the arithmetic stays in the sheet where it can
+    ' be read.  The current amounts sit six rows under the anchor, which is
+    ' where the pie reads them.
     '
-    ws.Cells(r + 2, c).Value = "YE " & Year(ReportDate) - 1
-    WriteCollateralAmounts ws, r + 2, c, DictYTD
+    WriteBreakdownBlock ws, r + 2, c, ThisReport.AsOfDate, DictYTD
+    ws.Cells(r + 2, c).Value = "YE " & Year(ThisReport.AsOfDate) - 1
 
-    ws.Cells(r + 3, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 3, c, DictYTD, TotalYTD
+    WriteBreakdownBlock ws, r + 4, c, PriorReport.AsOfDate, DictCompare
 
-    ws.Cells(r + 4, c).Value = WeekDate
-    WriteCollateralAmounts ws, r + 4, c, DictWeek
-
-    ws.Cells(r + 5, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 5, c, DictWeek, TotalWeek
-
-    ws.Cells(r + 6, c).Value = ReportDate
-    WriteCollateralAmounts ws, r + 6, c, DictCurrent
-
-    ws.Cells(r + 7, c).Value = "% of Portfolio"
-    WriteCollateralShares ws, r + 7, c, DictCurrent, TotalCurrent
+    WriteBreakdownBlock ws, r + 6, c, ThisReport.AsOfDate, DictCurrent
 
     ws.Cells(r + 8, c).Value = "% Change WoW"
-    WriteCollateralChange ws, r + 8, c, DictCurrent, DictWeek
+    WriteCollateralChange ws, r + 8, c, r + 6, r + 4
 
     ws.Cells(r + 9, c).Value = "% Change YTD"
-    WriteCollateralChange ws, r + 9, c, DictCurrent, DictYTD
+    WriteCollateralChange ws, r + 9, c, r + 6, r + 2
 
     '
-    ' Formatting
+    ' Formatting: the table as a whole, then each block's own rows.
     '
-
-    ws.Range(ws.Cells(r + 2, c), ws.Cells(r + 6, c)).NumberFormat = "dd/mm/yyyy"
+    ws.Range( _
+        ws.Cells(r + 2, c), _
+        ws.Cells(r + 6, c)).NumberFormat = REPORT_DATE_FORMAT
 
     ws.Range( _
         ws.Cells(r + 2, c + 1), _
-        ws.Cells(r + 6, LastCol)).NumberFormat = EuroNumberFormat()
+        ws.Cells(LastRow, LastCol)).NumberFormat = EuroNumberFormat()
 
-    '
-    ' The three share rows and the two change rows.
-    '
-    ws.Range( _
-        ws.Cells(r + 3, c + 1), _
-        ws.Cells(r + 3, LastCol)).NumberFormat = "0.00%"
+    FormatReportTable _
+        ws.Range(ws.Cells(r + 1, c), ws.Cells(LastRow, LastCol)), _
+        1
 
-    ws.Range( _
-        ws.Cells(r + 5, c + 1), _
-        ws.Cells(r + 5, LastCol)).NumberFormat = "0.00%"
+    FormatFirstColumn ws, r + 1, LastRow, c
 
-    ws.Range( _
-        ws.Cells(r + 7, c + 1), _
-        ws.Cells(r + 7, LastCol)).NumberFormat = "0.00%"
+    FormatBreakdownBlock ws, r + 2, c, LastCol
+    FormatBreakdownBlock ws, r + 4, c, LastCol
+    FormatBreakdownBlock ws, r + 6, c, LastCol
 
     ws.Range( _
         ws.Cells(r + 8, c + 1), _
-        ws.Cells(r + 9, LastCol)).NumberFormat = "0.00%"
+        ws.Cells(LastRow, LastCol)).NumberFormat = "0.00%"
 
-    FormatReportTable _
-        ws.Range(ws.Cells(r + 1, c), ws.Cells(r + 9, LastCol)), _
-        1
-
-    FormatFirstColumn ws, r + 1, r + 9, c
-
-    AddBottomBorder ws, r + 3, c, LastCol
-    AddBottomBorder ws, r + 5, c, LastCol
-    AddBottomBorder ws, r + 7, c, LastCol
-
-    ws.Cells(r + 3, c).Font.Bold = False
-    ws.Cells(r + 5, c).Font.Bold = False
-    ws.Cells(r + 7, c).Font.Bold = False
-
-    With ws.Range(ws.Cells(r + 8, c), ws.Cells(r + 9, LastCol))
+    With ws.Range(ws.Cells(r + 8, c), ws.Cells(LastRow, LastCol))
         .Font.Bold = True
         .Interior.Color = RGB(212, 212, 212)
     End With
 
-    CreateCollateralPieChart ws, DictCurrent, ReportDate
+    HighlightCurrentRows _
+        ws.Range(ws.Cells(r + 6, c), ws.Cells(r + 7, LastCol))
 
 End Sub
 
 '
-' New loans are the NDGs the current snapshot has that an earlier one did
-' not, so the current accounts are the subject in both windows and only the
-' reference moves.
+' One snapshot's block of the breakdown: its amounts under its date, then
+' their shares.
+'
+Private Sub WriteBreakdownBlock( _
+    ByVal ws As Worksheet, _
+    ByVal TopRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal SnapshotDate As Date, _
+    ByVal Amounts As Object)
+
+    ws.Cells(TopRow, LeftCol).Value = SnapshotDate
+    WriteCollateralAmounts ws, TopRow, LeftCol, Amounts
+
+    ws.Cells(TopRow + 1, LeftCol).Value = "% of Portfolio"
+    WriteCollateralShares ws, TopRow + 1, LeftCol, TopRow
+
+End Sub
+
+'
+' A block's own formatting once the table's is on: the shares in percent
+' under a plain label, a rule under the block.
+'
+Private Sub FormatBreakdownBlock( _
+    ByVal ws As Worksheet, _
+    ByVal AmountRow As Long, _
+    ByVal LeftCol As Long, _
+    ByVal LastCol As Long)
+
+    ws.Range( _
+        ws.Cells(AmountRow + 1, LeftCol + 1), _
+        ws.Cells(AmountRow + 1, LastCol)).NumberFormat = "0.00%"
+
+    ws.Cells(AmountRow + 1, LeftCol).Font.Bold = False
+
+    AddBottomBorder ws, AmountRow + 1, LeftCol, LastCol
+
+End Sub
+
+'
+' New loans are the NDGs a snapshot has that the month-earlier one did
+' not: the snapshot's accounts against the earlier ones, its own
+' positions for what they are worth.
 '
 Private Sub BuildNewLoansSection( _
     ByVal ws As Worksheet, _
-    ByRef CurrentAccounts As Variant, _
-    ByRef WeekAccounts As Variant, _
-    ByRef MonthAccounts As Variant, _
-    ByRef CurrentPositions As Variant)
+    ByRef PriorReport As ReportSnapshots, _
+    ByRef ThisReport As ReportSnapshots)
 
     WriteLoanMovementSection _
         ws, _
         Layout.NewLoanRow, _
         Layout.NewLoanCol, _
-        "New Lombard Loans", _
+        "New Lombard Loans in the Past Month", _
         "New Loans", _
-        CurrentAccounts, _
-        WeekAccounts, _
-        CurrentPositions, _
-        CurrentAccounts, _
-        MonthAccounts, _
-        CurrentPositions
+        PriorReport, _
+        ThisReport, _
+        False
 
 End Sub
 
 '
-' Ended loans are the other way round: the NDGs an earlier snapshot had and
-' the current one does not, so the earlier snapshot is the subject and its
-' own positions carry the collateral that left.
+' Ended loans are the other way round: the NDGs the month-earlier snapshot
+' had and this one does not, with the earlier snapshot's positions for the
+' collateral that left.
 '
 Private Sub BuildEndedLoansSection( _
     ByVal ws As Worksheet, _
-    ByRef CurrentAccounts As Variant, _
-    ByRef WeekAccounts As Variant, _
-    ByRef WeekPositions As Variant, _
-    ByRef MonthAccounts As Variant, _
-    ByRef MonthPositions As Variant)
+    ByRef PriorReport As ReportSnapshots, _
+    ByRef ThisReport As ReportSnapshots)
 
     WriteLoanMovementSection _
         ws, _
         Layout.EndedLoanRow, _
         Layout.EndedLoanCol, _
-        "Lombard Loans Ended", _
+        "Lombard Loans Ended in the Past Month", _
         "Ended Loans", _
-        WeekAccounts, _
-        CurrentAccounts, _
-        WeekPositions, _
-        MonthAccounts, _
-        CurrentAccounts, _
-        MonthPositions
+        PriorReport, _
+        ThisReport, _
+        True
 
 End Sub
 
 '
-' One loan-movement table: the accounts present in SubjectAccounts but absent
-' from ReferenceAccounts, with their collateral read from the snapshot the
-' loans were still live in. New loans compare the current snapshot against the
-' previous one; ended loans compare the previous snapshot against the current
-' one. An NDG is counted once however many account rows it holds.
-'
-'
-' A movement table, one row per window, so the past week reads against the
-' past month rather than replacing it.  Which snapshot is the subject and
-' which the reference is the caller's business: new loans are the current
-' accounts measured against an earlier one, ended loans the earlier accounts
-' measured against the current.
+' A movement table over the past month, read against the date compared
+' to: that date's row, this report's, and the change between them.  Each
+' row is labelled with the date its month ends on.
 '
 Private Sub WriteLoanMovementSection( _
     ByVal ws As Worksheet, _
@@ -1695,39 +1874,39 @@ Private Sub WriteLoanMovementSection( _
     ByVal LeftCol As Long, _
     ByVal Title As String, _
     ByVal CountHeader As String, _
-    ByRef WeekSubject As Variant, _
-    ByRef WeekReference As Variant, _
-    ByRef WeekPositions As Variant, _
-    ByRef MonthSubject As Variant, _
-    ByRef MonthReference As Variant, _
-    ByRef MonthPositions As Variant)
+    ByRef PriorReport As ReportSnapshots, _
+    ByRef ThisReport As ReportSnapshots, _
+    ByVal Ended As Boolean)
 
     Dim LastRow As Long
 
-    If Not WeeklyDataHasRows(MonthSubject) Then Exit Sub
-    If Not WeeklyDataHasRows(MonthReference) Then Exit Sub
+    If Not WeeklyDataHasRows(ThisReport.Accounts) Then Exit Sub
+    If Not WeeklyDataHasRows(ThisReport.MonthAccounts) Then Exit Sub
+
+    LastRow = TopRow + 4
 
     WriteSectionTitle ws, TopRow, LeftCol, 5, Title
 
-    ws.Cells(TopRow + 1, LeftCol).Value = "Window"
+    ws.Cells(TopRow + 1, LeftCol).Value = "As of"
     ws.Cells(TopRow + 1, LeftCol + 1).Value = CountHeader
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Max Approved Loan"
+    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Approved Loan"
     ws.Cells(TopRow + 1, LeftCol + 3).Value = "Drawn Amount"
     ws.Cells(TopRow + 1, LeftCol + 4).Value = "Collateral Value"
 
-    WriteLoanMovementRow _
-        ws, TopRow + 2, LeftCol, "Past week", _
-        WeekSubject, WeekReference, WeekPositions
+    WriteMovementRow ws, TopRow + 2, LeftCol, PriorReport, Ended
+    WriteMovementRow ws, TopRow + 3, LeftCol, ThisReport, Ended
 
-    WriteLoanMovementRow _
-        ws, TopRow + 3, LeftCol, "Past month", _
-        MonthSubject, MonthReference, MonthPositions
-
-    LastRow = TopRow + 3
+    ws.Cells(LastRow, LeftCol).Value = "% Change WoW"
+    WriteChangeFormulas _
+        ws, LastRow, LeftCol + 1, LeftCol + 4, TopRow + 3, TopRow + 2
 
     ws.Range( _
         ws.Cells(TopRow + 2, LeftCol + 2), _
-        ws.Cells(LastRow, LeftCol + 4)).NumberFormat = EuroNumberFormat()
+        ws.Cells(TopRow + 3, LeftCol + 4)).NumberFormat = EuroNumberFormat()
+
+    ws.Range( _
+        ws.Cells(LastRow, LeftCol + 1), _
+        ws.Cells(LastRow, LeftCol + 4)).NumberFormat = "0.00%"
 
     FormatReportTable _
         ws.Range( _
@@ -1736,6 +1915,45 @@ Private Sub WriteLoanMovementSection( _
         1
 
     FormatFirstColumn ws, TopRow + 1, LastRow, LeftCol
+
+    AddBottomBorder ws, TopRow + 3, LeftCol, LeftCol + 4
+
+    With ws.Range(ws.Cells(LastRow, LeftCol), ws.Cells(LastRow, LeftCol + 4))
+        .Font.Bold = True
+        .Interior.Color = RGB(212, 212, 212)
+    End With
+
+End Sub
+
+'
+' One date's movement row over its past month, by WriteLoanMovementRow
+' with the subject and reference its window calls for.
+'
+Private Sub WriteMovementRow( _
+    ByVal ws As Worksheet, _
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByRef Snaps As ReportSnapshots, _
+    ByVal Ended As Boolean)
+
+    If Ended Then
+        WriteLoanMovementRow _
+            ws, RowNo, LeftCol, "", _
+            Snaps.MonthAccounts, Snaps.Accounts, Snaps.MonthPositions
+    Else
+        WriteLoanMovementRow _
+            ws, RowNo, LeftCol, "", _
+            Snaps.Accounts, Snaps.MonthAccounts, Snaps.Positions
+    End If
+
+    '
+    ' The label after the row writer, which puts the window's text there:
+    ' here the rows are told apart by their dates.
+    '
+    With ws.Cells(RowNo, LeftCol)
+        .Value = Snaps.AsOfDate
+        .NumberFormat = REPORT_DATE_FORMAT
+    End With
 
 End Sub
 
@@ -1954,24 +2172,72 @@ End Sub
 
 Private Sub BuildEnteredCollateralSection( _
     ByVal ws As Worksheet, _
-    ByRef CurrentAccounts As Variant, _
-    ByRef WeekAccounts As Variant, _
-    ByRef MonthAccounts As Variant, _
-    ByRef CurrentPositions As Variant, _
+    ByRef PriorReport As ReportSnapshots, _
+    ByRef ThisReport As ReportSnapshots, _
     ByRef UnknownAssets As Object)
 
-    If Not WeeklyDataHasRows(CurrentAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(MonthAccounts) Then Exit Sub
-    If Not WeeklyDataHasRows(CurrentPositions) Then Exit Sub
+    Dim TopRow As Long
+    Dim LeftCol As Long
+    Dim LastCol As Long
+    Dim LastRow As Long
 
-    WriteEnteredCollateralLayout _
-        ws, _
-        EnteredCollateralAmounts( _
-            CurrentAccounts, WeekAccounts, CurrentPositions, UnknownAssets), _
-        EnteredCollateralAmounts( _
-            CurrentAccounts, MonthAccounts, CurrentPositions, UnknownAssets), _
-        Layout.EnteredRow, _
-        Layout.EnteredCol
+    If Not WeeklyDataHasRows(ThisReport.Accounts) Then Exit Sub
+    If Not WeeklyDataHasRows(ThisReport.MonthAccounts) Then Exit Sub
+    If Not WeeklyDataHasRows(ThisReport.Positions) Then Exit Sub
+
+    TopRow = Layout.EnteredRow
+    LeftCol = Layout.EnteredCol
+    LastCol = LeftCol + CollateralCategoryCount()
+    LastRow = TopRow + 6
+
+    WriteSectionTitle _
+        ws, TopRow, LeftCol, _
+        CollateralCategoryCount() + 1, _
+        "Collateral Entered with New NDGs in the Past Month"
+
+    ws.Cells(TopRow + 1, LeftCol).Value = "As of"
+    WriteCollateralHeaders ws, TopRow + 1, LeftCol
+
+    '
+    ' The compared date's amounts and shares, this report's, and the change
+    ' between the two amount rows.
+    '
+    WriteEnteredRows ws, TopRow + 2, LeftCol, PriorReport, UnknownAssets
+    WriteEnteredRows ws, TopRow + 4, LeftCol, ThisReport, UnknownAssets
+
+    ws.Cells(LastRow, LeftCol).Value = "% Change WoW"
+    WriteCollateralChange ws, LastRow, LeftCol, TopRow + 4, TopRow + 2
+
+    ws.Range( _
+        ws.Cells(TopRow + 2, LeftCol + 1), _
+        ws.Cells(TopRow + 5, LastCol)).NumberFormat = EuroNumberFormat()
+
+    ws.Range( _
+        ws.Cells(TopRow + 3, LeftCol + 1), _
+        ws.Cells(TopRow + 3, LastCol)).NumberFormat = "0.00%"
+
+    ws.Range( _
+        ws.Cells(TopRow + 5, LeftCol + 1), _
+        ws.Cells(LastRow, LastCol)).NumberFormat = "0.00%"
+
+    FormatReportTable _
+        ws.Range( _
+            ws.Cells(TopRow + 1, LeftCol), _
+            ws.Cells(LastRow, LastCol)), _
+        1
+
+    FormatFirstColumn ws, TopRow + 1, LastRow, LeftCol
+
+    AddBottomBorder ws, TopRow + 3, LeftCol, LastCol
+    AddBottomBorder ws, TopRow + 5, LeftCol, LastCol
+
+    ws.Cells(TopRow + 3, LeftCol).Font.Bold = False
+    ws.Cells(TopRow + 5, LeftCol).Font.Bold = False
+
+    With ws.Range(ws.Cells(LastRow, LeftCol), ws.Cells(LastRow, LastCol))
+        .Font.Bold = True
+        .Interior.Color = RGB(212, 212, 212)
+    End With
 
 End Sub
 
@@ -2036,62 +2302,38 @@ Private Function EnteredCollateralAmounts( _
 
 End Function
 
-Private Sub WriteEnteredCollateralLayout( _
+'
+' One date's pair of entered rows over its past month: the amounts under
+' the date, then their shares.
+'
+Private Sub WriteEnteredRows( _
     ByVal ws As Worksheet, _
-    ByVal WeekAmounts As Object, _
-    ByVal MonthAmounts As Object, _
-    ByVal TopRow As Long, _
-    ByVal LeftCol As Long)
+    ByVal RowNo As Long, _
+    ByVal LeftCol As Long, _
+    ByRef Snaps As ReportSnapshots, _
+    ByRef UnknownAssets As Object)
 
-    Dim LastCol As Long
+    Dim Amounts As Object
 
-    LastCol = LeftCol + CollateralCategoryCount()
+    If Not WeeklyDataHasRows(Snaps.Accounts) Or _
+       Not WeeklyDataHasRows(Snaps.Positions) Then
+        Set Amounts = NewCollateralDictionary()
+    Else
+        Set Amounts = _
+            EnteredCollateralAmounts( _
+                Snaps.Accounts, Snaps.MonthAccounts, Snaps.Positions, _
+                UnknownAssets)
+    End If
 
-    WriteSectionTitle _
-        ws, TopRow, LeftCol, _
-        CollateralCategoryCount() + 1, _
-        "Collateral Entered with New NDGs"
+    With ws.Cells(RowNo, LeftCol)
+        .Value = Snaps.AsOfDate
+        .NumberFormat = REPORT_DATE_FORMAT
+    End With
 
-    WriteCollateralHeaders ws, TopRow + 1, LeftCol
+    WriteCollateralAmounts ws, RowNo, LeftCol, Amounts
 
-    ws.Cells(TopRow + 2, LeftCol).Value = "Past week"
-    WriteCollateralAmounts ws, TopRow + 2, LeftCol, WeekAmounts
-
-    ws.Cells(TopRow + 3, LeftCol).Value = "%"
-    WriteCollateralShares _
-        ws, TopRow + 3, LeftCol, WeekAmounts, CollateralTotal(WeekAmounts)
-
-    ws.Cells(TopRow + 4, LeftCol).Value = "Past month"
-    WriteCollateralAmounts ws, TopRow + 4, LeftCol, MonthAmounts
-
-    ws.Cells(TopRow + 5, LeftCol).Value = "%"
-    WriteCollateralShares _
-        ws, TopRow + 5, LeftCol, MonthAmounts, CollateralTotal(MonthAmounts)
-
-    ws.Range( _
-        ws.Cells(TopRow + 2, LeftCol + 1), _
-        ws.Cells(TopRow + 4, LastCol)).NumberFormat = EuroNumberFormat()
-
-    ws.Range( _
-        ws.Cells(TopRow + 3, LeftCol + 1), _
-        ws.Cells(TopRow + 3, LastCol)).NumberFormat = "0.00%"
-
-    ws.Range( _
-        ws.Cells(TopRow + 5, LeftCol + 1), _
-        ws.Cells(TopRow + 5, LastCol)).NumberFormat = "0.00%"
-
-    FormatReportTable _
-        ws.Range( _
-            ws.Cells(TopRow + 1, LeftCol), _
-            ws.Cells(TopRow + 5, LastCol)), _
-        1
-
-    FormatFirstColumn ws, TopRow + 1, TopRow + 5, LeftCol
-
-    AddBottomBorder ws, TopRow + 3, LeftCol, LastCol
-
-    ws.Cells(TopRow + 3, LeftCol).Font.Bold = False
-    ws.Cells(TopRow + 5, LeftCol).Font.Bold = False
+    ws.Cells(RowNo + 1, LeftCol).Value = "%"
+    WriteCollateralShares ws, RowNo + 1, LeftCol, RowNo
 
 End Sub
 
@@ -2761,6 +3003,7 @@ Private Sub UpdateRiskReferenceDatabases( _
     Dim BondNameCol As Long
     Dim BondIssuerCol As Long
     Dim BondTypeCol As Long
+    Dim BondPrevCol As Long
     Dim FundNameCol As Long
     Dim FundIsinCol As Long
     Dim FundPrefixCol As Long
@@ -2970,6 +3213,19 @@ Private Sub UpdateRiskReferenceDatabases( _
            BondNameCol > 0 And BondIssuerCol > 0 And _
            BondTypeCol > 0 Then
 
+            '
+            ' Previous Names is added to the table the first time it is
+            ' needed.  It is the only column here the code creates, and it
+            ' holds only what the code itself is about to overwrite.
+            '
+            BondPrevCol = _
+                GetTableColumnIndex(DataTable, "Previous Names")
+
+            If BondPrevCol = 0 Then
+                BondPrevCol = DataTable.ListColumns.Add.Index
+                DataTable.ListColumns(BondPrevCol).name = "Previous Names"
+            End If
+
             Set ExistingRows = _
                 BuildTableKeyIndex(DataTable, "Issuer Ticker")
 
@@ -3036,7 +3292,28 @@ Private Sub UpdateRiskReferenceDatabases( _
 
                 ' Sophis may later supply a corrected issuer name; this is
                 ' the only populated field intentionally allowed to update.
+                ' The name it replaces goes to Previous Names: it is what
+                ' lets the issuer be matched back to its row in Companies
+                ' once nothing else about it reads the same.
                 If CStr(Candidate("IssuerName")) <> "" Then
+
+                    CurrentValue = _
+                        SafeText( _
+                            DataRow.Range.Cells(1, BondIssuerCol).Value)
+
+                    If CurrentValue <> "" And _
+                       NormalizeExactNameKey(CurrentValue) <> _
+                       NormalizeExactNameKey( _
+                            CStr(Candidate("IssuerName"))) Then
+
+                        DataRow.Range.Cells(1, BondPrevCol).Value = _
+                            MergeDelimitedText( _
+                                SafeText( _
+                                    DataRow.Range.Cells( _
+                                        1, BondPrevCol).Value), _
+                                CurrentValue)
+
+                    End If
 
                     DataRow.Range.Cells(1, BondIssuerCol).Value = _
                         CStr(Candidate("IssuerName"))
@@ -5353,6 +5630,7 @@ End Function
 Private Sub LoadBondIssuerMaps( _
     ByRef IssuerMapping As Object, _
     ByRef TypeMapping As Object, _
+    ByRef PreviousNameMapping As Object, _
     ByRef MappingReady As Boolean, _
     ByVal PreferredWorkbook As Workbook)
 
@@ -5361,13 +5639,16 @@ Private Sub LoadBondIssuerMaps( _
     Dim TickerColumn As Long
     Dim IssuerColumn As Long
     Dim TypeColumn As Long
+    Dim PreviousColumn As Long
     Dim r As Long
     Dim LookupKey As String
     Dim IssuerName As String
     Dim IssuerType As String
+    Dim PreviousNames As String
 
     Set IssuerMapping = NewExactNameMap()
     Set TypeMapping = NewExactNameMap()
+    Set PreviousNameMapping = NewExactNameMap()
 
     Set DataTable = _
         GetReferenceDataTable( _
@@ -5383,6 +5664,10 @@ Private Sub LoadBondIssuerMaps( _
         GetTableColumnIndex(DataTable, "Issuer Name")
     TypeColumn = _
         GetTableColumnIndex(DataTable, "Bond Type")
+
+    ' Optional: present once an issuer name has ever been corrected.
+    PreviousColumn = _
+        GetTableColumnIndex(DataTable, "Previous Names")
 
     If TickerColumn = 0 Or IssuerColumn = 0 Or _
        TypeColumn = 0 Or DataTable.DataBodyRange Is Nothing Then
@@ -5419,6 +5704,18 @@ Private Sub LoadBondIssuerMaps( _
             If IssuerType <> "" Then
 
                 TypeMapping(LookupKey) = IssuerType
+
+            End If
+
+            If PreviousColumn > 0 Then
+
+                PreviousNames = _
+                    SafeText( _
+                        TableData(r, PreviousColumn))
+
+                If PreviousNames <> "" Then
+                    PreviousNameMapping(LookupKey) = PreviousNames
+                End If
 
             End If
 
@@ -5754,7 +6051,8 @@ Private Sub AddGeographyLookupEntry( _
     ByVal IsinRelationship As String, _
     ByVal IsinPriority As Long, _
     ByVal ObservationSet As Object, _
-    Optional ByVal NameVariant As String = "")
+    Optional ByVal NameVariant As String = "", _
+    Optional ByVal PreviousNames As String = "")
 
     Dim EntryKey As String
     Dim ObservationKey As String
@@ -5847,6 +6145,21 @@ Private Sub AddGeographyLookupEntry( _
         AppendUniqueGeographyVariant( _
             CStr(Entry("Variants")), _
             NameVariant)
+
+    '
+    ' Names this entity was known by before: kept apart from the variants,
+    ' never among them.  They are evidence of a rename, and the old name
+    ' belongs to the old company - the lookup sheet records it in Renamed
+    ' From, not in Name Variants.
+    '
+    If PreviousNames <> "" Then
+
+        Entry("PreviousNames") = _
+            MergeDelimitedText( _
+                EntryText(Entry, "PreviousNames"), _
+                PreviousNames)
+
+    End If
 
     If ReferenceISIN = "" Then Exit Sub
 
@@ -6216,6 +6529,13 @@ Private Sub AddGeographyEntryWithCandidates( _
             CStr(TargetEntry("Variants")), _
             NameVariant, _
             SourceVariants)
+
+    If EntryText(SourceEntry, "PreviousNames") <> "" Then
+        TargetEntry("PreviousNames") = _
+            MergeDelimitedText( _
+                EntryText(TargetEntry, "PreviousNames"), _
+                EntryText(SourceEntry, "PreviousNames"))
+    End If
 
     MergeGeographyCandidateSets _
         TargetEntry, _
@@ -6607,7 +6927,6 @@ Private Function BuildCanonicalEntityNameMap( _
     Dim ManualVariantMap As Object
     Dim VariantSet As Object
     Dim Entry As Object
-
     Dim GeographyKey As Variant
     Dim ManualKey As Variant
     Dim Parts As Variant
@@ -6632,30 +6951,12 @@ Private Function BuildCanonicalEntityNameMap( _
 
     For Each ManualKey In ManualVariantMap.Keys
 
-        CanonicalName = _
+        RegisterMaintainedSpelling _
+            CanonicalByVariant, _
+            EntityByKey, _
+            CStr(ManualKey), _
             StandardizeEntityDisplayName( _
                 CStr(ManualVariantMap(ManualKey)))
-        CanonicalByVariant(CStr(ManualKey)) = CanonicalName
-
-        ' Register both sides of a maintained override. This lets another
-        ' spelling that normalizes like the maintained variant inherit the
-        ' same canonical name, even when the canonical display name itself
-        ' has a substantially different form.
-        EntityKey = NormalizeEntityKey(CStr(ManualKey))
-
-        If EntityKey <> "" Then
-
-            EntityByKey(EntityKey) = CanonicalName
-
-        End If
-
-        CanonicalEntityKey = NormalizeEntityKey(CanonicalName)
-
-        If CanonicalEntityKey <> "" Then
-
-            EntityByKey(CanonicalEntityKey) = CanonicalName
-
-        End If
 
     Next ManualKey
 
@@ -6753,6 +7054,36 @@ Private Function BuildCanonicalEntityNameMap( _
     Set BuildCanonicalEntityNameMap = CanonicalByVariant
 
 End Function
+
+'
+' Register both sides of a maintained spelling: the exact spelling, and
+' the entity keys of the spelling and of its canonical name, so another
+' spelling that normalises like either inherits the same canonical name
+' even when the display name itself has a substantially different form.
+'
+Private Sub RegisterMaintainedSpelling( _
+    ByVal CanonicalByVariant As Object, _
+    ByVal EntityByKey As Object, _
+    ByVal Spelling As String, _
+    ByVal CanonicalName As String)
+
+    Dim VariantKey As String
+    Dim EntityKey As String
+
+    If Spelling = "" Or CanonicalName = "" Then Exit Sub
+
+    VariantKey = NormalizeExactNameKey(Spelling)
+    If VariantKey = "" Then Exit Sub
+
+    CanonicalByVariant(VariantKey) = CanonicalName
+
+    EntityKey = NormalizeEntityKey(Spelling)
+    If EntityKey <> "" Then EntityByKey(EntityKey) = CanonicalName
+
+    EntityKey = NormalizeEntityKey(CanonicalName)
+    If EntityKey <> "" Then EntityByKey(EntityKey) = CanonicalName
+
+End Sub
 
 Private Function ResolveCanonicalEntityName( _
     ByVal RawName As String, _
@@ -7284,6 +7615,7 @@ End Function
 Private Sub LoadCompaniesLookup( _
     ByRef CompaniesByName As Object, _
     ByRef CompaniesByVariant As Object, _
+    ByRef CompaniesByIsin As Object, _
     ByRef CompaniesReady As Boolean)
 
     Dim DataTable As ListObject
@@ -7305,6 +7637,7 @@ Private Sub LoadCompaniesLookup( _
 
     Set CompaniesByName = NewExactNameMap()
     Set CompaniesByVariant = NewExactNameMap()
+    Set CompaniesByIsin = NewExactNameMap()
     CompaniesReady = False
 
     Set DataTable = GetCompaniesDataTable(ThisWorkbook)
@@ -7371,15 +7704,11 @@ Private Sub LoadCompaniesLookup( _
             If LookupKey <> "" Then
 
                 If Not CompaniesByName.Exists(LookupKey) Then
-
                     CompaniesByName.Add LookupKey, Entry
-
                 End If
 
                 If Not CompaniesByVariant.Exists(LookupKey) Then
-
                     CompaniesByVariant.Add LookupKey, Entry
-
                 End If
 
             End If
@@ -7404,11 +7733,47 @@ Private Sub LoadCompaniesLookup( _
 
             Next Part
 
+            '
+            ' The ISIN is the bridge to a company whose name has changed:
+            ' what it issued keeps its ISIN through a rename, its name does
+            ' not.  A fund's ISIN identifies the fund rather than its parent,
+            ' so those rows stay out of this index.
+            '
+            LookupKey = _
+                NormalizeExactNameKey(CStr(Entry("ReferenceISIN")))
+
+            If LookupKey <> "" And _
+               Not IsManagedFundRelationship( _
+                    CStr(Entry("IsinRelationship"))) Then
+
+                If Not CompaniesByIsin.Exists(LookupKey) Then
+                    CompaniesByIsin.Add LookupKey, Entry
+                End If
+
+            End If
+
         End If
 
     Next r
 
 End Sub
+
+Private Function IsManagedFundRelationship( _
+    ByVal Relationship As String) As Boolean
+
+    IsManagedFundRelationship = _
+        (InStr(1, Relationship, "fund", vbTextCompare) > 0)
+
+End Function
+
+Private Function EntryText( _
+    ByVal Entry As Object, _
+    ByVal Key As String) As String
+
+    If Entry Is Nothing Then Exit Function
+    If Entry.Exists(Key) Then EntryText = CStr(Entry(Key))
+
+End Function
 
 Private Function ResolveCompanyEntry( _
     ByVal ExposureName As String, _
@@ -7865,6 +8230,15 @@ Private Function CompanyEntryNeedsLookup( _
 
     End If
 
+    '
+    ' A row registered for a renamed company exists only in memory; the
+    ' sheet still carries the old name, so it is always listed.
+    '
+    If CompanyEntry.Exists("RenamedFrom") Then
+        CompanyEntryNeedsLookup = True
+        Exit Function
+    End If
+
     CurrentName = CStr(GeographyEntry("Name"))
     CurrentVariants = CStr(GeographyEntry("Variants"))
     CurrentTypes = CStr(GeographyEntry("ExposureType"))
@@ -7939,7 +8313,19 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     Dim CurrentRelationship As String
     Dim OutputCount As Long
     Dim OutputRow As Long
+    Dim RenamedCol As Long
+    Dim RenamedCount As Long
     Dim LastRow As Long
+    Dim r As Long
+
+    '
+    ' Renamed From sits in the same column here as in Companies, so a
+    ' row can be pasted across whole.  Companies gets the column the
+    ' first time Insert Renamed needs it, at the end of the table, and
+    ' until then this is where it will land.
+    '
+    RenamedCol = CompaniesRenamedFromColumn()
+
     Set wsLookup = _
         CreateOrReplaceSheet(GEO_SEC_LOOKUP_SHEET)
 
@@ -7954,16 +8340,17 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     wsLookup.Cells(1, 7).Value = "Fallback Geography"
     wsLookup.Cells(1, 8).Value = "Sector"
     wsLookup.Cells(1, 9).Value = "Fallback Sector"
+    wsLookup.Cells(1, RenamedCol).Value = "Renamed From"
 
     LastRow = 1
     Set PendingKeys = New Collection
-
 
     If Not GeographyEntries Is Nothing Then
 
         For Each EntryKey In GeographyEntries.Keys
 
             Set GeographyEntry = GeographyEntries(EntryKey)
+
             Set CompanyEntry = _
                 ResolveCompanyEntry( _
                     CStr(GeographyEntry("Name")), _
@@ -7982,15 +8369,15 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
         OutputCount = PendingKeys.Count
 
-
         If OutputCount > 0 Then
 
-            ReDim Output(1 To OutputCount, 1 To 9)
+            ReDim Output(1 To OutputCount, 1 To RenamedCol)
             OutputRow = 0
 
             For Each EntryKey In PendingKeys
 
                 Set GeographyEntry = GeographyEntries(EntryKey)
+
                 Set CompanyEntry = _
                     ResolveCompanyEntry( _
                         CStr(GeographyEntry("Name")), _
@@ -7998,6 +8385,7 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                         CompaniesByVariant)
 
                 OutputRow = OutputRow + 1
+
                 CurrentISIN = _
                     CStr(GeographyEntry("ReferenceISIN"))
                 CurrentRelationship = _
@@ -8014,6 +8402,14 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                         CStr(GeographyEntry("ExposureType"))
                     Output(OutputRow, 4) = CurrentISIN
                     Output(OutputRow, 5) = CurrentRelationship
+
+                    '
+                    ' A name Companies has never had, that Bond Issuers
+                    ' remembers under an earlier one: the rename goes on
+                    ' record here, with no row to copy from.
+                    '
+                    Output(OutputRow, RenamedCol) = _
+                        EntryText(GeographyEntry, "PreviousNames")
 
                 Else
 
@@ -8060,6 +8456,24 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
                     End If
 
+                    '
+                    ' A renamed company: the new name with the variants
+                    ' the run saw, the old row's reference ISIN - the
+                    ' thing that identified it - and which row it came
+                    ' from.
+                    '
+                    If CompanyEntry.Exists("RenamedFrom") Then
+
+                        Output(OutputRow, 4) = _
+                            CStr(CompanyEntry("ReferenceISIN"))
+                        Output(OutputRow, 5) = _
+                            CStr(CompanyEntry("IsinRelationship"))
+                        Output(OutputRow, RenamedCol) = _
+                            CStr(CompanyEntry("RenamedFrom"))
+                        RenamedCount = RenamedCount + 1
+
+                    End If
+
                 End If
 
             Next EntryKey
@@ -8068,11 +8482,11 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
             wsLookup.Range( _
                 wsLookup.Cells(2, 1), _
-                wsLookup.Cells(LastRow, 9)).Value = Output
+                wsLookup.Cells(LastRow, RenamedCol)).Value = Output
 
             wsLookup.Range( _
                 wsLookup.Cells(1, 1), _
-                wsLookup.Cells(LastRow, 9)).Sort _
+                wsLookup.Cells(LastRow, RenamedCol)).Sort _
                     Key1:=wsLookup.Cells(2, 1), _
                     Order1:=xlAscending, _
                     Header:=xlYes
@@ -8097,15 +8511,41 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                 "BDP(RC[-4]&"" ISIN""," & _
                 """INDUSTRY_SECTOR""))"
 
+            '
+            ' The one exception: a renamed company reuses the old row's
+            ' geography and sector - Insert Renamed copies that row whole -
+            ' so those are shown in place of a Bloomberg query that would
+            ' only find the same thing again.
+            '
+            For r = 2 To LastRow
+
+                If SafeText(wsLookup.Cells(r, RenamedCol).Value) <> "" Then
+
+                    Set CompanyEntry = _
+                        ResolveCompanyEntry( _
+                            SafeText(wsLookup.Cells(r, 1).Value), _
+                            CompaniesByName, _
+                            CompaniesByVariant)
+
+                    If Not CompanyEntry Is Nothing Then
+                        wsLookup.Cells(r, 6).Value = _
+                            CompanyEntry("GeographyFinal")
+                        wsLookup.Cells(r, 8).Value = _
+                            CompanyEntry("SectorFinal")
+                    End If
+
+                End If
+
+            Next r
+
         End If
 
     End If
 
-
     FormatReportTable _
         wsLookup.Range( _
             wsLookup.Cells(1, 1), _
-            wsLookup.Cells(LastRow, 9)), _
+            wsLookup.Cells(LastRow, RenamedCol)), _
         1
 
     If LastRow >= 2 Then
@@ -8119,26 +8559,29 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
     End If
 
     wsLookup.Columns(4).NumberFormat = "@"
-    wsLookup.Range( _
-        wsLookup.Cells(1, 1), _
-        wsLookup.Cells(LastRow, 9)).HorizontalAlignment = xlLeft
 
     wsLookup.Range( _
         wsLookup.Cells(1, 1), _
-        wsLookup.Cells(LastRow, 9)).Font.name = "Aptos Display"
-    wsLookup.Columns("A:I").AutoFit
+        wsLookup.Cells(LastRow, RenamedCol)).HorizontalAlignment = xlLeft
+
+    wsLookup.Range( _
+        wsLookup.Cells(1, 1), _
+        wsLookup.Cells(LastRow, RenamedCol)).Font.name = "Aptos Display"
+
+    wsLookup.Range( _
+        wsLookup.Columns(1), _
+        wsLookup.Columns(RenamedCol)).AutoFit
 
     If wsLookup.Columns(1).ColumnWidth > 45 Then _
         wsLookup.Columns(1).ColumnWidth = 45
-
     If wsLookup.Columns(2).ColumnWidth > 60 Then _
         wsLookup.Columns(2).ColumnWidth = 60
-
     If wsLookup.Columns(3).ColumnWidth > 42 Then _
         wsLookup.Columns(3).ColumnWidth = 42
-
     If wsLookup.Columns(5).ColumnWidth > 35 Then _
         wsLookup.Columns(5).ColumnWidth = 35
+    If wsLookup.Columns(RenamedCol).ColumnWidth > 45 Then _
+        wsLookup.Columns(RenamedCol).ColumnWidth = 45
 
     wsLookup.Columns(2).WrapText = True
 
@@ -8146,13 +8589,526 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
 
         wsLookup.Range( _
             wsLookup.Cells(1, 1), _
-            wsLookup.Cells(LastRow, 9)).AutoFilter
+            wsLookup.Cells(LastRow, RenamedCol)).AutoFilter
 
     End If
 
+    '
+    ' The renamed rows reach Companies through a button on this sheet:
+    ' a person reads them, then presses it.  Nothing is inserted on its
+    ' own.  The sheet is rebuilt every run, so the button is too.
+    '
+    If RenamedCount > 0 Then
+
+        With wsLookup.Buttons.Add( _
+                wsLookup.Cells(1, RenamedCol + 2).Left, _
+                wsLookup.Cells(1, RenamedCol + 2).Top, _
+                110, _
+                22)
+
+            .name = "btnInsertRenamed"
+            .Characters.Text = "Insert Renamed"
+            .OnAction = "InsertRenamedCompanies"
+
+        End With
+
+    End If
 
     DeleteLegacyGeographyLookupWorksheet
 
+End Sub
+
+'
+' Where Renamed From is - or will be - in Companies: its own column if
+' the table has one, else the column Insert Renamed will add at the end.
+' The lookup sheet puts the field in the same place so rows paste across.
+' Never inside the lookup's own nine columns.
+'
+Private Function CompaniesRenamedFromColumn() As Long
+
+    Dim DataTable As ListObject
+
+    Set DataTable = GetCompaniesDataTable(ThisWorkbook)
+
+    If Not DataTable Is Nothing Then
+
+        CompaniesRenamedFromColumn = _
+            GetTableColumnIndex(DataTable, "Renamed From")
+
+        If CompaniesRenamedFromColumn = 0 Then
+            CompaniesRenamedFromColumn = DataTable.ListColumns.Count + 1
+        End If
+
+    End If
+
+    If CompaniesRenamedFromColumn < 10 Then CompaniesRenamedFromColumn = 10
+
+End Function
+
+'
+' A name the positions carry that Companies does not know is a stranger
+' until something vouches for it.  Two things do: for a bond issuer, the
+' name Bond Issuers held before Sophis corrected it; for anything, the
+' ISIN of what it issued against Companies' Reference ISIN.  A name that
+' matches that way, and is not merely another spelling of the row's own
+' name, is the same company renamed - and it is handled as a company of
+' its own.  The old row is never touched: the positions that still carry
+' the old name keep resolving to it, so a report for an earlier date
+' reads as it always did.  For this run the new name is registered as a
+' copy of the old row, so it has the old row's geography and sector
+' instead of Others; the lookup sheet lists it with Renamed From filled,
+' and Insert Renamed makes the copy a row of its own in Companies.
+'
+Private Function DetectRenamedCompanies( _
+    ByVal GeographyEntries As Object, _
+    ByVal CompaniesByName As Object, _
+    ByVal CompaniesByVariant As Object, _
+    ByVal CompaniesByIsin As Object) As Object
+
+    Dim Renames As Object
+    Dim EntryKey As Variant
+    Dim Entry As Object
+    Dim CompanyEntry As Object
+    Dim RenamedEntry As Object
+    Dim NewName As String
+    Dim Evidence As String
+    Dim LookupKey As String
+
+    Set Renames = NewExactNameMap()
+    Set DetectRenamedCompanies = Renames
+
+    If GeographyEntries Is Nothing Then Exit Function
+    If CompaniesByName Is Nothing Then Exit Function
+    If CompaniesByVariant Is Nothing Then Exit Function
+
+    For Each EntryKey In GeographyEntries.Keys
+
+        Set Entry = GeographyEntries(EntryKey)
+        NewName = CStr(Entry("Name"))
+        LookupKey = NormalizeExactNameKey(NewName)
+
+        If LookupKey <> "" Then
+
+            If ResolveCompanyEntry( _
+                    NewName, _
+                    CompaniesByName, _
+                    CompaniesByVariant) Is Nothing Then
+
+                Evidence = ""
+
+                Set CompanyEntry = _
+                    MatchCompanyByPreviousName( _
+                        Entry, _
+                        CompaniesByName, _
+                        CompaniesByVariant, _
+                        Evidence)
+
+                If CompanyEntry Is Nothing Then
+                    Set CompanyEntry = _
+                        MatchCompanyByIsin( _
+                            Entry, _
+                            CompaniesByIsin, _
+                            Evidence)
+                End If
+
+                If Not CompanyEntry Is Nothing Then
+
+                    '
+                    ' Another spelling of the row's own name is not a
+                    ' rename; it is left to the ordinary lookup, as before.
+                    '
+                    If Not NamesLookAlike( _
+                            NewName, _
+                            CStr(CompanyEntry("Name"))) Then
+
+                        Set RenamedEntry = _
+                            RenamedCompanyEntry( _
+                                CompanyEntry, _
+                                NewName, _
+                                Evidence)
+
+                        CompaniesByName.Add LookupKey, RenamedEntry
+                        CompaniesByVariant.Add LookupKey, RenamedEntry
+                        Renames.Add LookupKey, RenamedEntry
+
+                    End If
+
+                End If
+
+            End If
+
+        End If
+
+    Next EntryKey
+
+End Function
+
+'
+' The fuzzy matcher's own test, on two names: the same once legal
+' suffixes, share classes and diacritics are gone, or one the prefix of
+' the other by its rules.
+'
+Private Function NamesLookAlike( _
+    ByVal FirstName As String, _
+    ByVal SecondName As String) As Boolean
+
+    Dim FirstKey As String
+    Dim SecondKey As String
+
+    FirstKey = NormalizeEntityKey(FirstName)
+    SecondKey = NormalizeEntityKey(SecondName)
+
+    If FirstKey = "" Or SecondKey = "" Then Exit Function
+
+    NamesLookAlike = _
+        (FirstKey = SecondKey) Or _
+        IsLikelyEntityPrefixMatch(FirstKey, SecondKey)
+
+End Function
+
+'
+' The entry's ISINs against the Companies index.  Only an issued or an
+' underlying security counts: a fund's ISIN names the fund, not the parent
+' the entry stands for.
+'
+Private Function MatchCompanyByIsin( _
+    ByVal Entry As Object, _
+    ByVal CompaniesByIsin As Object, _
+    ByRef Evidence As String) As Object
+
+    Dim Candidates As Object
+    Dim Candidate As Object
+    Dim Isin As Variant
+    Dim LookupKey As String
+
+    If Entry Is Nothing Then Exit Function
+    If CompaniesByIsin Is Nothing Then Exit Function
+    If Not Entry.Exists("IsinCandidates") Then Exit Function
+
+    Set Candidates = Entry("IsinCandidates")
+
+    For Each Isin In Candidates.Keys
+
+        Set Candidate = Candidates(Isin)
+
+        If CLng(Candidate("Priority")) <= _
+           GEO_ISIN_PRIORITY_UNDERLYING Then
+
+            LookupKey = NormalizeExactNameKey(CStr(Isin))
+
+            If CompaniesByIsin.Exists(LookupKey) Then
+
+                Set MatchCompanyByIsin = CompaniesByIsin(LookupKey)
+                Evidence = "ISIN " & CStr(Isin)
+
+                Exit Function
+
+            End If
+
+        End If
+
+    Next Isin
+
+End Function
+
+'
+' The names the entry was known by before, against Companies by name and
+' by variant.  Today only bond issuers carry these, from the Previous
+' Names column Bond Issuers keeps when Sophis corrects a name.
+'
+Private Function MatchCompanyByPreviousName( _
+    ByVal Entry As Object, _
+    ByVal CompaniesByName As Object, _
+    ByVal CompaniesByVariant As Object, _
+    ByRef Evidence As String) As Object
+
+    Dim Parts As Variant
+    Dim Part As Variant
+    Dim PreviousName As String
+
+    Parts = Split(EntryText(Entry, "PreviousNames"), ";")
+
+    For Each Part In Parts
+
+        PreviousName = Trim(CStr(Part))
+
+        If PreviousName <> "" Then
+
+            Set MatchCompanyByPreviousName = _
+                ResolveCompanyEntry( _
+                    PreviousName, _
+                    CompaniesByName, _
+                    CompaniesByVariant)
+
+            If Not MatchCompanyByPreviousName Is Nothing Then
+
+                Evidence = _
+                    "previous issuer name '" & PreviousName & "'"
+
+                Exit Function
+
+            End If
+
+        End If
+
+    Next Part
+
+End Function
+
+'
+' The renamed company as a row of its own: the old row's geography,
+' sector and reference ISIN - the ISIN is what identified it, and stays -
+' under the new name, with the variants this run saw for it.  Two fields
+' the sheet does not have say where it came from and why.
+'
+Private Function RenamedCompanyEntry( _
+    ByVal CompanyEntry As Object, _
+    ByVal NewName As String, _
+    ByVal Evidence As String) As Object
+
+    Dim Copy As Object
+    Dim Key As Variant
+
+    Set Copy = CreateObject("Scripting.Dictionary")
+    Copy.CompareMode = vbTextCompare
+
+    For Each Key In CompanyEntry.Keys
+        Copy.Add Key, CompanyEntry(Key)
+    Next Key
+
+    Copy("Name") = NewName
+    Copy("NameVariants") = ""
+    Copy.Add "RenamedFrom", CStr(CompanyEntry("Name"))
+    Copy.Add "RenameEvidence", Evidence
+
+    Set RenamedCompanyEntry = Copy
+
+End Function
+
+Private Sub AddCompanyRenameNote( _
+    ByVal Renames As Object)
+
+    Dim Key As Variant
+    Dim Entry As Object
+    Dim Listed As Long
+    Dim Lines As String
+
+    If Renames Is Nothing Then Exit Sub
+    If Renames.Count = 0 Then Exit Sub
+
+    For Each Key In Renames.Keys
+
+        Set Entry = Renames(Key)
+
+        If Listed < RENAME_NOTE_LIMIT Then
+            Lines = Lines & vbLf & _
+                CStr(Entry("RenamedFrom")) & " -> " & _
+                CStr(Entry("Name")) & _
+                " (" & CStr(Entry("RenameEvidence")) & ")"
+        End If
+
+        Listed = Listed + 1
+
+    Next Key
+
+    If Renames.Count > RENAME_NOTE_LIMIT Then
+        Lines = Lines & vbLf & _
+            "... and " & _
+            CStr(Renames.Count - RENAME_NOTE_LIMIT) & " more"
+    End If
+
+    WriteNoteWeekly _
+        CStr(Renames.Count) & _
+        IIf(Renames.Count = 1, _
+            " company appears", _
+            " companies appear") & _
+        " under a new name. This report reuses the old row's " & _
+        "geography and sector; '" & GEO_SEC_LOOKUP_SHEET & _
+        "' lists the new name with Renamed From filled and an " & _
+        "Insert Renamed button." & _
+        Lines
+
+End Sub
+
+'
+' Bound to the Insert Renamed button that WriteNewGeoSecLookupWorksheet
+' draws on the lookup sheet when it lists a renamed company.  Nothing in
+' the source calls it; it must stay Public and take no arguments for the
+' button to reach it.  It is the one place the code writes to Companies,
+' and it only adds: for each lookup row with Renamed From filled, a new
+' row copied whole from the row named there - geography, sector and
+' reference ISIN included - with the new name, the variants and exposure
+' types the run saw, and Renamed From recording where it came from.  The
+' old row stays as it is.
+'
+Public Sub InsertRenamedCompanies()
+
+    Dim wsLookup As Worksheet
+    Dim DataTable As ListObject
+    Dim RowIndex As Object
+    Dim OldRow As ListRow
+    Dim NewRow As ListRow
+
+    Dim NameCol As Long
+    Dim VariantsCol As Long
+    Dim TypeCol As Long
+    Dim RenamedCol As Long
+    Dim LookupRenamedCol As Long
+
+    Dim LastRow As Long
+    Dim r As Long
+    Dim c As Long
+
+    Dim OldName As String
+    Dim NewName As String
+
+    Dim Applied As String
+    Dim Skipped As String
+    Dim AppliedCount As Long
+
+    Set wsLookup = GetOptionalWorksheet(GEO_SEC_LOOKUP_SHEET)
+
+    If wsLookup Is Nothing Then
+        MsgBox _
+            "There is no '" & GEO_SEC_LOOKUP_SHEET & "' sheet to read.", _
+            vbExclamation
+        Exit Sub
+    End If
+
+    Set DataTable = GetCompaniesDataTable(ThisWorkbook)
+
+    If DataTable Is Nothing Then
+        MsgBox _
+            "The '" & COMPANIES_SHEET & "' table was not found.", _
+            vbExclamation
+        Exit Sub
+    End If
+
+    NameCol = GetTableColumnIndex(DataTable, "Name")
+
+    If NameCol = 0 Then
+        MsgBox _
+            "'" & COMPANIES_SHEET & "' has no Name column.", _
+            vbExclamation
+        Exit Sub
+    End If
+
+    VariantsCol = GetTableColumnIndex(DataTable, "Name Variants")
+    TypeCol = GetTableColumnIndex(DataTable, "Exposure Type")
+
+    '
+    ' The lookup sheet's Renamed From is wherever its header says; the
+    ' table's is added now if it has none, at the end - the same place
+    ' the lookup sheet put it.
+    '
+    For c = 10 To wsLookup.Cells(1, wsLookup.Columns.Count).End(xlToLeft).Column
+        If StrComp( _
+                SafeText(wsLookup.Cells(1, c).Value), _
+                "Renamed From", _
+                vbTextCompare) = 0 Then
+            LookupRenamedCol = c
+            Exit For
+        End If
+    Next c
+
+    If LookupRenamedCol = 0 Then
+        MsgBox _
+            "'" & GEO_SEC_LOOKUP_SHEET & "' has no Renamed From column.", _
+            vbExclamation
+        Exit Sub
+    End If
+
+    RenamedCol = GetTableColumnIndex(DataTable, "Renamed From")
+
+    If RenamedCol = 0 Then
+        RenamedCol = DataTable.ListColumns.Add.Index
+        DataTable.ListColumns(RenamedCol).name = "Renamed From"
+    End If
+
+    Set RowIndex = BuildTableKeyIndex(DataTable, "Name")
+
+    LastRow = wsLookup.Cells(wsLookup.Rows.Count, 1).End(xlUp).Row
+
+    '
+    ' Bottom up: an inserted row leaves the sheet.
+    '
+    For r = LastRow To 2 Step -1
+
+        OldName = SafeText(wsLookup.Cells(r, LookupRenamedCol).Value)
+        NewName = SafeText(wsLookup.Cells(r, 1).Value)
+
+        If OldName <> "" And NewName <> "" Then
+
+            If RowIndex.Exists(NormalizeExactNameKey(NewName)) Then
+
+                Skipped = Skipped & vbLf & "  " & NewName & _
+                    " - '" & COMPANIES_SHEET & "' already has that row"
+
+            ElseIf Not RowIndex.Exists(NormalizeExactNameKey(OldName)) Then
+
+                Skipped = Skipped & vbLf & "  " & NewName & _
+                    " - no row named '" & OldName & "' to copy from"
+
+            Else
+
+                Set OldRow = _
+                    DataTable.ListRows( _
+                        CLng(RowIndex(NormalizeExactNameKey(OldName))))
+                Set NewRow = DataTable.ListRows.Add
+
+                OldRow.Range.Copy Destination:=NewRow.Range
+                Application.CutCopyMode = False
+
+                NewRow.Range.Cells(1, NameCol).Value = NewName
+
+                If VariantsCol > 0 Then
+                    NewRow.Range.Cells(1, VariantsCol).Value = _
+                        SafeText(wsLookup.Cells(r, 2).Value)
+                End If
+
+                If TypeCol > 0 Then
+                    NewRow.Range.Cells(1, TypeCol).Value = _
+                        SafeText(wsLookup.Cells(r, 3).Value)
+                End If
+
+                ' The reference ISIN and its relationship came across with
+                ' the copy: they are the old row's, and stay so.
+
+                NewRow.Range.Cells(1, RenamedCol).Value = OldName
+
+                RowIndex.Add NormalizeExactNameKey(NewName), NewRow.Index
+
+                wsLookup.Rows(r).Delete
+
+                Applied = Applied & vbLf & "  " & _
+                    OldName & "  ->  " & NewName
+                AppliedCount = AppliedCount + 1
+
+            End If
+
+        End If
+
+    Next r
+
+    If AppliedCount = 0 And Skipped = "" Then
+
+        MsgBox _
+            "No renamed rows on '" & GEO_SEC_LOOKUP_SHEET & _
+            "' - nothing to insert.", _
+            vbInformation
+
+    Else
+
+        MsgBox _
+            "Inserted " & CStr(AppliedCount) & " row(s) into '" & _
+            COMPANIES_SHEET & "':" & Applied & _
+            IIf(Skipped <> "", vbLf & vbLf & "Skipped:" & Skipped, "") & _
+            vbLf & vbLf & _
+            "Rebuild the staging table on the next Weekly Analysis " & _
+            "run for the report to pick this up.", _
+            vbInformation
+
+    End If
 
 End Sub
 
@@ -9987,6 +10943,7 @@ Private Sub BuildRiskGranularitySection( _
     Dim EquityNameMap As Object
     Dim BondIssuerMap As Object
     Dim BondIssuerTypeMap As Object
+    Dim BondPreviousNameMap As Object
     Dim FundMap As Object
     Dim CertificateUnderlyingReferenceIsinMap As Object
     Dim CertificateUnderlyingAssetClassMap As Object
@@ -9995,6 +10952,8 @@ Private Sub BuildRiskGranularitySection( _
     Dim CanonicalNameMap As Object
     Dim CompaniesByName As Object
     Dim CompaniesByVariant As Object
+    Dim CompaniesByIsin As Object
+    Dim CompanyRenames As Object
     Dim CountryNameMap As Object
     Dim StageFinalizationCache As Object
     Dim RiskSubtableVisibility As Object
@@ -10100,6 +11059,7 @@ Private Sub BuildRiskGranularitySection( _
     LoadBondIssuerMaps _
         BondIssuerMap, _
         BondIssuerTypeMap, _
+        BondPreviousNameMap, _
         BondIssuerMapReady, _
         ThisWorkbook
 
@@ -10300,7 +11260,11 @@ Private Sub BuildRiskGranularitySection( _
                         ISIN, _
                         "Issued security", _
                         GEO_ISIN_PRIORITY_ISSUED_SECURITY, _
-                        GeographyObservationSet
+                        GeographyObservationSet, _
+                        PreviousNames:= _
+                            ResolveExactName( _
+                                IssuerTicker, _
+                                BondPreviousNameMap)
 
                     AppendRiskStageRow _
                         StageRows, _
@@ -10435,8 +11399,21 @@ Private Sub BuildRiskGranularitySection( _
     LoadCompaniesLookup _
         CompaniesByName, _
         CompaniesByVariant, _
+        CompaniesByIsin, _
         CompaniesReady
 
+    '
+    ' A name Companies knows only by ISIN or by a previous issuer name is
+    ' a renamed company.  It is registered as a company of its own for
+    ' this run, with the old row's geography and sector, before the
+    ' entries are canonicalised against Companies.
+    '
+    Set CompanyRenames = _
+        DetectRenamedCompanies( _
+            GeographyEntries, _
+            CompaniesByName, _
+            CompaniesByVariant, _
+            CompaniesByIsin)
 
     Set GeographyEntries = _
         CanonicalizeGeographyUsingCompanies( _
@@ -10589,6 +11566,8 @@ StageDataReadyLabel:
             GeographyEntries, _
             CompaniesByName, _
             CompaniesByVariant
+
+        AddCompanyRenameNote CompanyRenames
 
         If Not CompaniesReady Then
 
@@ -10953,34 +11932,42 @@ Private Function WriteTopExposureGroup( _
 End Function
 
 
+'
+' The pie sits on a framed block of cells under the entered-collateral table
+' and is drawn from the breakdown's current row.  It is created last, after
+' the column widths and row heights are final, because it is sized from
+' them: created any earlier it kept the geometry of cells that AutoFit then
+' changed, and its right edge drifted off the tables it lines up with.
+'
 Private Sub CreateCollateralPieChart( _
     ByVal ws As Worksheet, _
-    ByVal DictCurrent As Object, _
     ByVal ReportDate As Date)
 
     Dim ChartObj As ChartObject
+    Dim Frame As Range
 
     Dim TotalCollateral As Double
 
-    Dim TopPos As Double
-    Dim LeftPos As Double
-    Dim RightPos As Double
-
     Dim BreakdownRow As Long
-    Dim BreakdownCol As Long
+    Dim FirstCategoryCol As Long
+    Dim LastCategoryCol As Long
 
     Dim SliceColors As Variant
     Dim i As Long
 
     BreakdownRow = Layout.BreakdownRow
-    BreakdownCol = Layout.BreakdownCol
+    FirstCategoryCol = Layout.BreakdownCol + 1
+    LastCategoryCol = Layout.BreakdownCol + CollateralCategoryCount()
 
     '
-    ' Total Collateral
+    ' Total Collateral, from the same row the pie is drawn from
     '
 
-    TotalCollateral = CollateralTotal(DictCurrent)
-
+    TotalCollateral = _
+        Application.WorksheetFunction.Sum( _
+            ws.Range( _
+                ws.Cells(BreakdownRow + 6, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 6, LastCategoryCol)))
 
     '
     ' Delete old chart
@@ -10993,38 +11980,29 @@ Private Sub CreateCollateralPieChart( _
     On Error GoTo 0
 
     '
-    ' Position
+    ' The frame: the pie's rows, from the pie's column out to the last
+    ' column of the breakdown and the entered table above, bordered like the
+    ' notes box beside it.  The chart takes the frame's geometry, drawn in
+    ' by a couple of points so its own area does not paint over the border.
     '
 
-    TopPos = ws.Rows(Layout.PieRow).Top
+    Set Frame = _
+        ws.Range( _
+            ws.Cells(Layout.PieRow, Layout.PieCol), _
+            ws.Cells( _
+                Layout.PieRow + Layout.PieHeightRows - 1, _
+                Layout.EnteredCol + CollateralCategoryCount()))
 
-    LeftPos = ws.Columns(Layout.PieCol).Left
-
-    RightPos = _
-        ws.Columns(Layout.EnteredCol + 7).Left + _
-        ws.Columns(Layout.EnteredCol + 7).Width
-
-    '
-    ' Create Chart
-    '
-    
-    Dim PieHeight As Double
-
-    PieHeight = 0
-    
-    For i = Layout.PieRow To _
-             Layout.PieRow + Layout.PieHeightRows - 1
-    
-        PieHeight = PieHeight + _
-                    ws.Rows(i).Height
-    
-    Next i
+    Frame.BorderAround _
+        LineStyle:=xlContinuous, _
+        Weight:=xlMedium, _
+        Color:=RGB(60, 60, 60)
 
     Set ChartObj = ws.ChartObjects.Add( _
-        Left:=LeftPos, _
-        Top:=TopPos, _
-        Width:=RightPos - LeftPos, _
-        Height:=PieHeight)
+        Left:=Frame.Left + 2, _
+        Top:=Frame.Top + 2, _
+        Width:=Frame.Width - 4, _
+        Height:=Frame.Height - 4)
 
     ChartObj.name = "CollateralPie"
 
@@ -11041,26 +12019,19 @@ Private Sub CreateCollateralPieChart( _
         .SeriesCollection.NewSeries
 
         '
-        ' Categories
+        ' Categories from the header row, amounts from the current row; the
+        ' labels show the percentages Excel works out from those amounts.
         '
 
         .SeriesCollection(1).XValues = _
             ws.Range( _
-                ws.Cells(BreakdownRow + 1, BreakdownCol + 1), _
-                ws.Cells( _
-                    BreakdownRow + 1, _
-                    BreakdownCol + CollateralCategoryCount()))
-
-        '
-        ' Current Amounts
-        '
+                ws.Cells(BreakdownRow + 1, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 1, LastCategoryCol))
 
         .SeriesCollection(1).Values = _
             ws.Range( _
-                ws.Cells(BreakdownRow + 5, BreakdownCol + 1), _
-                ws.Cells( _
-                    BreakdownRow + 5, _
-                    BreakdownCol + CollateralCategoryCount()))
+                ws.Cells(BreakdownRow + 6, FirstCategoryCol), _
+                ws.Cells(BreakdownRow + 6, LastCategoryCol))
 
         '
         ' Clean look
@@ -11090,16 +12061,6 @@ Private Sub CreateCollateralPieChart( _
         End With
 
         '
-        ' Move pie slightly down
-        '
-
-        On Error Resume Next
-
-        .PlotArea.Top = .PlotArea.Top + 15
-
-        On Error GoTo 0
-
-        '
         ' Legend
         '
 
@@ -11127,22 +12088,50 @@ Private Sub CreateCollateralPieChart( _
             On Error GoTo 0
 
         End With
-        
+
         With .SeriesCollection(1).DataLabels
 
             .Font.name = "Aptos Display"
             .Font.Size = 9
             .Font.Bold = True
             .Font.Color = RGB(40, 40, 40)
-        
+
         End With
-        
+
         With .Legend.Font
-        
+
             .name = "Aptos Display"
             .Size = 9
-        
+
         End With
+
+        '
+        ' The pie's box, set outright rather than nudged: its top a fixed
+        ' gap under the title, its bottom a fixed gap above the edge, square,
+        ' and centred in the width left of the legend.  The circle fills
+        ' the box, so the two gaps are the air above and below the pie.
+        '
+
+        On Error Resume Next
+
+        With .PlotArea
+
+            .InsideTop = _
+                ChartObj.Chart.ChartTitle.Top + _
+                ChartObj.Chart.ChartTitle.Height + _
+                PIE_TOP_GAP_POINTS
+
+            .InsideHeight = _
+                ChartObj.Height - .InsideTop - PIE_BOTTOM_GAP_POINTS
+
+            .InsideWidth = .InsideHeight
+
+            .InsideLeft = _
+                (ChartObj.Chart.Legend.Left - .InsideWidth) / 2
+
+        End With
+
+        On Error GoTo 0
 
     End With
 
@@ -11159,17 +12148,17 @@ Private Sub CreateCollateralPieChart( _
             '
             ' White separators
             '
-            
+
             .Format.Line.Visible = msoTrue
-            
+
             .Format.Line.ForeColor.RGB = _
                 RGB(255, 255, 255)
-            
+
             .Format.Line.Weight = 0.75
-            
+
             .Format.Line.DashStyle = _
                 msoLineDash
-                
+
         End With
 
     Next i
@@ -11184,36 +12173,36 @@ Private Sub CreateCollateralPieChart( _
             ChartObj.Height - 55, _
             210, _
             35)
-    
+
         With .TextFrame
-    
+
             .Characters.Text = _
                 "Total Collateral Value:" & vbLf & _
                 Application.WorksheetFunction.Text( _
                     TotalCollateral, _
                     EuroNumberFormat())
-    
+
             .HorizontalAlignment = xlRight
-            
+
             .Characters(1, Len("Total Collateral Value:")). _
                 Font.Bold = True
-                
+
             .Characters( _
                 Len("Total Collateral Value:") + 2). _
                 Font.Bold = False
-    
+
             .Characters.Font.name = "Aptos Display"
-    
+
             .Characters.Font.Size = 11
-    
+
         End With
-    
+
         .Line.Visible = msoFalse
-    
+
         .Fill.Visible = msoTrue
-    
+
         .Fill.ForeColor.RGB = RGB(245, 245, 245)
-    
+
     End With
 
 End Sub
@@ -11256,7 +12245,7 @@ Private Sub BuildNotes( _
     LastRow = Layout.PieRow + _
               Layout.PieHeightRows - 1
     FirstCol = Layout.CommentCol
-    LastCol = Layout.CommentCol + 3
+    LastCol = Layout.CommentCol + 4
 
     WriteSectionTitle _
         ws, _
@@ -11339,8 +12328,7 @@ Private Sub FormatNotesBox( _
               Layout.PieHeightRows - 1
 
     FirstCol = Layout.CommentCol
-
-    LastCol = Layout.CommentCol + 3
+    LastCol = Layout.CommentCol + 4
 
     ws.Range( _
         ws.Cells(FirstRow, 1), _
@@ -11388,5 +12376,3 @@ Private Sub CreateWeeklyEmailButton(ByVal ws As Worksheet)
     Btn2.OnAction = "GenerateWeeklyAnalysis"
 
 End Sub
-
-

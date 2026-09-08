@@ -79,69 +79,80 @@ Public Sub InitializeLayout()
     
 
     ' Breakdown (middle top)
+    ' The left column's tables are five wide now, so this starts one column
+    ' further out to keep the single spacer column between them.
 
     Layout.BreakdownRow = _
         Layout.ReportRow + 3
 
     Layout.BreakdownCol = _
-        Layout.ReportCol + 5
+        Layout.ReportCol + 6
 
     ' Entered (middle bottom)
-    ' The breakdown above it is ten rows now that it carries a week block and
-    ' a week-on-week change, so this starts three rows lower than it did.
+    ' The breakdown above it is ten rows: title, header, three dated blocks
+    ' of two and the two change rows; one blank row, then this.
 
     Layout.EnteredRow = _
         Layout.ReportRow + 14
 
     Layout.EnteredCol = _
-        Layout.ReportCol + 5
+        Layout.ReportCol + 6
 
-    ' New Lombards (right top)
+    ' New Lombards (left, under the overview)
+    ' The overview runs to six data rows - year-end, three months, the
+    ' compared date, the current date - so its last row is ReportRow + 10;
+    ' one blank row, then this.  Same five columns as the overview, so the
+    ' three tables read as one column of figures.
 
     Layout.NewLoanRow = _
-        Layout.ReportRow + 3
+        Layout.ReportRow + 12
 
     Layout.NewLoanCol = _
-        Layout.ReportCol + 15
+        Layout.ReportCol
 
-    ' Ended Lombards (right bottom)
+    ' Ended Lombards (left, under the new loans)
+    ' A movement table is five rows: title, header, the two dated rows and
+    ' the change row; one blank row between.
 
     Layout.EndedLoanRow = _
-        Layout.ReportRow + 8
+        Layout.ReportRow + 18
 
     Layout.EndedLoanCol = _
-        Layout.ReportCol + 15
+        Layout.ReportCol
 
     ' Pie Chart
-    ' Below the entered table, which is six rows now that it carries a window
-    ' each for the week and the month.
+    ' Below the entered table, which is seven rows: title, header, two dated
+    ' pairs of amounts and shares, and the change row.
 
     Layout.PieRow = _
-        Layout.ReportRow + 21
+        Layout.ReportRow + 22
 
     Layout.PieCol = _
-        Layout.ReportCol + 5
+        Layout.ReportCol + 6
         
     Layout.PieHeightRows = 22
         
     ' Comments
+    ' Under the ended loans, as wide as the three tables above it (five
+    ' columns); the box runs from the row after this to the bottom of the
+    ' pie.
 
     Layout.CommentRow = _
-        Layout.ReportRow + 12
+        Layout.ReportRow + 24
 
     Layout.CommentCol = _
         Layout.ReportCol
 
-    ' Risk concentration (far right, aligned with the upper report tables)
-    ' The movement tables to its left are five columns wide since they gained
-    ' a window label, so this starts one column further out to keep the single
-    ' spacer column between them.
+    ' Risk concentration (right of the breakdown, aligned with the upper
+    ' report tables).  The movement tables moved under the overview, so this
+    ' follows the breakdown's last column with the single spacer column
+    ' between them.
 
     Layout.RiskRow = _
         Layout.ReportRow + 3
 
     Layout.RiskCol = _
-        Layout.ReportCol + 21
+        Layout.ReportCol + 16
 
     ' Risk concentration excluding DPM
     ' One empty spacer column is left between the two five-column tables.

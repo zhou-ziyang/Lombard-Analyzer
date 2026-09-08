@@ -26,6 +26,9 @@ Public Sub CreateWeeklyEmail()
     Dim ReportDateValue As Variant
     Dim ReportDate As Date
 
+    Dim CompareDateValue As Variant
+    Dim CompareDate As Date
+
     Dim ToAddresses As String
     Dim CcAddresses As String
 
@@ -63,6 +66,24 @@ Public Sub CreateWeeklyEmail()
     End If
 
     ReportDate = CDate(ReportDateValue)
+
+    On Error Resume Next
+    CompareDateValue = _
+        ThisWorkbook.Worksheets("Home") _
+        .Range("WeeklyCompareDate").Value
+    On Error GoTo 0
+
+    If Not IsDate(CompareDateValue) Then
+
+        MsgBox _
+            "WeeklyCompareDate does not contain a valid date.", _
+            vbExclamation
+
+        Exit Sub
+
+    End If
+
+    CompareDate = CDate(CompareDateValue)
 
     ToAddresses = HomeSetting("EmailTo")
     CcAddresses = HomeSetting("EmailCc")
@@ -103,9 +124,12 @@ Public Sub CreateWeeklyEmail()
         "text-indent:0 !important;" & _
         "text-align:left !important;}" & _
         ".rth-table{border-collapse:collapse;}" & _
+        "body,.rth-table td,.rth-table th{" & _
+        "-webkit-text-size-adjust:100%;text-size-adjust:100%;}" & _
         "</style>[[TABLESTYLES]]</head>" & _
         "<body style='margin:0;" & _
         "padding:30px;" & _
+        "-webkit-text-size-adjust:100%;" & _
         "font-family:Aptos Display,Aptos,UniCredit,Calibri,sans-serif;'>"
 
     '
@@ -137,7 +161,7 @@ Public Sub CreateWeeklyEmail()
         "</div>"
 
     '
-    ' Intro
+    ' Intro, naming the report compared to
     '
 
     HTMLBody = HTMLBody & _
@@ -147,6 +171,8 @@ Public Sub CreateWeeklyEmail()
         "Please find below the weekly Lombard loan portfolio analysis " & _
         "as of " & _
         Format(ReportDate, "dd.mm.yyyy") & _
+        ", compared to the report as of " & _
+        Format(CompareDate, "dd.mm.yyyy") & _
         "." & _
         "<br><br>" & _
         "The report covers the portfolio overview, collateral breakdown, " & _
@@ -163,16 +189,18 @@ Public Sub CreateWeeklyEmail()
         "</div>"
 
     '
-    ' Report blocks, in reading order. Each one is a Layout anchor plus
-    ' the height and width of the block that starts there.
+    ' Report blocks, in reading order: the active loans with the collateral
+    ' breakdown straight under them, then the two movement tables, then
+    ' what entered.  Each one is a Layout anchor plus the height and width
+    ' of the block that starts there.
     '
 
     HTMLBody = HTMLBody & _
-        BlockHtml(ws, Layout.PortfolioRow, Layout.PortfolioCol, 7, 3) & _
+        BlockHtml(ws, Layout.PortfolioRow, Layout.PortfolioCol, 7, 4) & _
         BlockHtml(ws, Layout.BreakdownRow, Layout.BreakdownCol, 9, 8) & _
-        BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 3, 4) & _
-        BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 3, 4) & _
-        BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 5, 8)
+        BlockHtml(ws, Layout.NewLoanRow, Layout.NewLoanCol, 4, 4) & _
+        BlockHtml(ws, Layout.EndedLoanRow, Layout.EndedLoanCol, 4, 4) & _
+        BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 6, 8)
 
     '
     ' Pie Chart Placeholder
@@ -448,9 +476,14 @@ Private Function LastContiguousRiskRow( _
 
 End Function
 
+'
+' Each column gets some air over the width Excel measured: the widths were
+' measured with Aptos Display on this machine, and a client that renders
+' a little wider would otherwise wrap the cells.
+'
 Private Function RangeToHTMLFragment( _
     ByVal rng As Range, _
-    Optional ByVal ExtraWidthPt As Long = 10) As String
+    Optional ByVal ExtraWidthPt As Long = 20) As String
 
     Dim Html As String
 
@@ -812,6 +845,3 @@ Private Function RangeToHTML( _
     Set TempWB = Nothing
     
 End Function
-
-
-
