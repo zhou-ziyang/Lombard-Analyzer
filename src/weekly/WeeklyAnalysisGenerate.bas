@@ -173,6 +173,12 @@ Private Const FLOW_NODE_GAP As Double = 10
 Private Const FLOW_NODE_MIN_HEIGHT As Double = 4
 Private Const FLOW_LABEL_WIDTH As Double = 120
 Private Const FLOW_TITLE_HEIGHT As Double = 44
+Private Const FLOW_SIDE_GAP As Double = 24
+'
+' A position that moved by less than this over the month, in euro, has not
+' moved: the residue a valuation leaves.
+'
+Private Const FLOW_CHANGE_FLOOR As Double = 0.005
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
@@ -2305,15 +2311,41 @@ Private Function MovedNdgSet( _
     ByRef SubjectAccounts As Variant, _
     ByRef ReferenceAccounts As Variant) As Object
 
+    Set MovedNdgSet = _
+        AccountNdgSet(SubjectAccounts, ReferenceAccounts, False)
+
+End Function
+
+'
+' The NDGs both snapshots have: the loans that ran through the month.
+'
+Private Function ContinuingNdgSet( _
+    ByRef SubjectAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant) As Object
+
+    Set ContinuingNdgSet = _
+        AccountNdgSet(SubjectAccounts, ReferenceAccounts, True)
+
+End Function
+
+'
+' The subject snapshot's NDGs that the reference snapshot has, or that it
+' has not.  Empty when either snapshot has no rows.
+'
+Private Function AccountNdgSet( _
+    ByRef SubjectAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant, _
+    ByVal InReference As Boolean) As Object
+
     Dim ReferenceNDGs As Object
-    Dim MovedNDGs As Object
+    Dim NDGs As Object
 
     Dim NDG As String
 
     Dim r As Long
 
-    Set MovedNDGs = NewNDGSet()
-    Set MovedNdgSet = MovedNDGs
+    Set NDGs = NewNDGSet()
+    Set AccountNdgSet = NDGs
 
     If Not WeeklyDataHasRows(SubjectAccounts) Then Exit Function
     If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Function
@@ -2325,7 +2357,160 @@ Private Function MovedNdgSet( _
         NDG = CleanWeeklyCsvField(SubjectAccounts(r, WeeklyAccountNDG))
 
         If NDG <> "" Then
-            If Not ReferenceNDGs.Exists(NDG) Then MovedNDGs(NDG) = True
+            If ReferenceNDGs.Exists(NDG) = InReference Then NDGs(NDG) = True
+        End If
+
+    Next r
+
+End Function
+
+'
+' Where the collateral of the NDGs that ran through the month moved, by
+' category: each NDG's holding in each category now against a month
+' earlier, the rises summed into Risen and the falls into Fallen, so a
+' customer who sold equity for bonds shows on both sides.  The NDGs behind
+' each side are counted alongside.  Positions in a category GetAssetClass
+' cannot place are left out, as they are everywhere else.
+'
+Private Sub ContinuingCollateralChanges( _
+    ByRef Snaps As ReportSnapshots, _
+    ByRef UnknownAssets As Object, _
+    ByRef Risen As Object, _
+    ByRef Fallen As Object, _
+    ByRef RisenCount As Long, _
+    ByRef FallenCount As Long)
+
+    Dim Continuing As Object
+    Dim NowHeld As Object
+    Dim ThenHeld As Object
+    Dim RisingNDGs As Object
+    Dim FallingNDGs As Object
+
+    Dim Key As Variant
+    Dim Delta As Double
+
+    Set Risen = NewCollateralDictionary()
+    Set Fallen = NewCollateralDictionary()
+    RisenCount = 0
+    FallenCount = 0
+
+    Set Continuing = ContinuingNdgSet(Snaps.Accounts, Snaps.MonthAccounts)
+
+    If Continuing.Count = 0 Then Exit Sub
+
+    Set NowHeld = _
+        CollateralByNdgAndClass(Snaps.Positions, Continuing, UnknownAssets)
+    Set ThenHeld = _
+        CollateralByNdgAndClass(Snaps.MonthPositions, Continuing, UnknownAssets)
+
+    Set RisingNDGs = NewNDGSet()
+    Set FallingNDGs = NewNDGSet()
+
+    For Each Key In NowHeld.Keys
+
+        Delta = NowHeld(Key)
+        If ThenHeld.Exists(Key) Then Delta = Delta - ThenHeld(Key)
+
+        RecordCollateralChange _
+            CStr(Key), Delta, Risen, Fallen, RisingNDGs, FallingNDGs
+
+    Next Key
+
+    For Each Key In ThenHeld.Keys
+
+        If Not NowHeld.Exists(Key) Then
+            RecordCollateralChange _
+                CStr(Key), -ThenHeld(Key), Risen, Fallen, RisingNDGs, FallingNDGs
+        End If
+
+    Next Key
+
+    RisenCount = RisingNDGs.Count
+    FallenCount = FallingNDGs.Count
+
+End Sub
+
+'
+' One NDG's move in one category onto the side it belongs to; a move under
+' the floor is no move.
+'
+Private Sub RecordCollateralChange( _
+    ByVal Key As String, _
+    ByVal Delta As Double, _
+    ByRef Risen As Object, _
+    ByRef Fallen As Object, _
+    ByRef RisingNDGs As Object, _
+    ByRef FallingNDGs As Object)
+
+    Dim Parts() As String
+
+    If Abs(Delta) < FLOW_CHANGE_FLOOR Then Exit Sub
+
+    Parts = Split(Key, vbTab)
+
+    If Delta > 0 Then
+
+        Risen(Parts(1)) = Risen(Parts(1)) + Delta
+        RisingNDGs(Parts(0)) = True
+
+    Else
+
+        Fallen(Parts(1)) = Fallen(Parts(1)) - Delta
+        FallingNDGs(Parts(0)) = True
+
+    End If
+
+End Sub
+
+'
+' A snapshot's collateral for the NDGs given, keyed by NDG and asset class
+' with a tab between.
+'
+Private Function CollateralByNdgAndClass( _
+    ByRef PositionData As Variant, _
+    ByRef NDGs As Object, _
+    ByRef UnknownAssets As Object) As Object
+
+    Dim Held As Object
+
+    Dim NDG As String
+    Dim AssetType As String
+    Dim AssetClass As String
+    Dim Key As String
+
+    Dim r As Long
+
+    Set Held = CreateObject("Scripting.Dictionary")
+    Held.CompareMode = vbTextCompare
+    Set CollateralByNdgAndClass = Held
+
+    If Not WeeklyDataHasRows(PositionData) Then Exit Function
+
+    For r = LBound(PositionData, 1) To UBound(PositionData, 1)
+
+        NDG = CleanWeeklyCsvField(PositionData(r, WeeklyPosNDG))
+
+        If NDGs.Exists(NDG) Then
+
+            AssetType = _
+                CleanWeeklyCsvField(PositionData(r, WeeklyPosAssetType))
+            AssetClass = GetAssetClass(AssetType)
+
+            If AssetClass = "UNKNOWN" Then
+
+                RegisterUnknownAsset AssetType, UnknownAssets
+
+            Else
+
+                Key = NDG & vbTab & AssetClass
+
+                If Not Held.Exists(Key) Then Held(Key) = 0
+
+                Held(Key) = Held(Key) + _
+                    CDbl(PositionData(r, WeeklyPosPositionValue))
+
+            End If
+
         End If
 
     Next r
@@ -12287,9 +12472,8 @@ End Sub
 ' A date's staged exposure, staged now when the run's answer to the reuse
 ' question says so or when it never was: the same staging pass the report
 ' date gets, alone and quietly - the reference sheets brought up to that
-' snapshot but no issuer name corrected, no lookup rows, no notes but
-' the one saying so - onto that date's own sheet, where the next run
-' finds it.
+' snapshot but no issuer name corrected, no lookup rows, no notes - onto
+' that date's own sheet, where the next run finds it.
 '
 Private Function EnsureRiskStageData( _
     ByRef PositionData As Variant, _
@@ -12307,12 +12491,6 @@ Private Function EnsureRiskStageData( _
     If Rebuild Or Not RiskStageTableHasData(StageTable) Then
 
         If Not WeeklyDataHasRows(PositionData) Then Exit Function
-
-        WriteNoteWeekly _
-            "Exposure as of " & Format(SnapshotDate, "dd/mm/yyyy") & _
-            IIf(RiskStageTableHasData(StageTable), _
-                " staged afresh, as chosen.", _
-                " was not on file: staged now, for the rank changes.")
 
         '
         ' The pass counts positions into the module's two counters as the
@@ -12788,13 +12966,15 @@ End Sub
 
 '
 ' The loan-flow diagram under the pie: a Sankey drawn from shapes, since
-' Excel has no chart of that kind.  The new loans of the past month on the
-' left, the collateral categories in the middle, the loans ended on the
-' right; a band is the collateral one category received with the new NDGs
-' (green, into the category) or lost with the ended ones (red, out of it),
-' as wide as it is worth, all on one scale.  A category node is as tall as
-' the larger of its two bands.  The pieces are grouped under one name so
-' the email copies the diagram as one picture, like the pie.
+' Excel has no chart of that kind.  What the portfolio's collateral lost
+' over the past month stands on the left - the loans ended, and under
+' them the positions of the NDGs that stayed that fell - the collateral
+' categories in the middle, and what it gained on the right - the new
+' loans, and under them the positions that rose.  A band is one of those
+' four movements in one category, as wide as it is worth, all on one
+' scale; a category node is as tall as the larger of its two sides.  The
+' pieces are grouped under one name so the email copies the diagram as
+' one picture, like the pie.
 '
 Private Sub CreateLoanFlowDiagram( _
     ByVal ws As Worksheet, _
@@ -12804,11 +12984,20 @@ Private Sub CreateLoanFlowDiagram( _
 
     Dim Frame As Range
 
+    Dim Ended As Object
+    Dim Fallen As Object
     Dim Entered As Object
-    Dim Departed As Object
+    Dim Risen As Object
 
-    Dim NewCount As Long
     Dim EndedCount As Long
+    Dim FallenCount As Long
+    Dim NewCount As Long
+    Dim RisenCount As Long
+
+    Dim EndedTotal As Double
+    Dim FallenTotal As Double
+    Dim EnteredTotal As Double
+    Dim RisenTotal As Double
 
     Dim Categories As Variant
     Dim NodeColors As Variant
@@ -12829,8 +13018,6 @@ Private Sub CreateLoanFlowDiagram( _
     Dim MidNodeX As Double
     Dim RightNodeX As Double
 
-    Dim EnteredTotal As Double
-    Dim DepartedTotal As Double
     Dim Larger As Double
     Dim LargerTotal As Double
     Dim MovingCount As Long
@@ -12843,12 +13030,17 @@ Private Sub CreateLoanFlowDiagram( _
     Dim NodeTops() As Double
     Dim NodeHeights() As Double
 
-    Dim LeftTop As Double
-    Dim RightTop As Double
-    Dim LeftOffset As Double
-    Dim RightOffset As Double
-    Dim BandHeight As Double
-    Dim LabelMiddle As Double
+    Dim EndedTop As Double
+    Dim FallenTop As Double
+    Dim NewTop As Double
+    Dim RisenTop As Double
+
+    Dim EndedOffset As Double
+    Dim FallenOffset As Double
+    Dim NewOffset As Double
+    Dim RisenOffset As Double
+
+    Dim LabelTop As Double
 
     Dim i As Long
 
@@ -12873,23 +13065,27 @@ Private Sub CreateLoanFlowDiagram( _
         Color:=RGB(60, 60, 60)
 
     '
-    ' What came in with the new NDGs, by category, from this snapshot's
-    ' positions; what went out with the ended ones, from the month-earlier
-    ' positions.  The same sets the two movement tables count.
+    ' The four movements.  What went out with the ended NDGs, from the
+    ' month-earlier positions; what came in with the new ones, from this
+    ' snapshot's - the sets the two movement tables count - and where the
+    ' NDGs that stayed moved between the two.
     '
+
+    Set Ended = _
+        EnteredCollateralAmounts( _
+            Snaps.MonthAccounts, Snaps.Accounts, Snaps.MonthPositions, _
+            UnknownAssets)
 
     Set Entered = _
         EnteredCollateralAmounts( _
             Snaps.Accounts, Snaps.MonthAccounts, Snaps.Positions, _
             UnknownAssets)
 
-    Set Departed = _
-        EnteredCollateralAmounts( _
-            Snaps.MonthAccounts, Snaps.Accounts, Snaps.MonthPositions, _
-            UnknownAssets)
-
-    NewCount = MovedNdgSet(Snaps.Accounts, Snaps.MonthAccounts).Count
     EndedCount = MovedNdgSet(Snaps.MonthAccounts, Snaps.Accounts).Count
+    NewCount = MovedNdgSet(Snaps.Accounts, Snaps.MonthAccounts).Count
+
+    ContinuingCollateralChanges _
+        Snaps, UnknownAssets, Risen, Fallen, RisenCount, FallenCount
 
     Categories = CollateralCategories()
     NodeColors = CollateralSliceColors()
@@ -12901,13 +13097,18 @@ Private Sub CreateLoanFlowDiagram( _
 
         Key = Categories(i)(0)
 
+        EndedTotal = EndedTotal + Ended(Key)
+        FallenTotal = FallenTotal + Fallen(Key)
         EnteredTotal = EnteredTotal + Entered(Key)
-        DepartedTotal = DepartedTotal + Departed(Key)
+        RisenTotal = RisenTotal + Risen(Key)
 
-        If Entered(Key) > 0 Or Departed(Key) > 0 Then
+        Larger = _
+            LargerOf(Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key))
+
+        If Larger > 0 Then
 
             MovingCount = MovingCount + 1
-            LargerTotal = LargerTotal + LargerOf(Entered(Key), Departed(Key))
+            LargerTotal = LargerTotal + Larger
 
         End If
 
@@ -12942,7 +13143,7 @@ Private Sub CreateLoanFlowDiagram( _
         Members.Add _
             AddFlowLabel( _
                 ws, BackLeft, BackTop + BackHeight / 2 - 8, BackWidth, 16, _
-                "No Lombard loans entered or ended in the past month.", _
+                "No collateral moved in the past month.", _
                 msoAlignCenter, 10, False).name
 
         GroupFlowShapes ws, Members
@@ -12952,7 +13153,7 @@ Private Sub CreateLoanFlowDiagram( _
     End If
 
     '
-    ' The three columns: the loan nodes inside the room kept for their
+    ' The three columns: the side nodes inside the room kept for their
     ' labels, the collateral nodes half way between.
     '
 
@@ -12976,7 +13177,8 @@ Private Sub CreateLoanFlowDiagram( _
     For i = 0 To UBound(Categories)
 
         Key = Categories(i)(0)
-        Larger = LargerOf(Entered(Key), Departed(Key))
+        Larger = _
+            LargerOf(Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key))
 
         If Larger > 0 Then
 
@@ -13000,7 +13202,8 @@ Private Sub CreateLoanFlowDiagram( _
     For i = 0 To UBound(Categories)
 
         Key = Categories(i)(0)
-        Larger = LargerOf(Entered(Key), Departed(Key))
+        Larger = _
+            LargerOf(Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key))
 
         If Larger > 0 Then
 
@@ -13020,71 +13223,78 @@ Private Sub CreateLoanFlowDiagram( _
     ColumnBottom = ColumnBottom - FLOW_NODE_GAP
 
     '
-    ' The two loan nodes, centred against the collateral column; their
-    ' bands leave and arrive in category order, so none cross.
+    ' Each side is two nodes, the loans over the positions with a gap
+    ' between, the pair centred against the collateral column.
     '
 
-    LeftTop = _
-        DiagramTop + _
-        (ColumnBottom - DiagramTop - EnteredTotal * PointsPerEuro) / 2
+    EndedTop = _
+        FlowSideTop( _
+            DiagramTop, ColumnBottom, _
+            (EndedTotal + FallenTotal) * PointsPerEuro)
+    FallenTop = EndedTop + EndedTotal * PointsPerEuro + FLOW_SIDE_GAP
 
-    RightTop = _
-        DiagramTop + _
-        (ColumnBottom - DiagramTop - DepartedTotal * PointsPerEuro) / 2
+    NewTop = _
+        FlowSideTop( _
+            DiagramTop, ColumnBottom, _
+            (EnteredTotal + RisenTotal) * PointsPerEuro)
+    RisenTop = NewTop + EnteredTotal * PointsPerEuro + FLOW_SIDE_GAP
 
-    LeftOffset = LeftTop
-    RightOffset = RightTop
+    '
+    ' The bands, in category order from every node so none cross but
+    ' where two nodes feed one side of a category; at a category the
+    ' loans' band lies over the positions' on either side.
+    '
+
+    EndedOffset = EndedTop
+    FallenOffset = FallenTop
+    NewOffset = NewTop
+    RisenOffset = RisenTop
 
     For i = 0 To UBound(Categories)
 
         Key = Categories(i)(0)
 
-        If Entered(Key) > 0 Then
+        EndedOffset = EndedOffset + _
+            AddFlowBand( _
+                ws, Members, Ended(Key), PointsPerEuro, _
+                LeftNodeX + FLOW_NODE_WIDTH, EndedOffset, _
+                MidNodeX, NodeTops(i), _
+                RGB(226, 186, 184))
 
-            BandHeight = Entered(Key) * PointsPerEuro
+        FallenOffset = FallenOffset + _
+            AddFlowBand( _
+                ws, Members, Fallen(Key), PointsPerEuro, _
+                LeftNodeX + FLOW_NODE_WIDTH, FallenOffset, _
+                MidNodeX, NodeTops(i) + Ended(Key) * PointsPerEuro, _
+                RGB(238, 210, 180))
 
-            Members.Add _
-                DrawFlowBand( _
-                    ws, _
-                    LeftNodeX + FLOW_NODE_WIDTH, _
-                    LeftOffset, LeftOffset + BandHeight, _
-                    MidNodeX, _
-                    NodeTops(i), NodeTops(i) + BandHeight, _
-                    RGB(178, 214, 190)).name
+        NewOffset = NewOffset + _
+            AddFlowBand( _
+                ws, Members, Entered(Key), PointsPerEuro, _
+                MidNodeX + FLOW_NODE_WIDTH, NodeTops(i), _
+                RightNodeX, NewOffset, _
+                RGB(178, 214, 190))
 
-            LeftOffset = LeftOffset + BandHeight
-
-        End If
-
-        If Departed(Key) > 0 Then
-
-            BandHeight = Departed(Key) * PointsPerEuro
-
-            Members.Add _
-                DrawFlowBand( _
-                    ws, _
-                    MidNodeX + FLOW_NODE_WIDTH, _
-                    NodeTops(i), NodeTops(i) + BandHeight, _
-                    RightNodeX, _
-                    RightOffset, RightOffset + BandHeight, _
-                    RGB(226, 186, 184)).name
-
-            RightOffset = RightOffset + BandHeight
-
-        End If
+        RisenOffset = RisenOffset + _
+            AddFlowBand( _
+                ws, Members, Risen(Key), PointsPerEuro, _
+                MidNodeX + FLOW_NODE_WIDTH, _
+                NodeTops(i) + Entered(Key) * PointsPerEuro, _
+                RightNodeX, RisenOffset, _
+                RGB(184, 206, 226))
 
     Next i
 
     '
     ' Nodes over the bands, labels over everything.  A category's label
-    ' sits to the right of its node, over the pale band leaving it.
+    ' sits to the right of its node, over the pale bands leaving it.
     '
 
     For i = 0 To UBound(Categories)
 
         Key = Categories(i)(0)
 
-        If Entered(Key) > 0 Or Departed(Key) > 0 Then
+        If NodeHeights(i) > 0 Then
 
             Members.Add _
                 DrawFlowNode( _
@@ -13098,57 +13308,157 @@ Private Sub CreateLoanFlowDiagram( _
                     MidNodeX + FLOW_NODE_WIDTH + 5, _
                     NodeTops(i) + NodeHeights(i) / 2 - 6, _
                     Categories(i)(1), _
-                    Entered(Key), Departed(Key)).name
+                    Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key)).name
 
         End If
 
     Next i
 
-    LabelMiddle = (DiagramTop + ColumnBottom) / 2
+    '
+    ' The side nodes and their labels: a label is centred on its node, and
+    ' the lower one pushed down when the two would overlap.
+    '
 
-    If EnteredTotal > 0 Then
+    AddFlowSideNode _
+        ws, Members, LeftNodeX, EndedTop, EndedTotal * PointsPerEuro, _
+        RGB(148, 54, 52)
 
-        Members.Add _
-            DrawFlowNode( _
-                ws, LeftNodeX, LeftTop, _
-                FLOW_NODE_WIDTH, EnteredTotal * PointsPerEuro, _
-                RGB(60, 130, 90)).name
+    AddFlowSideNode _
+        ws, Members, LeftNodeX, FallenTop, FallenTotal * PointsPerEuro, _
+        RGB(200, 130, 60)
 
-        LabelMiddle = LeftTop + EnteredTotal * PointsPerEuro / 2
+    AddFlowSideNode _
+        ws, Members, RightNodeX, NewTop, EnteredTotal * PointsPerEuro, _
+        RGB(60, 130, 90)
 
-    End If
+    AddFlowSideNode _
+        ws, Members, RightNodeX, RisenTop, RisenTotal * PointsPerEuro, _
+        RGB(70, 120, 165)
 
-    Members.Add _
-        FlowLoanLabel( _
-            ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelMiddle, _
-            msoAlignRight, _
-            "New Lombard Loans", NewCount, _
-            CompactEuro(EnteredTotal) & " entered").name
-
-    LabelMiddle = (DiagramTop + ColumnBottom) / 2
-
-    If DepartedTotal > 0 Then
-
-        Members.Add _
-            DrawFlowNode( _
-                ws, RightNodeX, RightTop, _
-                FLOW_NODE_WIDTH, DepartedTotal * PointsPerEuro, _
-                RGB(148, 54, 52)).name
-
-        LabelMiddle = RightTop + DepartedTotal * PointsPerEuro / 2
-
-    End If
+    LabelTop = EndedTop + EndedTotal * PointsPerEuro / 2 - 21
 
     Members.Add _
-        FlowLoanLabel( _
-            ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelMiddle, _
-            msoAlignLeft, _
-            "Lombard Loans Ended", EndedCount, _
-            CompactEuro(DepartedTotal) & " left").name
+        FlowSideLabel( _
+            ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelTop, msoAlignRight, _
+            "Lombard Loans Ended", _
+            NdgCountText(EndedCount, ""), _
+            CompactEuro(EndedTotal) & " out").name
+
+    LabelTop = _
+        LargerOf( _
+            FallenTop + FallenTotal * PointsPerEuro / 2 - 21, _
+            LabelTop + 44)
+
+    Members.Add _
+        FlowSideLabel( _
+            ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelTop, msoAlignRight, _
+            "Positions Decreased", _
+            NdgCountText(FallenCount, "existing "), _
+            CompactEuro(FallenTotal) & " out").name
+
+    LabelTop = NewTop + EnteredTotal * PointsPerEuro / 2 - 21
+
+    Members.Add _
+        FlowSideLabel( _
+            ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelTop, msoAlignLeft, _
+            "New Lombard Loans", _
+            NdgCountText(NewCount, ""), _
+            CompactEuro(EnteredTotal) & " in").name
+
+    LabelTop = _
+        LargerOf( _
+            RisenTop + RisenTotal * PointsPerEuro / 2 - 21, _
+            LabelTop + 44)
+
+    Members.Add _
+        FlowSideLabel( _
+            ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelTop, msoAlignLeft, _
+            "Positions Increased", _
+            NdgCountText(RisenCount, "existing "), _
+            CompactEuro(RisenTotal) & " in").name
 
     GroupFlowShapes ws, Members
 
 End Sub
+
+'
+' Where a side's pair of nodes starts: centred against the collateral
+' column, but never above its top.
+'
+Private Function FlowSideTop( _
+    ByVal ColumnTop As Double, _
+    ByVal ColumnBottom As Double, _
+    ByVal NodesHeight As Double) As Double
+
+    FlowSideTop = _
+        ColumnTop + _
+        (ColumnBottom - ColumnTop - FLOW_SIDE_GAP - NodesHeight) / 2
+
+    If FlowSideTop < ColumnTop Then FlowSideTop = ColumnTop
+
+End Function
+
+'
+' One movement's band, when there is one: drawn, added to the group, and
+' its height handed back so the caller can move down its node.
+'
+Private Function AddFlowBand( _
+    ByVal ws As Worksheet, _
+    ByVal Members As Collection, _
+    ByVal Amount As Double, _
+    ByVal PointsPerEuro As Double, _
+    ByVal FromX As Double, _
+    ByVal FromTop As Double, _
+    ByVal ToX As Double, _
+    ByVal ToTop As Double, _
+    ByVal FillColor As Long) As Double
+
+    Dim BandHeight As Double
+
+    If Amount <= 0 Then Exit Function
+
+    BandHeight = Amount * PointsPerEuro
+
+    Members.Add _
+        DrawFlowBand( _
+            ws, _
+            FromX, FromTop, FromTop + BandHeight, _
+            ToX, ToTop, ToTop + BandHeight, _
+            FillColor).name
+
+    AddFlowBand = BandHeight
+
+End Function
+
+'
+' A side node, when there is anything to draw it for.
+'
+Private Sub AddFlowSideNode( _
+    ByVal ws As Worksheet, _
+    ByVal Members As Collection, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal NodeHeight As Double, _
+    ByVal FillColor As Long)
+
+    If NodeHeight <= 0 Then Exit Sub
+
+    Members.Add _
+        DrawFlowNode(ws, X, Y, FLOW_NODE_WIDTH, NodeHeight, FillColor).name
+
+End Sub
+
+'
+' "3 NDGs", "1 NDG", "7 existing NDGs".
+'
+Private Function NdgCountText( _
+    ByVal Count As Long, _
+    ByVal Qualifier As String) As String
+
+    NdgCountText = _
+        Count & " " & Qualifier & IIf(Count = 1, "NDG", "NDGs")
+
+End Function
 
 Private Function LargerOf( _
     ByVal First As Double, _
@@ -13303,17 +13613,17 @@ Private Function AddFlowLabel( _
 End Function
 
 '
-' A category's label: its name in bold, then what it received (green,
-' with a plus) and what it lost (red, with a minus), each only when there
-' was any.
+' A category's label: its name in bold, then what it lost (red, with a
+' minus) and what it gained (green, with a plus), in the order the sides
+' read and each only when there was any.
 '
 Private Function FlowCategoryLabel( _
     ByVal ws As Worksheet, _
     ByVal X As Double, _
     ByVal Y As Double, _
     ByVal CategoryLabel As String, _
-    ByVal EnteredValue As Double, _
-    ByVal DepartedValue As Double) As Shape
+    ByVal OutValue As Double, _
+    ByVal InValue As Double) As Shape
 
     Dim Label As Shape
 
@@ -13325,19 +13635,19 @@ Private Function FlowCategoryLabel( _
 
     Text = CategoryLabel
 
-    If EnteredValue > 0 Then
+    If OutValue > 0 Then
 
-        PlusText = "+" & CompactEuro(EnteredValue)
-        PlusStart = Len(Text) + 3
-        Text = Text & "  " & PlusText
+        MinusText = ChrW(&H2212) & CompactEuro(OutValue)
+        MinusStart = Len(Text) + 3
+        Text = Text & "  " & MinusText
 
     End If
 
-    If DepartedValue > 0 Then
+    If InValue > 0 Then
 
-        MinusText = ChrW(&H2212) & CompactEuro(DepartedValue)
-        MinusStart = Len(Text) + 3
-        Text = Text & "  " & MinusText
+        PlusText = "+" & CompactEuro(InValue)
+        PlusStart = Len(Text) + 3
+        Text = Text & "  " & PlusText
 
     End If
 
@@ -13365,33 +13675,29 @@ Private Function FlowCategoryLabel( _
 End Function
 
 '
-' A loan node's label, three lines centred on the node: the title in bold,
-' the number of NDGs, the collateral and which way it went.
+' A side node's label, three lines: the title in bold, the NDGs behind it,
+' the collateral and which way it went.
 '
-Private Function FlowLoanLabel( _
+Private Function FlowSideLabel( _
     ByVal ws As Worksheet, _
     ByVal X As Double, _
-    ByVal MiddleY As Double, _
+    ByVal Y As Double, _
     ByVal Alignment As MsoParagraphAlignment, _
     ByVal Title As String, _
-    ByVal LoanCount As Long, _
+    ByVal CountText As String, _
     ByVal AmountText As String) As Shape
 
     Dim Label As Shape
-    Dim Text As String
-
-    Text = Title & vbCr & _
-        LoanCount & IIf(LoanCount = 1, " NDG", " NDGs") & vbCr & _
-        AmountText
 
     Set Label = _
         AddFlowLabel( _
-            ws, X, MiddleY - 21, FLOW_LABEL_WIDTH, 42, Text, _
+            ws, X, Y, FLOW_LABEL_WIDTH, 42, _
+            Title & vbCr & CountText & vbCr & AmountText, _
             Alignment, 9, False)
 
     Label.TextFrame2.TextRange.Paragraphs(1).Font.Bold = msoTrue
 
-    Set FlowLoanLabel = Label
+    Set FlowSideLabel = Label
 
 End Function
 

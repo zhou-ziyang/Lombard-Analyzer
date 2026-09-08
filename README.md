@@ -166,8 +166,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 13,600 lines and 223 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 219 of those procedures are
+It is 13,900 lines and 232 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 228 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -214,9 +214,11 @@ the same width, the breakdown column starts one spacer column to their right
 with the entered table, the pie and the loan-flow diagram under it, and the
 concentration block one spacer column after the breakdown. The loan-flow
 diagram is a Sankey drawn from shapes, since Excel has no chart of that
-kind: the month's new loans on the left, the collateral categories in the
-middle, the loans ended on the right, each band as wide as the collateral it
-carried into or out of its category, the pieces grouped as one shape so the
+kind: what the collateral lost over the month on the left — the loans
+ended, and the positions of the NDGs that stayed that fell — the collateral
+categories in the middle, what it gained on the right — the new loans, and
+the positions that rose — each band as wide as the collateral that movement
+carried out of or into its category, the pieces grouped as one shape so the
 email copies it as one picture.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
@@ -232,8 +234,8 @@ staged exposure: staging sheets are one per date, *Risk Exposure yyyymmdd*,
 so the last run's is on file, and a date that was never staged is staged on
 the spot by the same pass the report date gets — alone and quietly: the
 reference sheets brought up to that snapshot but no issuer name corrected,
-no lookup rows, no notes but the one saying so — so the moves are always
-there and both dates resolve names the same way. The reuse question names
+no lookup rows, no notes — so the moves are always there and both dates
+resolve names the same way. The reuse question names
 the two dates the run needs and which are on file: the answer rebuilds or
 reuses those, a date not on file is staged either way, and no other date's
 table is ever taken in its place. The run's own table carries the
