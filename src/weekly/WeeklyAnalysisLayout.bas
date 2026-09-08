@@ -3,7 +3,7 @@ Option Explicit
 
 ' v38: formats report tables after their data is written. Header alignment is
 ' derived only from the final data or from an explicitly supplied source range.
-' Paired risk tables allow for five columns plus one spacer column.
+' Paired risk tables allow for six columns plus one spacer column.
 
 Public Type ReportLayout
 
@@ -155,13 +155,14 @@ Public Sub InitializeLayout()
         Layout.ReportCol + 16
 
     ' Risk concentration excluding DPM
-    ' One empty spacer column is left between the two five-column tables.
+    ' One empty spacer column is left between the two six-column tables:
+    ' rank, the move since the compared date, name, and three figures.
 
     Layout.RiskExSegRow = _
         Layout.RiskRow
 
     Layout.RiskExSegCol = _
-        Layout.RiskCol + 6
+        Layout.RiskCol + 7
 
     ' The main module recalculates the rows below after each pair of risk
     ' tables has been written. This remains the one central spacing control.

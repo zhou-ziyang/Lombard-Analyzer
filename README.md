@@ -61,7 +61,7 @@ not generated:
 | Certificates | — | Certificate ISIN → its underlying RIC(s) |
 | Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
 
-Generated sheets (*Weekly Analysis*, *Asset Type
+Generated sheets (*Weekly Analysis*, *Risk Exposure Prior*, *Asset Type
 Mapping*, *New Geo-Sec Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
@@ -166,8 +166,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,400 lines and 206 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 202 of those procedures are
+It is 12,700 lines and 209 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 205 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -219,7 +219,13 @@ manual variants), resolved against the reference sheets, and staged into the
 `RiskExposure` table with an account scope flag. The top-10 tables by name,
 geography and sector — full portfolio and excluding segregated accounts — are
 then worksheet formulas over that table, one per subtable, left live in the
-sheet. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
+sheet. Beside each rank, a move: where the name stood on the compared date,
+as a green or red arrow with the places moved, `=` for none, `new` for a
+name that date did not rank. The compared date's ranking is read from its
+staged exposure — the staging table as the run for that date left it, which
+the next run copies aside to *Risk Exposure Prior* before rebuilding — so
+nothing is staged twice; without it the moves are left blank and a note says
+so. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
 loans, breakdown, new loans, loans ended, entered collateral, the pie, the
 concentration tables — and assembles the Outlook message, its intro naming
 the date compared to. `docs/weekly-analysis-generate.md` walks

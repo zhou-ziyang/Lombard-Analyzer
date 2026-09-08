@@ -158,6 +158,13 @@ Private Const ACCOUNT_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Accounts.csv"
 Private Const RISK_STAGE_SHEET As String = "Risk Exposure"
 Private Const RISK_STAGE_TABLE As String = "RiskExposure"
+
+'
+' The compared date's staged exposure, kept aside for the rank changes:
+' the staging table as the run for that date left it.
+'
+Private Const RISK_STAGE_PRIOR_SHEET As String = "Risk Exposure Prior"
+Private Const RISK_STAGE_PRIOR_TABLE As String = "RiskExposurePrior"
 Private Const LEGACY_RISK_STAGE_NON_DPM_SHEET As String = _
     "Risk Exposure - Non-DPM"
 Private Const LEGACY_RISK_STAGE_DPM_SHEET As String = _
@@ -1121,7 +1128,7 @@ Public Sub GenerateWeeklyAnalysis()
 
     If WeeklyDataHasRows(ThisReport.Positions) Then
 
-        BuildRiskGranularitySection ws, ThisReport.Positions
+        BuildRiskGranularitySection ws, ThisReport.Positions, CompareDate
 
     End If
 
@@ -9779,7 +9786,7 @@ Private Function WriteSameAsLeftExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .Merge
         .Value = AssetClass
@@ -9788,7 +9795,7 @@ Private Function WriteSameAsLeftExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow + 1, LeftCol), _
-            ws.Cells(StartRow + 1, LeftCol + 4))
+            ws.Cells(StartRow + 1, LeftCol + 5))
 
         .Merge
         .Value = "Same as left"
@@ -9798,12 +9805,12 @@ Private Function WriteSameAsLeftExposureGroup( _
     FormatReportTable _
         ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow + 1, LeftCol + 4)), _
+            ws.Cells(StartRow + 1, LeftCol + 5)), _
         1
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .HorizontalAlignment = xlLeft
         .Font.Color = RGB(111, 38, 61)
@@ -9826,7 +9833,7 @@ Private Function WriteSameAsLeftExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow + 1, LeftCol), _
-            ws.Cells(StartRow + 1, LeftCol + 4))
+            ws.Cells(StartRow + 1, LeftCol + 5))
 
         .HorizontalAlignment = xlLeft
         .Font.Italic = True
@@ -9853,6 +9860,7 @@ Private Function WriteRiskDimensionTable( _
     ByVal DimensionKey As String, _
     ByVal ExcludeDPM As Boolean, _
     ByVal Visibility As Object, _
+    ByRef PriorStageData As Variant, _
     Optional ByVal CertificateSameAsLeft As Boolean = False) As Long
 
     Dim ClassKey As Variant
@@ -9862,14 +9870,18 @@ Private Function WriteRiskDimensionTable( _
         ws, _
         TopRow, _
         LeftCol, _
-        5, _
+        6, _
         SectionTitle
 
+    '
+    ' Six columns: the rank, the move since the compared date, the name,
+    ' and the three figures.
+    '
     ws.Cells(TopRow + 1, LeftCol).Value = "Rank"
-    ws.Cells(TopRow + 1, LeftCol + 1).Value = DimensionLabel
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Collateral Value"
-    ws.Cells(TopRow + 1, LeftCol + 3).Value = "% of Category"
-    ws.Cells(TopRow + 1, LeftCol + 4).Value = "#NDG"
+    ws.Cells(TopRow + 1, LeftCol + 2).Value = DimensionLabel
+    ws.Cells(TopRow + 1, LeftCol + 3).Value = "Collateral Value"
+    ws.Cells(TopRow + 1, LeftCol + 4).Value = "% of Category"
+    ws.Cells(TopRow + 1, LeftCol + 5).Value = "#NDG"
 
     CurrentRow = TopRow + 2
 
@@ -9902,7 +9914,8 @@ Private Function WriteRiskDimensionTable( _
                         DimensionKey, _
                         CStr(ClassKey), _
                         ExcludeDPM, _
-                        Visibility)
+                        Visibility, _
+                        PriorStageData)
 
             End If
 
@@ -9915,18 +9928,18 @@ Private Function WriteRiskDimensionTable( _
         FormatReportTable _
             ws.Range( _
                 ws.Cells(TopRow + 1, LeftCol), _
-                ws.Cells(TopRow + 1, LeftCol + 4)), _
+                ws.Cells(TopRow + 1, LeftCol + 5)), _
             1, _
             ws.Range( _
                 ws.Cells(TopRow + 2, LeftCol), _
-                ws.Cells(CurrentRow - 1, LeftCol + 4))
+                ws.Cells(CurrentRow - 1, LeftCol + 5))
 
     Else
 
         FormatReportTable _
             ws.Range( _
                 ws.Cells(TopRow + 1, LeftCol), _
-                ws.Cells(TopRow + 1, LeftCol + 4)), _
+                ws.Cells(TopRow + 1, LeftCol + 5)), _
             1
 
     End If
@@ -10933,10 +10946,12 @@ End Sub
 
 Private Sub BuildRiskGranularitySection( _
     ByVal ws As Worksheet, _
-    ByRef PositionData As Variant)
+    ByRef PositionData As Variant, _
+    ByVal CompareDate As Date)
 
     Dim StageRows As Collection
     Dim StageData As Variant
+    Dim PriorStageData As Variant
     Dim RiskPositionData As Variant
 
     Dim CertificateMap As Object
@@ -11003,6 +11018,13 @@ Private Sub BuildRiskGranularitySection( _
     Dim RebuildRiskStage As Boolean
 
     If ws Is Nothing Then Exit Sub
+
+    '
+    ' The compared date's staged exposure, for the rank changes - read
+    ' before this run's rebuild overwrites the staging table, which is
+    ' where it normally still is.
+    '
+    PriorStageData = LoadPriorRiskStageData(CompareDate)
 
     Set RiskSubtableVisibility = _
         BuildRiskSubtableVisibility()
@@ -11484,7 +11506,8 @@ StageDataReadyLabel:
             "Name", _
             "Issuer", _
             False, _
-            RiskSubtableVisibility)
+            RiskSubtableVisibility, _
+            PriorStageData)
 
     RiskExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11497,6 +11520,7 @@ StageDataReadyLabel:
             "Issuer", _
             True, _
             RiskSubtableVisibility, _
+            PriorStageData, _
             CertificateNameSameAsLeft)
 
     Layout.CountryRiskRow = _
@@ -11514,7 +11538,8 @@ StageDataReadyLabel:
             "Geography", _
             "Country", _
             False, _
-            RiskSubtableVisibility)
+            RiskSubtableVisibility, _
+            PriorStageData)
 
     GeographyExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11527,6 +11552,7 @@ StageDataReadyLabel:
             "Country", _
             True, _
             RiskSubtableVisibility, _
+            PriorStageData, _
             CertificateGeographySameAsLeft)
 
     Layout.SectorRiskRow = _
@@ -11544,7 +11570,8 @@ StageDataReadyLabel:
             "Sector", _
             "Sector", _
             False, _
-            RiskSubtableVisibility)
+            RiskSubtableVisibility, _
+            PriorStageData)
 
     SectorExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11557,6 +11584,7 @@ StageDataReadyLabel:
             "Sector", _
             True, _
             RiskSubtableVisibility, _
+            PriorStageData, _
             CertificateSectorSameAsLeft)
 
 
@@ -11769,9 +11797,11 @@ Private Function WriteTopExposureGroup( _
     ByVal DimensionKey As String, _
     ByVal AssetClassKey As String, _
     ByVal ExcludeDPM As Boolean, _
-    ByVal Visibility As Object) As Long
+    ByVal Visibility As Object, _
+    ByRef PriorStageData As Variant) As Long
 
     Dim AnchorCell As Range
+    Dim PriorRanks As Object
 
     Dim OutputCount As Long
     Dim FirstDataRow As Long
@@ -11780,7 +11810,7 @@ Private Function WriteTopExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .Merge
         .Value = DisplayName
@@ -11792,10 +11822,11 @@ Private Function WriteTopExposureGroup( _
     '
     ' One formula produces the whole ranked table - name, value, share and
     ' distinct NDG count - and spills it across the four columns beside the
-    ' rank.  Its height is however many names the class has, up to ten, so
-    ' it is calculated here to find out where the total row goes.
+    ' rank and the move.  Its height is however many names the class has,
+    ' up to ten, so it is calculated here to find out where the total row
+    ' goes.
     '
-    Set AnchorCell = ws.Cells(FirstDataRow, LeftCol + 1)
+    Set AnchorCell = ws.Cells(FirstDataRow, LeftCol + 2)
 
     AnchorCell.Formula2 = _
         RiskRankedFormula( _
@@ -11813,14 +11844,37 @@ Private Function WriteTopExposureGroup( _
         AnchorCell.ClearContents
 
         OutputCount = 1
-        ws.Cells(FirstDataRow, LeftCol + 1).Value = "None"
-        ws.Cells(FirstDataRow, LeftCol + 4).Value = 0
+        ws.Cells(FirstDataRow, LeftCol + 2).Value = "None"
+        ws.Cells(FirstDataRow, LeftCol + 5).Value = 0
 
     Else
+
+        '
+        ' The rank, and beside it where the name stood on the compared
+        ' date - read from the spilled name, so it is whatever the formula
+        ' ranked.
+        '
+        Set PriorRanks = _
+            PriorRankIndex( _
+                PriorStageData, _
+                DimensionKey, _
+                AssetClassKey, _
+                ExcludeDPM, _
+                Visibility)
 
         For i = 1 To OutputCount
 
             ws.Cells(FirstDataRow + i - 1, LeftCol).Value = i
+
+            If Not PriorRanks Is Nothing Then
+
+                WriteRankChange _
+                    ws.Cells(FirstDataRow + i - 1, LeftCol + 1), _
+                    i, _
+                    SafeText(ws.Cells(FirstDataRow + i - 1, LeftCol + 2).Value), _
+                    PriorRanks
+
+            End If
 
         Next i
 
@@ -11828,30 +11882,30 @@ Private Function WriteTopExposureGroup( _
 
     TotalRow = FirstDataRow + OutputCount
 
-    ws.Cells(TotalRow, LeftCol + 2).Formula2 = _
+    ws.Cells(TotalRow, LeftCol + 3).Formula2 = _
         "=SUM(" & _
         ws.Range( _
-            ws.Cells(FirstDataRow, LeftCol + 2), _
-            ws.Cells(TotalRow - 1, LeftCol + 2)).Address(True, True) & ")"
+            ws.Cells(FirstDataRow, LeftCol + 3), _
+            ws.Cells(TotalRow - 1, LeftCol + 3)).Address(True, True) & ")"
 
-    ws.Cells(TotalRow, LeftCol + 4).Formula2 = _
+    ws.Cells(TotalRow, LeftCol + 5).Formula2 = _
         RiskUnionNdgFormula( _
             DimensionKey, _
             AssetClassKey, _
             ExcludeDPM, _
             Visibility, _
             ws.Range( _
-                ws.Cells(FirstDataRow, LeftCol + 1), _
-                ws.Cells(TotalRow - 1, LeftCol + 1)).Address(True, True))
+                ws.Cells(FirstDataRow, LeftCol + 2), _
+                ws.Cells(TotalRow - 1, LeftCol + 2)).Address(True, True))
 
     '
     ' The share the report has always shown: the top ten against the whole
     ' category.  IFERROR keeps an empty category at nought rather than
     ' #DIV/0!, which is what the division used to be guarded for.
     '
-    ws.Cells(TotalRow, LeftCol + 3).Formula2 = _
+    ws.Cells(TotalRow, LeftCol + 4).Formula2 = _
         "=IFERROR(" & _
-        ws.Cells(TotalRow, LeftCol + 2).Address(True, True) & " / " & _
+        ws.Cells(TotalRow, LeftCol + 3).Address(True, True) & " / " & _
         RiskCategoryTotalFormula( _
             DimensionKey, _
             AssetClassKey, _
@@ -11861,12 +11915,12 @@ Private Function WriteTopExposureGroup( _
     FormatReportTable _
         ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(TotalRow, LeftCol + 4)), _
+            ws.Cells(TotalRow, LeftCol + 5)), _
         1
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .HorizontalAlignment = xlLeft
         .Font.Color = RGB(111, 38, 61)
@@ -11875,7 +11929,7 @@ Private Function WriteTopExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4)) _
+            ws.Cells(StartRow, LeftCol + 5)) _
             .Borders(xlEdgeBottom)
 
         .LineStyle = xlNone
@@ -11884,7 +11938,7 @@ Private Function WriteTopExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4)) _
+            ws.Cells(StartRow, LeftCol + 5)) _
             .Borders(xlEdgeTop)
 
         .LineStyle = xlContinuous
@@ -11894,13 +11948,18 @@ Private Function WriteTopExposureGroup( _
     End With
 
     ws.Range( _
-        ws.Cells(FirstDataRow, LeftCol + 1), _
-        ws.Cells(TotalRow, LeftCol + 1)).HorizontalAlignment = _
+        ws.Cells(FirstDataRow, LeftCol + 2), _
+        ws.Cells(TotalRow, LeftCol + 2)).HorizontalAlignment = _
         xlLeft
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, LeftCol + 1), _
+        ws.Cells(TotalRow - 1, LeftCol + 1)).HorizontalAlignment = _
+        xlCenter
 
     With ws.Range( _
             ws.Cells(TotalRow, LeftCol), _
-            ws.Cells(TotalRow, LeftCol + 4))
+            ws.Cells(TotalRow, LeftCol + 5))
 
         .Interior.Color = RGB(255, 255, 255)
 
@@ -11909,25 +11968,300 @@ Private Function WriteTopExposureGroup( _
     FormatTotalRow _
         ws, _
         LeftCol, _
-        LeftCol + 4, _
+        LeftCol + 5, _
         TotalRow
-
-    ws.Range( _
-        ws.Cells(FirstDataRow, LeftCol + 2), _
-        ws.Cells(TotalRow, LeftCol + 2)).NumberFormat = _
-        EuroNumberFormat()
 
     ws.Range( _
         ws.Cells(FirstDataRow, LeftCol + 3), _
         ws.Cells(TotalRow, LeftCol + 3)).NumberFormat = _
-        "0.00%"
+        EuroNumberFormat()
 
     ws.Range( _
         ws.Cells(FirstDataRow, LeftCol + 4), _
         ws.Cells(TotalRow, LeftCol + 4)).NumberFormat = _
+        "0.00%"
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, LeftCol + 5), _
+        ws.Cells(TotalRow, LeftCol + 5)).NumberFormat = _
         "0"
 
     WriteTopExposureGroup = TotalRow + 1
+
+End Function
+
+'
+' Where a name stood on the compared date, beside its rank now: an arrow
+' with the places moved, green up and red down, "=" for no move, "new"
+' for a name the compared date did not rank at all.
+'
+Private Sub WriteRankChange( _
+    ByVal Target As Range, _
+    ByVal CurrentRank As Long, _
+    ByVal Name As String, _
+    ByVal PriorRanks As Object)
+
+    Dim PriorRank As Long
+
+    If Name = "" Then Exit Sub
+
+    If Not PriorRanks.Exists(Name) Then
+
+        Target.Value = "new"
+        Target.Font.Color = RGB(0, 90, 160)
+
+    Else
+
+        PriorRank = CLng(PriorRanks(Name))
+
+        If PriorRank > CurrentRank Then
+
+            Target.Value = ChrW(&H25B2) & CStr(PriorRank - CurrentRank)
+            Target.Font.Color = RGB(0, 128, 0)
+
+        ElseIf PriorRank < CurrentRank Then
+
+            Target.Value = ChrW(&H25BC) & CStr(CurrentRank - PriorRank)
+            Target.Font.Color = RGB(192, 0, 0)
+
+        Else
+
+            Target.Value = "="
+            Target.Font.Color = RGB(128, 128, 128)
+
+        End If
+
+    End If
+
+    Target.Font.Bold = True
+
+End Sub
+
+'
+' The compared date's staged exposure: the staging table as the run for
+' that date left it.  Normally that is the live table itself, which this
+' run is about to rebuild, so it is copied aside to its own sheet first;
+' a rerun finds the copy.  Nothing is staged twice.  With no staged
+' exposure for the date, the rank changes are simply not shown.
+'
+Private Function LoadPriorRiskStageData( _
+    ByVal CompareDate As Date) As Variant
+
+    Dim PriorTable As ListObject
+
+    If CompareDate = 0 Then Exit Function
+
+    If StoredRiskStageDate(RISK_STAGE_SHEET) = CompareDate And _
+       RiskStageTableCanBeReused() Then
+
+        LoadPriorRiskStageData = _
+            LoadRiskStageTableData(RISK_STAGE_SHEET, RISK_STAGE_TABLE)
+
+        WriteRiskStageWorksheet _
+            RISK_STAGE_PRIOR_SHEET, _
+            RISK_STAGE_PRIOR_TABLE, _
+            LoadPriorRiskStageData, _
+            CompareDate
+
+        Exit Function
+
+    End If
+
+    If StoredRiskStageDate(RISK_STAGE_PRIOR_SHEET) = CompareDate Then
+
+        Set PriorTable = _
+            GetRiskStageTable(RISK_STAGE_PRIOR_SHEET, RISK_STAGE_PRIOR_TABLE)
+
+        If RiskStageTableSchemaIsValid(PriorTable) Then
+
+            If RiskStageTableHasData(PriorTable) Then
+
+                LoadPriorRiskStageData = _
+                    LoadRiskStageTableData( _
+                        RISK_STAGE_PRIOR_SHEET, _
+                        RISK_STAGE_PRIOR_TABLE)
+
+                Exit Function
+
+            End If
+
+        End If
+
+    End If
+
+    Note _
+        "Rank changes not shown: no staged exposure for " & _
+        Format(CompareDate, "dd/mm/yyyy") & vbLf & _
+        "Run the report for that date first, then for this one."
+
+End Function
+
+'
+' The compared date's ranking for one subtable, from its staged rows: the
+' rows the ranked formula keeps - the class, the scope, and only resolved
+' names - grouped by the dimension, summed, and sorted the same way,
+' value down then name up.  Every name gets a rank, not only ten, so a
+' name that climbed into the table can say from where.  Nothing when
+' there is no staged exposure to rank.
+'
+Private Function PriorRankIndex( _
+    ByRef StageData As Variant, _
+    ByVal DimensionKey As String, _
+    ByVal AssetClassKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal Visibility As Object) As Object
+
+    Dim Classes As Object
+    Dim Totals As Object
+    Dim Ranks As Object
+
+    Dim ClassKey As Variant
+    Dim StagingValue As Variant
+    Dim Names() As String
+    Dim Values() As Double
+
+    Dim RowNo As Long
+    Dim Name As String
+    Dim Amount As Double
+    Dim Key As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim n As Long
+    Dim SwapName As String
+    Dim SwapValue As Double
+
+    If RiskStageRowCount(StageData) = 0 Then Exit Function
+
+    '
+    ' The staging classes the subtable answers to, as RiskClassTest lists
+    ' them for the formula.
+    '
+    Set Classes = NewExactNameMap()
+
+    If StrComp(AssetClassKey, "Overall", vbTextCompare) = 0 Then
+
+        For Each ClassKey In RiskRankedClasses()
+
+            If RiskSubtableIsVisible(Visibility, DimensionKey, CStr(ClassKey)) Then
+
+                For Each StagingValue In RiskClassStagingValues(CStr(ClassKey))
+                    Classes(NormalizeExactNameKey(CStr(StagingValue))) = True
+                Next StagingValue
+
+            End If
+
+        Next ClassKey
+
+    Else
+
+        For Each StagingValue In RiskClassStagingValues(AssetClassKey)
+            Classes(NormalizeExactNameKey(CStr(StagingValue))) = True
+        Next StagingValue
+
+    End If
+
+    Set Totals = NewExactNameMap()
+
+    For RowNo = 1 To UBound(StageData, 1)
+
+        If Classes.Exists( _
+               NormalizeExactNameKey( _
+                   SafeText(StageData(RowNo, RiskStageAssetClass)))) Then
+
+            Name = SafeText(StageData(RowNo, RiskStageExposureName))
+
+            If StrComp( _
+                   SafeText(StageData(RowNo, RiskStageExposureType)), _
+                   UNKNOWN_UNDERLYING_TYPE, vbTextCompare) <> 0 And _
+               StrComp( _
+                   Left(Name, Len(UNKNOWN_UNDERLYING_PREFIX)), _
+                   UNKNOWN_UNDERLYING_PREFIX, vbTextCompare) <> 0 Then
+
+                If Not ExcludeDPM Or _
+                   StrComp( _
+                       SafeText(StageData(RowNo, RiskStageAccountScope)), _
+                       NON_DPM_SCOPE, vbTextCompare) = 0 Then
+
+                    Select Case DimensionKey
+
+                        Case "Country"
+                            Name = SafeText(StageData(RowNo, RiskStageGeography))
+                        Case "Sector"
+                            Name = SafeText(StageData(RowNo, RiskStageSector))
+
+                    End Select
+
+                    If Name = "" Then Name = OTHER_RISK_DIMENSION
+
+                    If IsNumeric(StageData(RowNo, RiskStageAllocatedValue)) Then
+                        Amount = CDbl(StageData(RowNo, RiskStageAllocatedValue))
+                    Else
+                        Amount = 0
+                    End If
+
+                    If Totals.Exists(Name) Then
+                        Totals(Name) = CDbl(Totals(Name)) + Amount
+                    Else
+                        Totals.Add Name, Amount
+                    End If
+
+                End If
+
+            End If
+
+        End If
+
+    Next RowNo
+
+    Set Ranks = NewExactNameMap()
+    Set PriorRankIndex = Ranks
+
+    n = Totals.Count
+
+    If n = 0 Then Exit Function
+
+    ReDim Names(1 To n)
+    ReDim Values(1 To n)
+
+    i = 0
+
+    For Each Key In Totals.Keys
+        i = i + 1
+        Names(i) = CStr(Key)
+        Values(i) = CDbl(Totals(Key))
+    Next Key
+
+    '
+    ' Value down, then name up - SORTBY's order in the formula.  A few
+    ' hundred names at most, so a plain insertion sort.
+    '
+    For i = 2 To n
+
+        SwapName = Names(i)
+        SwapValue = Values(i)
+        j = i - 1
+
+        Do While j >= 1
+
+            If Values(j) > SwapValue Then Exit Do
+            If Values(j) = SwapValue Then
+                If StrComp(Names(j), SwapName, vbTextCompare) <= 0 Then Exit Do
+            End If
+
+            Names(j + 1) = Names(j)
+            Values(j + 1) = Values(j)
+            j = j - 1
+
+        Loop
+
+        Names(j + 1) = SwapName
+        Values(j + 1) = SwapValue
+
+    Next i
+
+    For i = 1 To n
+        Ranks(Names(i)) = i
+    Next i
 
 End Function
 
@@ -12365,12 +12699,20 @@ Private Sub CreateWeeklyEmailButton(ByVal ws As Worksheet)
     ws.Buttons("btnWeeklyRerun").Delete
     On Error GoTo 0
 
-    Set btn = ws.Buttons.Add(345, 16, 100, 26)
+    '
+    ' Both sit inside the title row, whatever height AutoFit gave it.
+    '
+    With ws.Rows(Layout.HeaderRow)
+
+        Set btn = ws.Buttons.Add(345, .Top + 1, 100, .Height - 2)
+        Set Btn2 = ws.Buttons.Add(455, .Top + 1, 50, .Height - 2)
+
+    End With
+
     btn.name = "btnWeeklyEmail"
     btn.Characters.Text = "Generate Email"
     btn.OnAction = "CreateWeeklyEmail"
 
-    Set Btn2 = ws.Buttons.Add(455, 16, 50, 26)
     Btn2.name = "btnWeeklyRerun"
     Btn2.Characters.Text = "Rerun"
     Btn2.OnAction = "GenerateWeeklyAnalysis"

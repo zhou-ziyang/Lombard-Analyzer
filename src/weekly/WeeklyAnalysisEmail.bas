@@ -138,10 +138,10 @@ Public Sub CreateWeeklyEmail()
 
     HTMLBody = HTMLBody & _
         "<table class='email-container' align='left' " & _
-        "width='1200' " & _
+        "width='1240' " & _
         "cellpadding='30' " & _
         "cellspacing='0' " & _
-        "style='width:1200px; table-layout:fixed;" & _
+        "style='width:1240px; table-layout:fixed;" & _
         "background-color:#ffffff;" & _
         "border:1px solid #ccc;" & _
         "font-family:Aptos Display,Aptos,UniCredit,Calibri,sans-serif;'>" & _
@@ -405,7 +405,7 @@ Private Function RiskTablePairToHTML( _
             ws, _
             FirstRow, _
             Layout.RiskCol, _
-            Layout.RiskExSegCol + 4)
+            Layout.RiskExSegCol + 5)
 
     If LastRow <= FirstRow Then Exit Function
 
@@ -417,7 +417,7 @@ Private Function RiskTablePairToHTML( _
                     Layout.RiskCol), _
                 ws.Cells( _
                     LastRow, _
-                    Layout.RiskExSegCol + 4)), _
+                    Layout.RiskExSegCol + 5)), _
             0)
 
 End Function
@@ -483,7 +483,7 @@ End Function
 '
 Private Function RangeToHTMLFragment( _
     ByVal rng As Range, _
-    Optional ByVal ExtraWidthPt As Long = 20) As String
+    Optional ByVal ExtraWidthPt As Long = 16) As String
 
     Dim Html As String
 
