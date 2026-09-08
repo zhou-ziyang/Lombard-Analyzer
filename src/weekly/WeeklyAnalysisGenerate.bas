@@ -179,6 +179,14 @@ Private Const FLOW_SIDE_GAP As Double = 24
 ' moved: the residue a valuation leaves.
 '
 Private Const FLOW_CHANGE_FLOOR As Double = 0.005
+'
+' A category's node is coloured by its net move over the month against
+' what it held a month earlier: green up, red down, paler the smaller the
+' move.  A move of this share of the holding, or more, gets the full
+' colour; any move at all gets at least this much of it.
+'
+Private Const FLOW_FULL_COLOR_CHANGE As Double = 0.2
+Private Const FLOW_LEAST_COLOR_WEIGHT As Double = 0.35
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
@@ -12972,9 +12980,10 @@ End Sub
 ' categories in the middle, and what it gained on the right - the new
 ' loans, and under them the positions that rose.  A band is one of those
 ' four movements in one category, as wide as it is worth, all on one
-' scale; a category node is as tall as the larger of its two sides.  The
-' pieces are grouped under one name so the email copies the diagram as
-' one picture, like the pie.
+' scale; a category node is as tall as the larger of its two sides and
+' coloured by its net move, green up and red down, against what the
+' category held a month earlier.  The pieces are grouped under one name
+' so the email copies the diagram as one picture, like the pie.
 '
 Private Sub CreateLoanFlowDiagram( _
     ByVal ws As Worksheet, _
@@ -13000,7 +13009,7 @@ Private Sub CreateLoanFlowDiagram( _
     Dim RisenTotal As Double
 
     Dim Categories As Variant
-    Dim NodeColors As Variant
+    Dim Opening As Object
     Dim Key As String
 
     Dim Members As Collection
@@ -13087,8 +13096,15 @@ Private Sub CreateLoanFlowDiagram( _
     ContinuingCollateralChanges _
         Snaps, UnknownAssets, Risen, Fallen, RisenCount, FallenCount
 
+    '
+    ' What each category held a month earlier, the base its net move is
+    ' read against.
+    '
+
+    Set Opening = BuildCollateralDictionary(Snaps.MonthPositions, UnknownAssets)
+    If Opening Is Nothing Then Set Opening = NewCollateralDictionary()
+
     Categories = CollateralCategories()
-    NodeColors = CollateralSliceColors()
 
     ReDim NodeTops(0 To UBound(Categories))
     ReDim NodeHeights(0 To UBound(Categories))
@@ -13151,6 +13167,14 @@ Private Sub CreateLoanFlowDiagram( _
         Exit Sub
 
     End If
+
+    Members.Add _
+        AddFlowLabel( _
+            ws, BackLeft + 10, BackTop + BackHeight - 13, BackWidth - 20, 10, _
+            "Category bars: net move over the month against the holding " & _
+                "a month earlier, green up, red down, full colour from " & _
+                ChrW(&HB1) & Format(FLOW_FULL_COLOR_CHANGE, "0%") & ".", _
+            msoAlignLeft, 8, False).name
 
     '
     ' The three columns: the side nodes inside the room kept for their
@@ -13300,7 +13324,9 @@ Private Sub CreateLoanFlowDiagram( _
                 DrawFlowNode( _
                     ws, MidNodeX, NodeTops(i), _
                     FLOW_NODE_WIDTH, NodeHeights(i), _
-                    NodeColors(i)).name
+                    FlowNetColor( _
+                        Entered(Key) + Risen(Key) - Ended(Key) - Fallen(Key), _
+                        Opening(Key))).name
 
             Members.Add _
                 FlowCategoryLabel( _
@@ -13308,7 +13334,8 @@ Private Sub CreateLoanFlowDiagram( _
                     MidNodeX + FLOW_NODE_WIDTH + 5, _
                     NodeTops(i) + NodeHeights(i) / 2 - 6, _
                     Categories(i)(1), _
-                    Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key)).name
+                    Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key), _
+                    Opening(Key)).name
 
         End If
 
@@ -13615,7 +13642,8 @@ End Function
 '
 ' A category's label: its name in bold, then what it lost (red, with a
 ' minus) and what it gained (green, with a plus), in the order the sides
-' read and each only when there was any.
+' read and each only when there was any, then the net move as a share of
+' the month-earlier holding, in the colour the node has at full strength.
 '
 Private Function FlowCategoryLabel( _
     ByVal ws As Worksheet, _
@@ -13623,15 +13651,19 @@ Private Function FlowCategoryLabel( _
     ByVal Y As Double, _
     ByVal CategoryLabel As String, _
     ByVal OutValue As Double, _
-    ByVal InValue As Double) As Shape
+    ByVal InValue As Double, _
+    ByVal OpeningValue As Double) As Shape
 
     Dim Label As Shape
 
     Dim Text As String
     Dim PlusText As String
     Dim MinusText As String
+    Dim NetText As String
     Dim PlusStart As Long
     Dim MinusStart As Long
+    Dim NetStart As Long
+    Dim Net As Double
 
     Text = CategoryLabel
 
@@ -13648,6 +13680,18 @@ Private Function FlowCategoryLabel( _
         PlusText = "+" & CompactEuro(InValue)
         PlusStart = Len(Text) + 3
         Text = Text & "  " & PlusText
+
+    End If
+
+    Net = InValue - OutValue
+
+    If OpeningValue > 0 And Abs(Net) >= FLOW_CHANGE_FLOOR Then
+
+        NetText = _
+            IIf(Net > 0, "+", ChrW(&H2212)) & _
+            Format(Abs(Net) / OpeningValue, "0.0%")
+        NetStart = Len(Text) + 3
+        Text = Text & "  " & NetText
 
     End If
 
@@ -13668,9 +13712,77 @@ Private Function FlowCategoryLabel( _
                 RGB(192, 0, 0)
         End If
 
+        If NetStart > 0 Then
+            .Characters(NetStart, Len(NetText)).Font.Fill.ForeColor.RGB = _
+                FlowNetColor(Net, 0)
+        End If
+
     End With
 
     Set FlowCategoryLabel = Label
+
+End Function
+
+'
+' The colour of a category's net move: green up, red down, grey for none,
+' faded towards white the smaller the move is against the opening
+' holding.  No opening holding to read it against - a category the month
+' began without - gets the full colour, as does a request for it.
+'
+Private Function FlowNetColor( _
+    ByVal Net As Double, _
+    ByVal OpeningValue As Double) As Long
+
+    Dim Weight As Double
+    Dim FullColor As Long
+
+    If Abs(Net) < FLOW_CHANGE_FLOOR Then
+
+        FlowNetColor = RGB(160, 160, 160)
+
+        Exit Function
+
+    End If
+
+    If Net > 0 Then
+        FullColor = RGB(60, 130, 90)
+    Else
+        FullColor = RGB(148, 54, 52)
+    End If
+
+    If OpeningValue > 0 Then
+        Weight = Abs(Net) / OpeningValue / FLOW_FULL_COLOR_CHANGE
+    Else
+        Weight = 1
+    End If
+
+    If Weight > 1 Then Weight = 1
+    If Weight < FLOW_LEAST_COLOR_WEIGHT Then Weight = FLOW_LEAST_COLOR_WEIGHT
+
+    FlowNetColor = BlendTowardsWhite(FullColor, Weight)
+
+End Function
+
+'
+' A colour at part strength: the given share of it over white.
+'
+Private Function BlendTowardsWhite( _
+    ByVal Color As Long, _
+    ByVal Weight As Double) As Long
+
+    Dim Red As Long
+    Dim Green As Long
+    Dim Blue As Long
+
+    Red = Color And 255
+    Green = (Color \ 256) And 255
+    Blue = (Color \ 65536) And 255
+
+    BlendTowardsWhite = _
+        RGB( _
+            255 - (255 - Red) * Weight, _
+            255 - (255 - Green) * Weight, _
+            255 - (255 - Blue) * Weight)
 
 End Function
 

@@ -166,8 +166,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 13,900 lines and 232 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 228 of those procedures are
+It is 14,000 lines and 234 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 230 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -218,8 +218,10 @@ kind: what the collateral lost over the month on the left — the loans
 ended, and the positions of the NDGs that stayed that fell — the collateral
 categories in the middle, what it gained on the right — the new loans, and
 the positions that rose — each band as wide as the collateral that movement
-carried out of or into its category, the pieces grouped as one shape so the
-email copies it as one picture.
+carried out of or into its category, each category bar coloured by its net
+move against what it held a month earlier (green up, red down, paler the
+smaller the move), the pieces grouped as one shape so the email copies it as
+one picture.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
 merged (diacritics, legal suffixes, share class suffixes, prefix matching,
