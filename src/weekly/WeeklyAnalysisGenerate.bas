@@ -161,6 +161,18 @@ Private Const RISK_BIND_WIDTH As Long = 6
 '
 Private Const PIE_TOP_GAP_POINTS As Double = 30
 Private Const PIE_BOTTOM_GAP_POINTS As Double = 8
+'
+' The loan-flow diagram under the pie, in points: the name its shapes are
+' grouped under, the node bars' width, the air between the collateral
+' nodes, the least height a node is drawn with so a sliver of collateral
+' still shows, the width kept for the labels either side, and the title's.
+'
+Private Const FLOW_SHAPE_NAME As String = "LoanFlowSankey"
+Private Const FLOW_NODE_WIDTH As Double = 14
+Private Const FLOW_NODE_GAP As Double = 10
+Private Const FLOW_NODE_MIN_HEIGHT As Double = 4
+Private Const FLOW_LABEL_WIDTH As Double = 120
+Private Const FLOW_TITLE_HEIGHT As Double = 44
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
@@ -1213,6 +1225,13 @@ Public Sub GenerateWeeklyAnalysis()
        WeeklyDataHasRows(PositionsYTD) Then
 
         CreateCollateralPieChart ws, CurrentDate
+
+    End If
+
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) Then
+
+        CreateLoanFlowDiagram ws, ThisReport, CurrentDate, UnknownAssets
 
     End If
 
@@ -2277,8 +2296,47 @@ Private Sub BuildEnteredCollateralSection( _
 End Sub
 
 '
+' The NDGs one snapshot has and another does not: new loans when the
+' subject is the later snapshot, loans ended when it is the earlier one.
+' Empty when either snapshot has no rows, so nothing counts as moved
+' against a snapshot that is not there.
+'
+Private Function MovedNdgSet( _
+    ByRef SubjectAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant) As Object
+
+    Dim ReferenceNDGs As Object
+    Dim MovedNDGs As Object
+
+    Dim NDG As String
+
+    Dim r As Long
+
+    Set MovedNDGs = NewNDGSet()
+    Set MovedNdgSet = MovedNDGs
+
+    If Not WeeklyDataHasRows(SubjectAccounts) Then Exit Function
+    If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Function
+
+    Set ReferenceNDGs = GetAccountNDGDictionary(ReferenceAccounts)
+
+    For r = LBound(SubjectAccounts, 1) To UBound(SubjectAccounts, 1)
+
+        NDG = CleanWeeklyCsvField(SubjectAccounts(r, WeeklyAccountNDG))
+
+        If NDG <> "" Then
+            If Not ReferenceNDGs.Exists(NDG) Then MovedNDGs(NDG) = True
+        End If
+
+    Next r
+
+End Function
+
+'
 ' The collateral of the NDGs the current snapshot has and the reference one
-' did not, by asset class.  One window per call.
+' did not, by asset class, summed from the current snapshot's positions.
+' One window per call; with the snapshots the other way round and the
+' earlier positions, the collateral that left with the loans ended.
 '
 Private Function EnteredCollateralAmounts( _
     ByRef CurrentAccounts As Variant, _
@@ -2286,7 +2344,6 @@ Private Function EnteredCollateralAmounts( _
     ByRef CurrentPositions As Variant, _
     ByRef UnknownAssets As Object) As Object
 
-    Dim ReferenceNDGs As Object
     Dim NewNDGs As Object
     Dim Amounts As Object
 
@@ -2299,20 +2356,11 @@ Private Function EnteredCollateralAmounts( _
     Set Amounts = NewCollateralDictionary()
     Set EnteredCollateralAmounts = Amounts
 
-    If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Function
+    If Not WeeklyDataHasRows(CurrentPositions) Then Exit Function
 
-    Set ReferenceNDGs = GetAccountNDGDictionary(ReferenceAccounts)
-    Set NewNDGs = NewNDGSet()
+    Set NewNDGs = MovedNdgSet(CurrentAccounts, ReferenceAccounts)
 
-    For r = LBound(CurrentAccounts, 1) To UBound(CurrentAccounts, 1)
-
-        NDG = CleanWeeklyCsvField(CurrentAccounts(r, WeeklyAccountNDG))
-
-        If NDG <> "" Then
-            If Not ReferenceNDGs.Exists(NDG) Then NewNDGs(NDG) = True
-        End If
-
-    Next r
+    If NewNDGs.Count = 0 Then Exit Function
 
     For r = LBound(CurrentPositions, 1) To UBound(CurrentPositions, 1)
 
@@ -12739,6 +12787,661 @@ Private Sub CreateCollateralPieChart( _
 End Sub
 
 '
+' The loan-flow diagram under the pie: a Sankey drawn from shapes, since
+' Excel has no chart of that kind.  The new loans of the past month on the
+' left, the collateral categories in the middle, the loans ended on the
+' right; a band is the collateral one category received with the new NDGs
+' (green, into the category) or lost with the ended ones (red, out of it),
+' as wide as it is worth, all on one scale.  A category node is as tall as
+' the larger of its two bands.  The pieces are grouped under one name so
+' the email copies the diagram as one picture, like the pie.
+'
+Private Sub CreateLoanFlowDiagram( _
+    ByVal ws As Worksheet, _
+    ByRef Snaps As ReportSnapshots, _
+    ByVal ReportDate As Date, _
+    ByRef UnknownAssets As Object)
+
+    Dim Frame As Range
+
+    Dim Entered As Object
+    Dim Departed As Object
+
+    Dim NewCount As Long
+    Dim EndedCount As Long
+
+    Dim Categories As Variant
+    Dim NodeColors As Variant
+    Dim Key As String
+
+    Dim Members As Collection
+
+    Dim BackLeft As Double
+    Dim BackTop As Double
+    Dim BackWidth As Double
+    Dim BackHeight As Double
+
+    Dim DiagramTop As Double
+    Dim DiagramBottom As Double
+    Dim ColumnBottom As Double
+
+    Dim LeftNodeX As Double
+    Dim MidNodeX As Double
+    Dim RightNodeX As Double
+
+    Dim EnteredTotal As Double
+    Dim DepartedTotal As Double
+    Dim Larger As Double
+    Dim LargerTotal As Double
+    Dim MovingCount As Long
+
+    Dim Available As Double
+    Dim PointsPerEuro As Double
+    Dim SmallCount As Long
+    Dim LargeSum As Double
+
+    Dim NodeTops() As Double
+    Dim NodeHeights() As Double
+
+    Dim LeftTop As Double
+    Dim RightTop As Double
+    Dim LeftOffset As Double
+    Dim RightOffset As Double
+    Dim BandHeight As Double
+    Dim LabelMiddle As Double
+
+    Dim i As Long
+
+    On Error Resume Next
+    ws.Shapes(FLOW_SHAPE_NAME).Delete
+    On Error GoTo 0
+
+    '
+    ' The frame: the same columns as the pie's, bordered the same way.
+    '
+
+    Set Frame = _
+        ws.Range( _
+            ws.Cells(Layout.FlowRow, Layout.FlowCol), _
+            ws.Cells( _
+                Layout.FlowRow + Layout.FlowHeightRows - 1, _
+                Layout.EnteredCol + CollateralCategoryCount()))
+
+    Frame.BorderAround _
+        LineStyle:=xlContinuous, _
+        Weight:=xlMedium, _
+        Color:=RGB(60, 60, 60)
+
+    '
+    ' What came in with the new NDGs, by category, from this snapshot's
+    ' positions; what went out with the ended ones, from the month-earlier
+    ' positions.  The same sets the two movement tables count.
+    '
+
+    Set Entered = _
+        EnteredCollateralAmounts( _
+            Snaps.Accounts, Snaps.MonthAccounts, Snaps.Positions, _
+            UnknownAssets)
+
+    Set Departed = _
+        EnteredCollateralAmounts( _
+            Snaps.MonthAccounts, Snaps.Accounts, Snaps.MonthPositions, _
+            UnknownAssets)
+
+    NewCount = MovedNdgSet(Snaps.Accounts, Snaps.MonthAccounts).Count
+    EndedCount = MovedNdgSet(Snaps.MonthAccounts, Snaps.Accounts).Count
+
+    Categories = CollateralCategories()
+    NodeColors = CollateralSliceColors()
+
+    ReDim NodeTops(0 To UBound(Categories))
+    ReDim NodeHeights(0 To UBound(Categories))
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+
+        EnteredTotal = EnteredTotal + Entered(Key)
+        DepartedTotal = DepartedTotal + Departed(Key)
+
+        If Entered(Key) > 0 Or Departed(Key) > 0 Then
+
+            MovingCount = MovingCount + 1
+            LargerTotal = LargerTotal + LargerOf(Entered(Key), Departed(Key))
+
+        End If
+
+    Next i
+
+    '
+    ' A white backdrop the size of the frame's inside, so the picture the
+    ' email takes has a ground of its own, and the title on it.
+    '
+
+    BackLeft = Frame.Left + 2
+    BackTop = Frame.Top + 2
+    BackWidth = Frame.Width - 4
+    BackHeight = Frame.Height - 4
+
+    Set Members = New Collection
+
+    Members.Add _
+        DrawFlowNode( _
+            ws, BackLeft, BackTop, BackWidth, BackHeight, _
+            RGB(255, 255, 255)).name
+
+    Members.Add _
+        AddFlowLabel( _
+            ws, BackLeft, BackTop + 6, BackWidth, FLOW_TITLE_HEIGHT, _
+            "Collateral Flows in the Past Month" & vbCr & _
+                "As of " & Format(ReportDate, "dd/mm/yyyy"), _
+            msoAlignCenter, 14, True).name
+
+    If MovingCount = 0 Then
+
+        Members.Add _
+            AddFlowLabel( _
+                ws, BackLeft, BackTop + BackHeight / 2 - 8, BackWidth, 16, _
+                "No Lombard loans entered or ended in the past month.", _
+                msoAlignCenter, 10, False).name
+
+        GroupFlowShapes ws, Members
+
+        Exit Sub
+
+    End If
+
+    '
+    ' The three columns: the loan nodes inside the room kept for their
+    ' labels, the collateral nodes half way between.
+    '
+
+    DiagramTop = BackTop + FLOW_TITLE_HEIGHT + 14
+    DiagramBottom = BackTop + BackHeight - 14
+
+    LeftNodeX = BackLeft + 10 + FLOW_LABEL_WIDTH + 6
+    RightNodeX = _
+        BackLeft + BackWidth - 10 - FLOW_LABEL_WIDTH - 6 - FLOW_NODE_WIDTH
+    MidNodeX = (LeftNodeX + RightNodeX) / 2
+
+    '
+    ' One scale for every band: the collateral column, gaps aside, fills
+    ' the height.  A node too thin to see is drawn at the least height and
+    ' the scale set again over the rest, so the column still fits.
+    '
+
+    Available = DiagramBottom - DiagramTop - FLOW_NODE_GAP * (MovingCount - 1)
+    PointsPerEuro = Available / LargerTotal
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+        Larger = LargerOf(Entered(Key), Departed(Key))
+
+        If Larger > 0 Then
+
+            If Larger * PointsPerEuro < FLOW_NODE_MIN_HEIGHT Then
+                SmallCount = SmallCount + 1
+            Else
+                LargeSum = LargeSum + Larger
+            End If
+
+        End If
+
+    Next i
+
+    If LargeSum > 0 Then
+        PointsPerEuro = _
+            (Available - SmallCount * FLOW_NODE_MIN_HEIGHT) / LargeSum
+    End If
+
+    ColumnBottom = DiagramTop
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+        Larger = LargerOf(Entered(Key), Departed(Key))
+
+        If Larger > 0 Then
+
+            NodeTops(i) = ColumnBottom
+
+            NodeHeights(i) = Larger * PointsPerEuro
+            If NodeHeights(i) < FLOW_NODE_MIN_HEIGHT Then
+                NodeHeights(i) = FLOW_NODE_MIN_HEIGHT
+            End If
+
+            ColumnBottom = ColumnBottom + NodeHeights(i) + FLOW_NODE_GAP
+
+        End If
+
+    Next i
+
+    ColumnBottom = ColumnBottom - FLOW_NODE_GAP
+
+    '
+    ' The two loan nodes, centred against the collateral column; their
+    ' bands leave and arrive in category order, so none cross.
+    '
+
+    LeftTop = _
+        DiagramTop + _
+        (ColumnBottom - DiagramTop - EnteredTotal * PointsPerEuro) / 2
+
+    RightTop = _
+        DiagramTop + _
+        (ColumnBottom - DiagramTop - DepartedTotal * PointsPerEuro) / 2
+
+    LeftOffset = LeftTop
+    RightOffset = RightTop
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+
+        If Entered(Key) > 0 Then
+
+            BandHeight = Entered(Key) * PointsPerEuro
+
+            Members.Add _
+                DrawFlowBand( _
+                    ws, _
+                    LeftNodeX + FLOW_NODE_WIDTH, _
+                    LeftOffset, LeftOffset + BandHeight, _
+                    MidNodeX, _
+                    NodeTops(i), NodeTops(i) + BandHeight, _
+                    RGB(178, 214, 190)).name
+
+            LeftOffset = LeftOffset + BandHeight
+
+        End If
+
+        If Departed(Key) > 0 Then
+
+            BandHeight = Departed(Key) * PointsPerEuro
+
+            Members.Add _
+                DrawFlowBand( _
+                    ws, _
+                    MidNodeX + FLOW_NODE_WIDTH, _
+                    NodeTops(i), NodeTops(i) + BandHeight, _
+                    RightNodeX, _
+                    RightOffset, RightOffset + BandHeight, _
+                    RGB(226, 186, 184)).name
+
+            RightOffset = RightOffset + BandHeight
+
+        End If
+
+    Next i
+
+    '
+    ' Nodes over the bands, labels over everything.  A category's label
+    ' sits to the right of its node, over the pale band leaving it.
+    '
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+
+        If Entered(Key) > 0 Or Departed(Key) > 0 Then
+
+            Members.Add _
+                DrawFlowNode( _
+                    ws, MidNodeX, NodeTops(i), _
+                    FLOW_NODE_WIDTH, NodeHeights(i), _
+                    NodeColors(i)).name
+
+            Members.Add _
+                FlowCategoryLabel( _
+                    ws, _
+                    MidNodeX + FLOW_NODE_WIDTH + 5, _
+                    NodeTops(i) + NodeHeights(i) / 2 - 6, _
+                    Categories(i)(1), _
+                    Entered(Key), Departed(Key)).name
+
+        End If
+
+    Next i
+
+    LabelMiddle = (DiagramTop + ColumnBottom) / 2
+
+    If EnteredTotal > 0 Then
+
+        Members.Add _
+            DrawFlowNode( _
+                ws, LeftNodeX, LeftTop, _
+                FLOW_NODE_WIDTH, EnteredTotal * PointsPerEuro, _
+                RGB(60, 130, 90)).name
+
+        LabelMiddle = LeftTop + EnteredTotal * PointsPerEuro / 2
+
+    End If
+
+    Members.Add _
+        FlowLoanLabel( _
+            ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelMiddle, _
+            msoAlignRight, _
+            "New Lombard Loans", NewCount, _
+            CompactEuro(EnteredTotal) & " entered").name
+
+    LabelMiddle = (DiagramTop + ColumnBottom) / 2
+
+    If DepartedTotal > 0 Then
+
+        Members.Add _
+            DrawFlowNode( _
+                ws, RightNodeX, RightTop, _
+                FLOW_NODE_WIDTH, DepartedTotal * PointsPerEuro, _
+                RGB(148, 54, 52)).name
+
+        LabelMiddle = RightTop + DepartedTotal * PointsPerEuro / 2
+
+    End If
+
+    Members.Add _
+        FlowLoanLabel( _
+            ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelMiddle, _
+            msoAlignLeft, _
+            "Lombard Loans Ended", EndedCount, _
+            CompactEuro(DepartedTotal) & " left").name
+
+    GroupFlowShapes ws, Members
+
+End Sub
+
+Private Function LargerOf( _
+    ByVal First As Double, _
+    ByVal Second As Double) As Double
+
+    If First > Second Then
+        LargerOf = First
+    Else
+        LargerOf = Second
+    End If
+
+End Function
+
+'
+' A band between two node edges: the left edge's span curves into the
+' right edge's, the two curves joined by the edges themselves, and the
+' path closed back on its start so the shape fills.
+'
+Private Function DrawFlowBand( _
+    ByVal ws As Worksheet, _
+    ByVal FromX As Double, _
+    ByVal FromTop As Double, _
+    ByVal FromBottom As Double, _
+    ByVal ToX As Double, _
+    ByVal ToTop As Double, _
+    ByVal ToBottom As Double, _
+    ByVal FillColor As Long) As Shape
+
+    Dim Builder As FreeformBuilder
+    Dim Band As Shape
+    Dim MiddleX As Double
+
+    MiddleX = (FromX + ToX) / 2
+
+    Set Builder = ws.Shapes.BuildFreeform(msoEditingCorner, FromX, FromTop)
+
+    Builder.AddNodes _
+        msoSegmentCurve, msoEditingCorner, _
+        MiddleX, FromTop, MiddleX, ToTop, ToX, ToTop
+
+    Builder.AddNodes msoSegmentLine, msoEditingAuto, ToX, ToBottom
+
+    Builder.AddNodes _
+        msoSegmentCurve, msoEditingCorner, _
+        MiddleX, ToBottom, MiddleX, FromBottom, FromX, FromBottom
+
+    Builder.AddNodes msoSegmentLine, msoEditingAuto, FromX, FromTop
+
+    Set Band = Builder.ConvertToShape
+
+    With Band
+
+        .Fill.Visible = msoTrue
+        .Fill.Solid
+        .Fill.ForeColor.RGB = FillColor
+        .Line.Visible = msoFalse
+        .Shadow.Visible = msoFalse
+
+    End With
+
+    Set DrawFlowBand = Band
+
+End Function
+
+Private Function DrawFlowNode( _
+    ByVal ws As Worksheet, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal BoxWidth As Double, _
+    ByVal BoxHeight As Double, _
+    ByVal FillColor As Long) As Shape
+
+    Dim Node As Shape
+
+    Set Node = _
+        ws.Shapes.AddShape(msoShapeRectangle, X, Y, BoxWidth, BoxHeight)
+
+    With Node
+
+        .Fill.Visible = msoTrue
+        .Fill.Solid
+        .Fill.ForeColor.RGB = FillColor
+        .Line.Visible = msoFalse
+        .Shadow.Visible = msoFalse
+
+    End With
+
+    Set DrawFlowNode = Node
+
+End Function
+
+'
+' A borderless text box with no margins, one paragraph per line, in the
+' report's face at the size given.
+'
+Private Function AddFlowLabel( _
+    ByVal ws As Worksheet, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal BoxWidth As Double, _
+    ByVal BoxHeight As Double, _
+    ByVal Text As String, _
+    ByVal Alignment As MsoParagraphAlignment, _
+    ByVal FontSize As Double, _
+    ByVal Bold As Boolean) As Shape
+
+    Dim Label As Shape
+
+    Set Label = _
+        ws.Shapes.AddTextbox( _
+            msoTextOrientationHorizontal, X, Y, BoxWidth, BoxHeight)
+
+    With Label
+
+        .Fill.Visible = msoFalse
+        .Line.Visible = msoFalse
+        .Shadow.Visible = msoFalse
+
+        With .TextFrame2
+
+            .AutoSize = msoAutoSizeNone
+            .WordWrap = msoFalse
+            .MarginLeft = 0
+            .MarginRight = 0
+            .MarginTop = 0
+            .MarginBottom = 0
+            .VerticalAnchor = msoAnchorMiddle
+
+            .TextRange.Text = Text
+            .TextRange.ParagraphFormat.Alignment = Alignment
+
+            With .TextRange.Font
+
+                .name = "Aptos Display"
+                .Size = FontSize
+                .Fill.ForeColor.RGB = RGB(40, 40, 40)
+
+                If Bold Then
+                    .Bold = msoTrue
+                Else
+                    .Bold = msoFalse
+                End If
+
+            End With
+
+        End With
+
+    End With
+
+    Set AddFlowLabel = Label
+
+End Function
+
+'
+' A category's label: its name in bold, then what it received (green,
+' with a plus) and what it lost (red, with a minus), each only when there
+' was any.
+'
+Private Function FlowCategoryLabel( _
+    ByVal ws As Worksheet, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal CategoryLabel As String, _
+    ByVal EnteredValue As Double, _
+    ByVal DepartedValue As Double) As Shape
+
+    Dim Label As Shape
+
+    Dim Text As String
+    Dim PlusText As String
+    Dim MinusText As String
+    Dim PlusStart As Long
+    Dim MinusStart As Long
+
+    Text = CategoryLabel
+
+    If EnteredValue > 0 Then
+
+        PlusText = "+" & CompactEuro(EnteredValue)
+        PlusStart = Len(Text) + 3
+        Text = Text & "  " & PlusText
+
+    End If
+
+    If DepartedValue > 0 Then
+
+        MinusText = ChrW(&H2212) & CompactEuro(DepartedValue)
+        MinusStart = Len(Text) + 3
+        Text = Text & "  " & MinusText
+
+    End If
+
+    Set Label = _
+        AddFlowLabel(ws, X, Y, 240, 12, Text, msoAlignLeft, 9, False)
+
+    With Label.TextFrame2.TextRange
+
+        .Characters(1, Len(CategoryLabel)).Font.Bold = msoTrue
+
+        If PlusStart > 0 Then
+            .Characters(PlusStart, Len(PlusText)).Font.Fill.ForeColor.RGB = _
+                RGB(0, 128, 0)
+        End If
+
+        If MinusStart > 0 Then
+            .Characters(MinusStart, Len(MinusText)).Font.Fill.ForeColor.RGB = _
+                RGB(192, 0, 0)
+        End If
+
+    End With
+
+    Set FlowCategoryLabel = Label
+
+End Function
+
+'
+' A loan node's label, three lines centred on the node: the title in bold,
+' the number of NDGs, the collateral and which way it went.
+'
+Private Function FlowLoanLabel( _
+    ByVal ws As Worksheet, _
+    ByVal X As Double, _
+    ByVal MiddleY As Double, _
+    ByVal Alignment As MsoParagraphAlignment, _
+    ByVal Title As String, _
+    ByVal LoanCount As Long, _
+    ByVal AmountText As String) As Shape
+
+    Dim Label As Shape
+    Dim Text As String
+
+    Text = Title & vbCr & _
+        LoanCount & IIf(LoanCount = 1, " NDG", " NDGs") & vbCr & _
+        AmountText
+
+    Set Label = _
+        AddFlowLabel( _
+            ws, X, MiddleY - 21, FLOW_LABEL_WIDTH, 42, Text, _
+            Alignment, 9, False)
+
+    Label.TextFrame2.TextRange.Paragraphs(1).Font.Bold = msoTrue
+
+    Set FlowLoanLabel = Label
+
+End Function
+
+'
+' The pieces become one shape under the diagram's name, in the order they
+' were drawn.
+'
+Private Sub GroupFlowShapes( _
+    ByVal ws As Worksheet, _
+    ByVal Members As Collection)
+
+    Dim MemberNames() As Variant
+    Dim i As Long
+
+    ReDim MemberNames(0 To Members.Count - 1)
+
+    For i = 1 To Members.Count
+        MemberNames(i - 1) = Members(i)
+    Next i
+
+    ws.Shapes.Range(MemberNames).Group.name = FLOW_SHAPE_NAME
+
+End Sub
+
+'
+' An amount short enough for a label: "12.3m", "456k", "1.23bn", with the
+' euro sign in front.
+'
+Private Function CompactEuro( _
+    ByVal Amount As Double) As String
+
+    Dim Magnitude As Double
+
+    Magnitude = Abs(Amount)
+
+    If Magnitude >= 1000000000 Then
+        CompactEuro = Format(Amount / 1000000000, "0.00") & "bn"
+    ElseIf Magnitude >= 1000000 Then
+        CompactEuro = Format(Amount / 1000000, "0.0") & "m"
+    ElseIf Magnitude >= 1000 Then
+        CompactEuro = Format(Amount / 1000, "0") & "k"
+    Else
+        CompactEuro = Format(Amount, "0")
+    End If
+
+    CompactEuro = ChrW(&H20AC) & CompactEuro
+
+End Function
+
+'
 ' Public because nothing calls it by name: GenerateWeeklyAnalysis puts
 ' "WriteNoteWeekly" into the NoteHandler global and Note reaches it
 ' through Application.Run, which cannot see a Private procedure.
@@ -12774,8 +13477,8 @@ Private Sub BuildNotes( _
     Dim i As Long
 
     FirstRow = Layout.CommentRow + 1
-    LastRow = Layout.PieRow + _
-              Layout.PieHeightRows - 1
+    LastRow = Layout.FlowRow + _
+              Layout.FlowHeightRows - 1
     FirstCol = Layout.CommentCol
     LastCol = Layout.CommentCol + 4
 
@@ -12856,8 +13559,8 @@ Private Sub FormatNotesBox( _
 
     FirstRow = Layout.CommentRow + 1
 
-    LastRow = Layout.PieRow + _
-              Layout.PieHeightRows - 1
+    LastRow = Layout.FlowRow + _
+              Layout.FlowHeightRows - 1
 
     FirstCol = Layout.CommentCol
     LastCol = Layout.CommentCol + 4

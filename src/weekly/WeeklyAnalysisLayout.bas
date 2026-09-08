@@ -31,6 +31,10 @@ Public Type ReportLayout
     PieRow As Long
     PieCol As Long
     PieHeightRows As Long
+
+    FlowRow As Long
+    FlowCol As Long
+    FlowHeightRows As Long
     
     CommentRow As Long
     CommentCol As Long
@@ -131,11 +135,24 @@ Public Sub InitializeLayout()
         Layout.ReportCol + 6
         
     Layout.PieHeightRows = 22
-        
+
+    ' Loan flows
+    ' The Sankey of the past month's new and ended loans and the collateral
+    ' they carried, drawn from shapes under the pie, the same width and
+    ' framed the same way; one blank row between the two frames.
+
+    Layout.FlowRow = _
+        Layout.PieRow + Layout.PieHeightRows + 1
+
+    Layout.FlowCol = _
+        Layout.PieCol
+
+    Layout.FlowHeightRows = 22
+
     ' Comments
     ' Under the ended loans, as wide as the three tables above it (five
     ' columns); the box runs from the row after this to the bottom of the
-    ' pie.
+    ' loan flows, so the two columns end level.
 
     Layout.CommentRow = _
         Layout.ReportRow + 24

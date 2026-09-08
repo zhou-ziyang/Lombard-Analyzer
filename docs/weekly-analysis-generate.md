@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,908 行 / 213 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（13,604 行 / 223 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,908 |
-| 过程数 | 213 |
+| 行数 | 13,604 |
+| 过程数 | 223 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -21,17 +21,17 @@ v82，之后的改动只在 git 记录里）。
 `Home!WeeklyCompareDate`（比较的日期，通常是上一份报表的；缺失、不是日期或不早于报表日期时弹窗
 停下），各解析出上月比较日，再加 YTD 日（上年末），加载九份快照数据（两个日期各自的当前和上月，
 各一份 Accounts 加一份 Positions，YTD 只要 Positions），然后按 `WeeklyAnalysisLayout.Layout` 里的
-坐标把六个区块写到同一张 *Weekly Analysis* 表上。每张表都把比较日期的数据放在本期旁边，日期列
+坐标把六个区块和两张图写到同一张 *Weekly Analysis* 表上。每张表都把比较日期的数据放在本期旁边，日期列
 表头 `As of`，日期本身不带前缀：Active Lombard Loans 是年末、三个月、比较日期（按日期插入）、本期，
 没有变化行；Collateral Breakdown 是年末、比较日期、本期各两行（金额、占比），再 `% Change WoW`
 （对比较日期）和 `% Change YTD`；New / Ended / Entered 三张 "in the Past Month" 的表各是比较日期
 那一行（Entered 是金额加占比两行）、本期的行，最后一行 `% Change WoW` 是两者之差，窗口都是过去
 一个月。比例都是公式，分母为 0 或小于半分钱（`ZERO_BASE_TOLERANCE`，分摊留下的零头）显示空白。Overview、New Loans、Loans Ended 三张表在左栏上下叠放，
 五列相同（Loans、Approved Loan、Drawn Amount、Collateral Value），Notes 框在它们下面、同样五列宽；
-Breakdown 那一栏隔一列空开始，Entered 和饼图在它下面，集中度区块再隔一列空紧接 Breakdown。
+Breakdown 那一栏隔一列空开始，Entered、饼图和贷款流向图在它下面，集中度区块再隔一列空紧接 Breakdown。
 Active 和 Breakdown 里当前日期那几行深红底（#943634）白字。
 
-但真正的重量不在报表区块，而在 `BuildRiskGranularitySection` —— 它一个人占了从第 9,978 行
+但真正的重量不在报表区块，而在 `BuildRiskGranularitySection` —— 它一个人占了从第 10,980 行
 往后的篇幅，加上它依赖的证书展开、实体名规范化和参照表维护，超过全模块的三分之二。
 
 ```mermaid
@@ -40,7 +40,7 @@ flowchart TB
     A["Accounts CSV<br/><small>LoadWeeklyAccountData</small>"]
     C["Certificates · Certificate Underlyings 工作表<br/><small>LoadCertificateUnderlyingMap</small>"]
 
-    R["六个报表区块<br/><small>Overview · Breakdown · New<br/>Ended · Entered · Pie</small>"]
+    R["六个报表区块和两张图<br/><small>Overview · Breakdown · New<br/>Ended · Entered · Pie · Flow</small>"]
 
     EQ["Equity<br/><small>Security Name</small>"]
     BD["Bonds<br/><small>Ticker → Issuer</small>"]
@@ -73,8 +73,19 @@ flowchart TB
 ```
 
 六个报表区块走的是直路：读进来、按资产类别汇总、写出去。写出去的只有金额；Breakdown 和
-Entered 里的比例行（% of Portfolio、% Change、%）是引用金额行的公式，除法留给 Excel。饼图最后
-才画：它按单元格的尺寸定位，得等 AutoFit 和行高都定下来，画在跟 Notes 同样式的边框里。左边这条
+Entered 里的比例行（% of Portfolio、% Change、%）是引用金额行的公式，除法留给 Excel。饼图和
+贷款流向图最后才画：它们按单元格的尺寸定位，得等 AutoFit 和行高都定下来，各画在跟 Notes 同样式
+的边框里，流向图在饼图正下方、同样宽。
+
+流向图是一张 Sankey，Excel 没有这种图表，所以 `CreateLoanFlowDiagram` 用形状画：左边一个节点是
+过去一个月的新增贷款，中间一列是八个抵押品类别，右边一个节点是终止的贷款；左到中的每条带子是新增
+NDG 带进某个类别的抵押品（绿），中到右的是终止 NDG 带走的（红），宽度按金额、全图一个比例，类别
+节点取两边较大的那条的高度，细到看不见的节点画成最小高度再把比例重算一遍。数据就是 Entered 表
+用的 `EnteredCollateralAmounts`，正着算一次是进来的，把两个快照和上月的持仓反过来再算一次就是
+出去的；NDG 集合在 `MovedNdgSet` 里，两张 movement 表数的也是它。带子是 `BuildFreeform` 的贝塞尔
+曲线，节点是矩形，标签是无边框文本框（类别名加粗，进来的金额绿色带加号、出去的红色带减号），
+全部 Group 成一个名为 `LoanFlowSankey` 的形状，邮件像复制饼图一样把它整个复制成一张图。一个月
+里没有新增也没有终止时，框里只写一句话。左边这条
 才是模块的主干——四条解析支路把每一笔持仓变成一到多条「暴露」记录，汇进同一张暂存表，再从那张
 表分出两个口径、三个维度。
 
@@ -331,9 +342,9 @@ DHL AG，而 Companies 里两个名字都没有）：按普通新公司列出—
 比较。版本注释里 v64 到 v76 一直在做性能优化（缓存重复的证书展开、避免重复合并地域候选、缓存
 实体排序用的比较属性），集中度的排序已经交给 Excel，这两处是剩下的量级项。
 
-**Notes 框的高度由饼图决定。** `BuildNotes` 的 LastRow 是
-`Layout.PieRow + Layout.PieHeightRows - 1`。改饼图的高度会连带改掉 Notes 框的高度。两者在
-Layout 里是独立字段，这层耦合只存在于 `BuildNotes` 这一行里。
+**Notes 框的高度由流向图决定。** `BuildNotes` 和 `FormatNotesBox` 的 LastRow 是
+`Layout.FlowRow + Layout.FlowHeightRows - 1`，而 `Layout.FlowRow` 又是饼图的底再加一行。改饼图或
+流向图的高度都会连带改掉 Notes 框的高度。三者在 Layout 里是独立字段，这层耦合只存在于那两行里。
 
 **Additional Comment 的前缀判定有顺序依赖。** `ResolveTopTenAssetClass` 按 `EQUITY`(6) →
 `FIXEDINCOME`(11) → `FUND`(4) 的顺序做前缀匹配。`"EQUITY FUND"` 会被判成 Equity，

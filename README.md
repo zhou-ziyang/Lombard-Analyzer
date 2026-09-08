@@ -166,8 +166,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,900 lines and 213 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 209 of those procedures are
+It is 13,600 lines and 223 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 219 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -180,7 +180,7 @@ to find things — the file order already gives, and the sections run in the
 order the report is built: source loading and CSV parsing, the report
 sections, risk reference data, certificate basket expansion, entity-name
 normalisation, the ranked formulas and the staging table they read, then the
-chart and the notes. `docs/weekly-analysis-generate.md` walks through them.
+pie, the loan-flow diagram and the notes. `docs/weekly-analysis-generate.md` walks through them.
 
 `archive/JourneyVisualization.bas` is commented out in full. Its charting
 procedures were revived inside `JourneyDashboardTable`, which now carries the
@@ -211,8 +211,13 @@ snapshot's rows in the overview and the breakdown are highlighted, dark red
 left column with the same five columns — loans, approved loan, drawn amount,
 collateral value — so the three read as one; the notes box sits under them at
 the same width, the breakdown column starts one spacer column to their right
-with the entered table and the pie under it, and the concentration block one
-spacer column after the breakdown.
+with the entered table, the pie and the loan-flow diagram under it, and the
+concentration block one spacer column after the breakdown. The loan-flow
+diagram is a Sankey drawn from shapes, since Excel has no chart of that
+kind: the month's new loans on the left, the collateral categories in the
+middle, the loans ended on the right, each band as wide as the collateral it
+carried into or out of its category, the pieces grouped as one shape so the
+email copies it as one picture.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
 merged (diacritics, legal suffixes, share class suffixes, prefix matching,
@@ -236,7 +241,7 @@ table is ever taken in its place. The run's own table carries the
 its date. The undated *Risk Exposure* sheet earlier builds wrote is adopted
 as a dated one on the first run. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
 loans, breakdown, new loans, loans ended, entered collateral, the pie, the
-concentration tables — and assembles the Outlook message, its intro naming
+loan-flow diagram, the concentration tables — and assembles the Outlook message, its intro naming
 the date compared to. `docs/weekly-analysis-generate.md` walks
 through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three
