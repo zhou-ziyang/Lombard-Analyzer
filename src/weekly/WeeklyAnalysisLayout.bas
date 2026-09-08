@@ -89,8 +89,8 @@ Public Sub InitializeLayout()
         Layout.ReportCol + 6
 
     ' Entered (middle bottom)
-    ' The breakdown above it is ten rows now that it carries a week block and
-    ' a week-on-week change, so this starts three rows lower than it did.
+    ' The breakdown above it is ten rows: title, header, three dated blocks
+    ' of two and the two change rows; one blank row, then this.
 
     Layout.EnteredRow = _
         Layout.ReportRow + 14
@@ -99,30 +99,33 @@ Public Sub InitializeLayout()
         Layout.ReportCol + 6
 
     ' New Lombards (left, under the overview)
-    ' The overview runs to six data rows and two change rows, so its last
-    ' row is ReportRow + 12; one blank row, then this.  Same five columns as
-    ' the overview, so the three tables read as one column of figures.
+    ' The overview runs to six data rows - year-end, three months, the
+    ' compared date, the current date - so its last row is ReportRow + 10;
+    ' one blank row, then this.  Same five columns as the overview, so the
+    ' three tables read as one column of figures.
 
     Layout.NewLoanRow = _
-        Layout.ReportRow + 14
+        Layout.ReportRow + 12
 
     Layout.NewLoanCol = _
         Layout.ReportCol
 
     ' Ended Lombards (left, under the new loans)
+    ' A movement table is five rows: title, header, the two dated rows and
+    ' the change row; one blank row between.
 
     Layout.EndedLoanRow = _
-        Layout.ReportRow + 19
+        Layout.ReportRow + 18
 
     Layout.EndedLoanCol = _
         Layout.ReportCol
 
     ' Pie Chart
-    ' Below the entered table, which is six rows now that it carries a window
-    ' each for the week and the month.
+    ' Below the entered table, which is seven rows: title, header, two dated
+    ' pairs of amounts and shares, and the change row.
 
     Layout.PieRow = _
-        Layout.ReportRow + 21
+        Layout.ReportRow + 22
 
     Layout.PieCol = _
         Layout.ReportCol + 6
@@ -132,7 +135,7 @@ Public Sub InitializeLayout()
     ' Comments
     ' Under the ended loans, as wide as the three tables above it (five
     ' columns); the box runs from the row after this to the bottom of the
-    ' pie, so it is shorter now that two tables sit above it.
+    ' pie.
 
     Layout.CommentRow = _
         Layout.ReportRow + 24

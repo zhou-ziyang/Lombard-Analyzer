@@ -15,13 +15,11 @@ configuration parameters (as defined names) and one button per entry point.
 | 01 Configuration | — | Clear Sheets | `CoreClean.Clean` |
 | 02 Date Range Analysis | `AnalysisStartDate`, `AnalysisEndDate` | Calculate Delta | `DeltaCalculation.BuildPositionMovements` |
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `DeltaRevenue.BuildRevenueSummary` |
-| 03 Weekly Analysis | `WeeklyEndDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
+| 03 Weekly Analysis | `WeeklyEndDate`, `WeeklyCompareDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
-| 03 Weekly Analysis | `WeeklyEndDate`, `WeeklyCompareDate` | Weekly Comparison (optional, see below) | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysisComparison` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
-`GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet
-(`CreateWeeklyComparisonEmail` likewise from the *Weekly Comparison* sheet),
+`GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet,
 `WeeklyAnalysisGenerate.InsertRenamedCompanies` from the *Insert Renamed*
 button drawn onto *New Geo-Sec Lookup* when a company has changed its name, and
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
@@ -63,7 +61,7 @@ not generated:
 | Certificates | — | Certificate ISIN → its underlying RIC(s) |
 | Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
 
-Generated sheets (*Weekly Analysis*, *Weekly Comparison*, *Asset Type
+Generated sheets (*Weekly Analysis*, *Asset Type
 Mapping*, *New Geo-Sec Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
@@ -159,9 +157,8 @@ to reach across for (`ReadAllLines`, `FindHeaderIndex`, `FormatReportTable`,
 module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
 only Public procedures with no caller in the source are the zero-argument
-entry points a button names — the eight on Home (nine with the optional
-Weekly Comparison button), plus `InsertRenamedCompanies` and
-`CreateWeeklyComparisonEmail` behind buttons the code itself draws. Two
+entry points a button names — the eight on Home, plus
+`InsertRenamedCompanies` behind a button the code itself draws. Two
 exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
@@ -169,8 +166,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 13,200 lines and 214 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 209 of those procedures are
+It is 12,400 lines and 206 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 202 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -192,22 +189,29 @@ Historical Events tables. It is kept only for reference.
 
 ### Pipelines
 
-**Weekly** — `GenerateWeeklyAnalysis` loads the current, one-week, one-month
-and year-end snapshots, then builds the report sections in place on one sheet
-using the coordinates in `WeeklyAnalysisLayout.Layout`: the active loan book (titled *Active Lombard Loans*, beside *New Lombard Loans* and *Lombard Loans Ended*),
-collateral breakdown, new/ended loans, entered collateral, the pie chart, and
-the exposure concentration block. Every section that measures change carries
-the week beside the month: the overview gains a row seven days back and the
-same `% Change WoW` and `% Change YTD` rows the collateral breakdown closes
-with, the breakdown a week snapshot and its `% Change WoW` row, the two
-loan-movement tables and the entered-collateral table a block per window.
-The current snapshot's rows in the overview and the breakdown are
-highlighted, dark red under white. The overview and the two movement tables
-stack in the left column with the
-same five columns — loans, approved loan, drawn amount, collateral
-value — so the three read as one; the notes box sits under them at the same
-width, the breakdown column starts one spacer column to their right, and the
-concentration block one spacer column after the breakdown.
+**Weekly** — `GenerateWeeklyAnalysis` reads two Home dates, the report date
+(`WeeklyEndDate`) and the date the report is compared to (`WeeklyCompareDate`,
+normally the previous report's; missing, not a date or not earlier, and the
+run stops with a message), loads each date's snapshot with its month-earlier
+one and the year-end positions, then builds the report sections in place on
+one sheet using the coordinates in `WeeklyAnalysisLayout.Layout`. Every table
+carries the compared date's figures beside this report's, under an *As of*
+header over bare dates: *Active Lombard Loans* shows year-end, three months
+back, the compared date and the current date; *Collateral Breakdown* shows
+year-end, the compared date and the current date with their shares, then
+`% Change WoW` against the compared date and `% Change YTD` against year-end;
+*New Lombard Loans in the Past Month*, *Lombard Loans Ended in the Past
+Month* and *Collateral Entered with New NDGs in the Past Month* each show the
+compared date's row (amounts and shares, for the entered table) over this
+report's, both over the past month, and close with a `% Change WoW` row
+between the two. Every ratio is a formula, blank on a zero base. The current
+snapshot's rows in the overview and the breakdown are highlighted, dark red
+(#943634) under white. The overview and the two movement tables stack in the
+left column with the same five columns — loans, approved loan, drawn amount,
+collateral value — so the three read as one; the notes box sits under them at
+the same width, the breakdown column starts one spacer column to their right
+with the entered table and the pie under it, and the concentration block one
+spacer column after the breakdown.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
 merged (diacritics, legal suffixes, share class suffixes, prefix matching,
@@ -215,32 +219,13 @@ manual variants), resolved against the reference sheets, and staged into the
 `RiskExposure` table with an account scope flag. The top-10 tables by name,
 geography and sector — full portfolio and excluding segregated accounts — are
 then worksheet formulas over that table, one per subtable, left live in the
-sheet. `CreateWeeklyEmail` re-exports the finished ranges as HTML and
-assembles the Outlook message. `docs/weekly-analysis-generate.md` walks
+sheet. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
+loans, breakdown, new loans, loans ended, entered collateral, the pie, the
+concentration tables — and assembles the Outlook message, its intro naming
+the date compared to. `docs/weekly-analysis-generate.md` walks
 through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three
 separate asset classifications.
-
-**Weekly Comparison** (optional) — `GenerateWeeklyAnalysisComparison` runs
-the weekly report onto a *Weekly Comparison* sheet with the figures of an
-earlier report slotted in: the date to compare to is a second Home date,
-`WeeklyCompareDate`, and on this sheet it stands where the report's week row
-stands. The overview shows year-end, the three months, that date and the
-current date, with no change rows; the breakdown shows year-end, that date
-and the current date with their shares, then the change against that date
-(*% Change WoW*) and against year-end; *New Lombard Loans in the Past Month*,
-*Lombard Loans Ended in the Past Month* and *Collateral Entered with New NDGs
-in the Past Month* each show that date's row over this report's, both over
-the past month, and close with a *% Change WoW* row between the two. Every
-date column is headed *As of* over bare dates. The exposure section, the
-pie, the notes and the buttons are the report's own, and
-`CreateWeeklyComparisonEmail` — behind the sheet's *Generate Email* button —
-sends the same email with the tables at the height they were built and an
-intro naming the date compared to. The feature is four marked blocks —
-declarations near the top and a block at the end of `WeeklyAnalysisGenerate`
-and of `WeeklyAnalysisEmail`, between `COMPARISON FEATURE` banners — that
-call only what the report already has and are called by nothing else; to
-drop it, delete the four, the Home button and the `WeeklyCompareDate` name.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears
