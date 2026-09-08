@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（13,006 行 / 213 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（13,122 行 / 214 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 13,006 |
-| 过程数 | 213 |
+| 行数 | 13,122 |
+| 过程数 | 214 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -264,7 +264,8 @@ append-only，已有的人工填写不会被覆盖——**只有一个例外**�
   等人工填名字。
 - **Bond Issuers**：按 ticker 一行。各字段独立累积，所以同一 ticker 下的另一个 ISIN 可以补上
   缺失的 issuer 或分类，不用多扫一遍表。`Issuer Name` 是**唯一允许覆盖已有值**的字段，注释
-  给了理由：Sophis 之后可能给出更正过的名字。
+  给了理由：Sophis 之后可能给出更正过的名字。被覆盖掉的旧名不写进任何表，只在这一次运行里
+  记着（`IssuerRenames`，按 ticker），交给下面的改名识别和 New Geo-Sec Lookup。
 - **Funds**：补 Reference ISIN，并给 Prefix / Company Name 写 XLOOKUP 公式。
   `SetFundLookupFormula` 先试 `Formula2`（逗号分隔），失败再退到 `FormulaLocal`（分号分隔）
   ——处理的是 Excel 区域设置差异。
@@ -273,9 +274,10 @@ append-only，已有的人工填写不会被覆盖——**只有一个例外**�
 
 Companies 只按 Name 和 Name Variants 匹配，改了名的公司会被当成陌生人：进 New Geo-Sec
 Lookup 重新查地理行业，Country / Sector 归 Others。`DetectRenamedCompanies` 在读完 Companies
-之后、对 Companies 规范化之前跑：名字和变体都对不上的实体，再试一座桥——它的 ISIN 候选对
-Companies 的 Reference ISIN（只算 Issued / Underlying security，基金的 ISIN 认的是基金不是
-母公司）：名字会变，发行的东西的 ISIN 不变。搭上桥、且新名不只是那行 Name 的另一种写法
+之后、对 Companies 规范化之前跑：名字和变体都对不上的实体，再试两座桥——债券 issuer 的
+`PreviousNames`（这次运行里 Bond Issuers 被 Sophis 的新名覆盖掉的旧名）对 Companies 的名字和
+变体；以及它的 ISIN 候选对 Companies 的 Reference ISIN（只算 Issued / Underlying security，
+基金的 ISIN 认的是基金不是母公司）。搭上桥、且新名不只是那行 Name 的另一种写法
 （`NamesLookAlike`），就是改名。
 
 改名的公司**当作另一家公司**处理。这一次运行里，把那行 Companies 复制一份、换上新名登记进
@@ -290,6 +292,12 @@ F / H 两格显示老行的地理行业而不是 Bloomberg 公式。有这种行
 From` 写旧名
 （列不存在就建），然后删掉 lookup 上那一行。新名已有行、旧名找不到的，跳过并在弹窗里说明。
 按完要重建一次 staging。
+
+Companies 里从来没有过的名字、但这次运行里 Bond Issuers 刚从旧名改过来的（比如 Deutsche Post AG
+改成 DHL AG，而 Companies 里两个名字都没有）：按普通新公司列出——F / H 是 Bloomberg 公式，没有
+老行可复制——只是 `Renamed From` 填上旧名，贴进 Companies 时改名记录一起带过去。旧名不进
+Name Variants：旧名是旧公司的。改名记录代码只写在 New Geo-Sec Lookup 上；进 Companies 是人
+检查过之后的事，贴过去或者按按钮。
 
 ### 可选：Weekly Comparison
 

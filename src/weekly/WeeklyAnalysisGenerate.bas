@@ -2901,8 +2901,15 @@ Private Function BuildRiskPositionCache( _
 End Function
 
 Private Sub UpdateRiskReferenceDatabases( _
+    '
+    ' The issuer names this run overwrote, ticker by ticker, for the
+    ' lookup sheet to record: remembered for the run, kept on no sheet.
+    '
+    Set IssuerRenames = NewExactNameMap()
+
     ByRef PositionData As Variant, _
     ByRef RiskPositionData As Variant, _
+    ByRef IssuerRenames As Object, _
     ByVal PreferredWorkbook As Workbook)
 
     Dim EquityCandidates As Object
@@ -3201,7 +3208,25 @@ Private Sub UpdateRiskReferenceDatabases( _
 
                 ' Sophis may later supply a corrected issuer name; this is
                 ' the only populated field intentionally allowed to update.
+                ' The name it replaces is what lets the issuer be matched
+                ' back to its row in Companies, and what the lookup sheet
+                ' records: it is remembered for this run, not written to
+                ' the sheet.
                 If CStr(Candidate("IssuerName")) <> "" Then
+
+                    CurrentValue = _
+                        SafeText( _
+                            DataRow.Range.Cells(1, BondIssuerCol).Value)
+
+                    If CurrentValue <> "" And _
+                       NormalizeExactNameKey(CurrentValue) <> _
+                       NormalizeExactNameKey( _
+                            CStr(Candidate("IssuerName"))) Then
+
+                        IssuerRenames(NormalizeExactNameKey(CStr(Item))) = _
+                            CurrentValue
+
+                    End If
 
                     DataRow.Range.Cells(1, BondIssuerCol).Value = _
                         CStr(Candidate("IssuerName"))
@@ -5919,7 +5944,8 @@ Private Sub AddGeographyLookupEntry( _
     ByVal IsinRelationship As String, _
     ByVal IsinPriority As Long, _
     ByVal ObservationSet As Object, _
-    Optional ByVal NameVariant As String = "")
+    Optional ByVal NameVariant As String = "", _
+    Optional ByVal PreviousNames As String = "")
 
     Dim EntryKey As String
     Dim ObservationKey As String
@@ -6012,6 +6038,21 @@ Private Sub AddGeographyLookupEntry( _
         AppendUniqueGeographyVariant( _
             CStr(Entry("Variants")), _
             NameVariant)
+
+    '
+    ' Names this entity was known by before: kept apart from the variants,
+    ' never among them.  They are evidence of a rename, and the old name
+    ' belongs to the old company - the lookup sheet records it in Renamed
+    ' From, not in Name Variants.
+    '
+    If PreviousNames <> "" Then
+
+        Entry("PreviousNames") = _
+            MergeDelimitedText( _
+                EntryText(Entry, "PreviousNames"), _
+                PreviousNames)
+
+    End If
 
     If ReferenceISIN = "" Then Exit Sub
 
@@ -6381,6 +6422,13 @@ Private Sub AddGeographyEntryWithCandidates( _
             CStr(TargetEntry("Variants")), _
             NameVariant, _
             SourceVariants)
+
+    If EntryText(SourceEntry, "PreviousNames") <> "" Then
+        TargetEntry("PreviousNames") = _
+            MergeDelimitedText( _
+                EntryText(TargetEntry, "PreviousNames"), _
+                EntryText(SourceEntry, "PreviousNames"))
+    End If
 
     MergeGeographyCandidateSets _
         TargetEntry, _
@@ -8248,6 +8296,14 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                     Output(OutputRow, 4) = CurrentISIN
                     Output(OutputRow, 5) = CurrentRelationship
 
+                    '
+                    ' A name Companies has never had, that Bond Issuers
+                    ' held under an earlier one until this run: the rename
+                    ' goes on record here, with no row to copy from.
+                    '
+                    Output(OutputRow, RenamedCol) = _
+                        EntryText(GeographyEntry, "PreviousNames")
+
                 Else
 
                     Output(OutputRow, 1) = _
@@ -8484,11 +8540,12 @@ End Function
 
 '
 ' A name the positions carry that Companies does not know is a stranger
-' until something vouches for it.  One thing does: the ISIN of what it
-' issued against Companies' Reference ISIN - a name changes, the ISIN of
-' what was issued under it does not.  A name that matches that way, and
-' is not merely another spelling of the row's own name, is the same
-' company renamed - and it is handled as a company of its own.  The old row is never touched: the positions that still carry
+' until something vouches for it.  Two things do: for a bond issuer, the
+' name Bond Issuers held before Sophis corrected it; for anything, the
+' ISIN of what it issued against Companies' Reference ISIN.  A name that
+' matches that way, and is not merely another spelling of the row's own
+' name, is the same company renamed - and it is handled as a company of
+' its own.  The old row is never touched: the positions that still carry
 ' the old name keep resolving to it, so a report for an earlier date
 ' reads as it always did.  For this run the new name is registered as a
 ' copy of the old row, so it has the old row's geography and sector
@@ -8533,10 +8590,19 @@ Private Function DetectRenamedCompanies( _
                 Evidence = ""
 
                 Set CompanyEntry = _
-                    MatchCompanyByIsin( _
+                    MatchCompanyByPreviousName( _
                         Entry, _
-                        CompaniesByIsin, _
+                        CompaniesByName, _
+                        CompaniesByVariant, _
                         Evidence)
+
+                If CompanyEntry Is Nothing Then
+                    Set CompanyEntry = _
+                        MatchCompanyByIsin( _
+                            Entry, _
+                            CompaniesByIsin, _
+                            Evidence)
+                End If
 
                 If Not CompanyEntry Is Nothing Then
 
@@ -8635,6 +8701,50 @@ Private Function MatchCompanyByIsin( _
         End If
 
     Next Isin
+
+End Function
+
+'
+' The names the entry was known by before, against Companies by name and
+' by variant.  Today only bond issuers carry these: the name Bond Issuers
+' held until this run's update overwrote it with Sophis's.
+'
+Private Function MatchCompanyByPreviousName( _
+    ByVal Entry As Object, _
+    ByVal CompaniesByName As Object, _
+    ByVal CompaniesByVariant As Object, _
+    ByRef Evidence As String) As Object
+
+    Dim Parts As Variant
+    Dim Part As Variant
+    Dim PreviousName As String
+
+    Parts = Split(EntryText(Entry, "PreviousNames"), ";")
+
+    For Each Part In Parts
+
+        PreviousName = Trim(CStr(Part))
+
+        If PreviousName <> "" Then
+
+            Set MatchCompanyByPreviousName = _
+                ResolveCompanyEntry( _
+                    PreviousName, _
+                    CompaniesByName, _
+                    CompaniesByVariant)
+
+            If Not MatchCompanyByPreviousName Is Nothing Then
+
+                Evidence = _
+                    "previous issuer name '" & PreviousName & "'"
+
+                Exit Function
+
+            End If
+
+        End If
+
+    Next Part
 
 End Function
 
@@ -10726,6 +10836,7 @@ Private Sub BuildRiskGranularitySection( _
     Dim EquityNameMap As Object
     Dim BondIssuerMap As Object
     Dim BondIssuerTypeMap As Object
+    Dim BondIssuerRenames As Object
     Dim FundMap As Object
     Dim CertificateUnderlyingReferenceIsinMap As Object
     Dim CertificateUnderlyingAssetClassMap As Object
@@ -10823,6 +10934,7 @@ Private Sub BuildRiskGranularitySection( _
     UpdateRiskReferenceDatabases _
         PositionData, _
         RiskPositionData, _
+        BondIssuerRenames, _
         ThisWorkbook
 
 
@@ -11041,7 +11153,11 @@ Private Sub BuildRiskGranularitySection( _
                         ISIN, _
                         "Issued security", _
                         GEO_ISIN_PRIORITY_ISSUED_SECURITY, _
-                        GeographyObservationSet
+                        GeographyObservationSet, _
+                        PreviousNames:= _
+                            ResolveExactName( _
+                                IssuerTicker, _
+                                BondIssuerRenames)
 
                     AppendRiskStageRow _
                         StageRows, _

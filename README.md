@@ -88,14 +88,15 @@ with a *Manual Override* column for the cases the merge gets wrong.
 ### Renamed companies
 
 A renamed company arrives as a name Companies has never heard of, and would
-be looked up afresh and shown under *Others* until someone added it. One
-thing vouches for it: the ISIN of what it issued, against Companies'
-*Reference ISIN* (issued and underlying securities; a fund's ISIN names the
-fund, not its parent) — a name changes, the ISIN of what was issued under it
-does not.
+be looked up afresh and shown under *Others* until someone added it. Two
+things vouch for it: for a bond issuer, the name *Bond Issuers* held until
+this run's update overwrote it with Sophis's — remembered for the run and
+handed to the lookup sheet, never written to a sheet — and, for anything,
+the ISIN of what it issued against Companies' *Reference ISIN* (issued and
+underlying securities; a fund's ISIN names the fund, not its parent).
 
 A renamed company is **a company of its own**. `DetectRenamedCompanies` runs
-that bridge over every entity Companies does not know; a match whose name
+the two bridges over every entity Companies does not know; a match whose name
 is not merely another spelling of the row's own name is registered for this
 run as a copy of that row under the new name, so the report shows the new
 name with the old row's geography, sector and reference ISIN rather than
@@ -111,6 +112,15 @@ reference ISIN included, since that is what identified it — with the new
 name, the variants and exposure types the run saw, and *Renamed From*
 recording where it came from. The column is created the
 first time it is needed. The weekly Notes list the renames.
+
+A name Companies has never had in any form, but that *Bond Issuers* held
+under an earlier name until this run, is a new company with a history: the
+lookup sheet lists it as any new company — Bloomberg formulas in place,
+nothing to copy from — with *Renamed From* filled from that memory, so the
+rename is on record when the row is pasted in. An earlier name never becomes
+a variant: it belongs to the old company. The lookup sheet is the only place
+the code writes a rename; Companies gets it when a person, having checked
+the row, pastes it or presses the button.
 
 ## Layout
 
@@ -161,8 +171,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 13,000 lines and 213 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 208 of those procedures are
+It is 13,100 lines and 214 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 209 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
