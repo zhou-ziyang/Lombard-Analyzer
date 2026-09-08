@@ -61,8 +61,8 @@ not generated:
 | Certificates | — | Certificate ISIN → its underlying RIC(s) |
 | Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
 
-Generated sheets (*Weekly Analysis*, *Risk Exposure Prior*, *Asset Type
-Mapping*, *New Geo-Sec Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
+Generated sheets (*Weekly Analysis*, *Asset Type
+Mapping*, *New Geo-Sec Lookup*, *Risk Exposure yyyymmdd* — one per staged date, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
 
@@ -166,8 +166,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,700 lines and 209 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 205 of those procedures are
+It is 12,800 lines and 213 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 209 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -222,10 +222,13 @@ then worksheet formulas over that table, one per subtable, left live in the
 sheet. Beside each rank, a move: where the name stood on the compared date,
 as a green or red arrow with the places moved, `=` for none, `new` for a
 name that date did not rank. The compared date's ranking is read from its
-staged exposure — the staging table as the run for that date left it, which
-the next run copies aside to *Risk Exposure Prior* before rebuilding — so
-nothing is staged twice; without it the moves are left blank and a note says
-so. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
+staged exposure: staging sheets are one per date, *Risk Exposure yyyymmdd*,
+so the last run's is on file, and a date that was never staged is staged on
+the spot — the staging pass alone, quietly, with a note saying so — so the
+moves are always there and nothing is staged twice. The run's own table
+carries the `RiskExposure` name the formulas use; every other date's is
+suffixed with its date. The undated *Risk Exposure* sheet earlier builds
+wrote is adopted as a dated one on the first run. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
 loans, breakdown, new loans, loans ended, entered collateral, the pie, the
 concentration tables — and assembles the Outlook message, its intro naming
 the date compared to. `docs/weekly-analysis-generate.md` walks

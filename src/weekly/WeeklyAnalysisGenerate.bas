@@ -160,11 +160,14 @@ Private Const RISK_STAGE_SHEET As String = "Risk Exposure"
 Private Const RISK_STAGE_TABLE As String = "RiskExposure"
 
 '
-' The compared date's staged exposure, kept aside for the rank changes:
-' the staging table as the run for that date left it.
+' A staging sheet per snapshot, named for its date - "Risk Exposure
+' 20260907" - so the compared date's staged exposure is on file to rank
+' against and nothing is staged twice.  The run's own table carries the
+' name the report's formulas use, RiskExposure; every other date's is
+' suffixed with its date.  The undated sheet earlier builds wrote, and the
+' copy one of them kept beside it, are adopted on the first run.
 '
 Private Const RISK_STAGE_PRIOR_SHEET As String = "Risk Exposure Prior"
-Private Const RISK_STAGE_PRIOR_TABLE As String = "RiskExposurePrior"
 Private Const LEGACY_RISK_STAGE_NON_DPM_SHEET As String = _
     "Risk Exposure - Non-DPM"
 Private Const LEGACY_RISK_STAGE_DPM_SHEET As String = _
@@ -231,6 +234,13 @@ Private WeeklyAccountCache As Object
 '
 Private RiskStagePositionsScanned As Long
 Private RiskStageRowsDropped As Long
+
+'
+' Set while the compared date is being staged for the rank changes: the
+' notes that pass would write belong to a report for that date, not to
+' this one.
+'
+Private RiskStagingQuietly As Boolean
 
 Private Enum IssuerPlaceholderMode
 
@@ -1042,8 +1052,7 @@ Public Sub GenerateWeeklyAnalysis()
     ' ThisWorkbook, not the active one.  This process opens the certificate
     ' reference workbook, and the same modules are dropped into the other
     ' Lombard workbooks, so whichever workbook happens to be active is not
-    ' reliably this one.  CurrentRiskStageAnalysisDate already reads it this
-    ' way, and the two dates have to agree.
+    ' reliably this one.
     '
     CurrentDate = _
         ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
@@ -1083,6 +1092,7 @@ Public Sub GenerateWeeklyAnalysis()
 
     OldNoteHandler = NoteHandler
     NoteHandler = "WriteNoteWeekly"
+    RiskStagingQuietly = False
     Set ReportNotes = New Collection
     MissingFiles = ""
     ResetSheetOverwriteDecision
@@ -1128,7 +1138,13 @@ Public Sub GenerateWeeklyAnalysis()
 
     If WeeklyDataHasRows(ThisReport.Positions) Then
 
-        BuildRiskGranularitySection ws, ThisReport.Positions, CompareDate
+        BuildRiskGranularitySection _
+            ws, _
+            ThisReport.Positions, _
+            CurrentDate, _
+            PriorReport.Positions, _
+            CompareDate, _
+            False
 
     End If
 
@@ -1204,6 +1220,7 @@ ExitRoutine:
     ClearWeeklySourceCache
 
     NoteHandler = OldNoteHandler
+    RiskStagingQuietly = False
 
     ResetExcel
 
@@ -9178,7 +9195,8 @@ End Function
 '
 Private Function CertificateResultsMatch( _
     ByVal DimensionKey As String, _
-    ByVal Visibility As Object) As Boolean
+    ByVal Visibility As Object, _
+    ByVal StageSheetName As String) As Boolean
 
     Dim wsStage As Worksheet
     Dim FullCell As Range
@@ -9195,7 +9213,7 @@ Private Function CertificateResultsMatch( _
     End If
 
     On Error Resume Next
-    Set wsStage = ThisWorkbook.Worksheets(RISK_STAGE_SHEET)
+    Set wsStage = ThisWorkbook.Worksheets(StageSheetName)
     On Error GoTo 0
 
     If wsStage Is Nothing Then Exit Function
@@ -10404,24 +10422,6 @@ Private Function RiskStageHeaders() As Variant
 
 End Function
 
-Private Function GetRiskStageTable( _
-    ByVal WorksheetName As String, _
-    ByVal TableName As String) As ListObject
-
-    Dim wsStage As Worksheet
-
-    Set wsStage = GetOptionalWorksheet(WorksheetName)
-
-    If wsStage Is Nothing Then Exit Function
-
-    On Error Resume Next
-
-    Set GetRiskStageTable = wsStage.ListObjects(TableName)
-
-    On Error GoTo 0
-
-End Function
-
 Private Function RiskStageTableSchemaIsValid( _
     ByVal StageTable As ListObject) As Boolean
 
@@ -10491,39 +10491,11 @@ Private Function RiskStageTableHasData( _
 
 End Function
 
-Private Function RiskStageTableCanBeReused() As Boolean
+Private Function RiskStageTableCanBeReused( _
+    ByVal SnapshotDate As Date) As Boolean
 
-    Dim StageTable As ListObject
-
-    Set StageTable = _
-        GetRiskStageTable( _
-            RISK_STAGE_SHEET, _
-            RISK_STAGE_TABLE)
-
-    If Not RiskStageTableSchemaIsValid(StageTable) Then Exit Function
-    If Not RiskStageTableHasData(StageTable) Then Exit Function
-
-    RiskStageTableCanBeReused = True
-
-End Function
-
-Private Function CurrentRiskStageAnalysisDate() As Date
-
-    Dim RawDate As Variant
-
-    On Error Resume Next
-
-    RawDate = _
-        ThisWorkbook.Worksheets("Home") _
-        .Range("WeeklyEndDate").Value
-
-    On Error GoTo 0
-
-    If IsDate(RawDate) Then
-
-        CurrentRiskStageAnalysisDate = CDate(RawDate)
-
-    End If
+    RiskStageTableCanBeReused = _
+        RiskStageTableHasData(RiskStageTableFor(SnapshotDate))
 
 End Function
 
@@ -10552,7 +10524,7 @@ Private Function RiskStageReuseDescription( _
 
     Dim StageDate As Date
 
-    StageDate = StoredRiskStageDate(RISK_STAGE_SHEET)
+    StageDate = StoredRiskStageDate(RiskStageSheetName(AnalysisDate))
 
     If StageDate > 0 Then
 
@@ -10587,7 +10559,7 @@ End Function
 Private Function ShouldRebuildRiskStageTables( _
     ByVal AnalysisDate As Date) As Boolean
 
-    If Not RiskStageTableCanBeReused() Then
+    If Not RiskStageTableCanBeReused(AnalysisDate) Then
 
         ShouldRebuildRiskStageTables = True
 
@@ -10602,10 +10574,8 @@ Private Function ShouldRebuildRiskStageTables( _
 End Function
 
 Private Function LoadRiskStageTableData( _
-    ByVal WorksheetName As String, _
-    ByVal TableName As String) As Variant
+    ByVal StageTable As ListObject) As Variant
 
-    Dim StageTable As ListObject
     Dim Headers As Variant
     Dim RawData As Variant
     Dim StageData() As Variant
@@ -10617,18 +10587,12 @@ Private Function LoadRiskStageTableData( _
     Dim ValidRowCount As Long
     Dim HasRiskData As Boolean
 
-    Set StageTable = _
-        GetRiskStageTable( _
-            WorksheetName, _
-            TableName)
-
     If Not RiskStageTableSchemaIsValid(StageTable) Then
 
         Err.Raise _
             vbObjectError + 9180, _
             "LoadRiskStageTableData", _
-            "Risk staging table '" & TableName & _
-            "' is missing or has an invalid schema."
+            "The risk staging table is missing or has an invalid schema."
 
     End If
 
@@ -10947,7 +10911,10 @@ End Sub
 Private Sub BuildRiskGranularitySection( _
     ByVal ws As Worksheet, _
     ByRef PositionData As Variant, _
-    ByVal CompareDate As Date)
+    ByVal AnalysisDate As Date, _
+    ByRef PriorPositions As Variant, _
+    ByVal CompareDate As Date, _
+    ByVal StageOnly As Boolean)
 
     Dim StageRows As Collection
     Dim StageData As Variant
@@ -11014,31 +10981,46 @@ Private Sub BuildRiskGranularitySection( _
     Dim GeographyExDPMNextRow As Long
     Dim SectorNextRow As Long
     Dim SectorExDPMNextRow As Long
-    Dim AnalysisDate As Date
     Dim RebuildRiskStage As Boolean
 
-    If ws Is Nothing Then Exit Sub
+    If ws Is Nothing And Not StageOnly Then Exit Sub
 
     '
-    ' The compared date's staged exposure, for the rank changes - read
-    ' before this run's rebuild overwrites the staging table, which is
-    ' where it normally still is.
+    ' StageOnly is the staging pass alone, for the compared date: no
+    ' report sheet, no reference sheet touched, no lookup rows, no notes;
+    ' the staged rows go onto that date's own sheet under its dated table
+    ' name, and the pass ends where the tables would start.
     '
-    PriorStageData = LoadPriorRiskStageData(CompareDate)
+    If Not StageOnly Then
+
+        '
+        ' The staging sheets are one per date.  The undated ones earlier
+        ' builds wrote are taken in first; then the compared date's staged
+        ' exposure, staged now if it never was; then the run's own date
+        ' takes the table name the report's formulas use.
+        '
+        AdoptUndatedRiskStageWorksheets
+
+        PriorStageData = EnsureRiskStageData(PriorPositions, CompareDate)
+
+        ClaimRiskStageTableName AnalysisDate
+
+    End If
 
     Set RiskSubtableVisibility = _
         BuildRiskSubtableVisibility()
 
-    AnalysisDate = CurrentRiskStageAnalysisDate()
-    RebuildRiskStage = _
-        ShouldRebuildRiskStageTables(AnalysisDate)
+    If StageOnly Then
+        RebuildRiskStage = True
+    Else
+        RebuildRiskStage = _
+            ShouldRebuildRiskStageTables(AnalysisDate)
+    End If
 
     If Not RebuildRiskStage Then
 
         StageData = _
-            LoadRiskStageTableData( _
-                RISK_STAGE_SHEET, _
-                RISK_STAGE_TABLE)
+            LoadRiskStageTableData(RiskStageTableFor(AnalysisDate))
 
 
         GoTo StageDataReadyLabel
@@ -11060,10 +11042,14 @@ Private Sub BuildRiskGranularitySection( _
 
     ' The maintained reference tables are append-only. Their formulas are
     ' calculated before the maps below are loaded for this same run.
-    UpdateRiskReferenceDatabases _
-        PositionData, _
-        RiskPositionData, _
-        ThisWorkbook
+    If Not StageOnly Then
+
+        UpdateRiskReferenceDatabases _
+            PositionData, _
+            RiskPositionData, _
+            ThisWorkbook
+
+    End If
 
 
     Set CertificateMap = _
@@ -11407,9 +11393,13 @@ Private Sub BuildRiskGranularitySection( _
         BuildCanonicalEntityNameMap(GeographyEntries)
 
 
-    UpdateNameVariantsWorksheet _
-        GeographyEntries, _
-        CanonicalNameMap
+    If Not StageOnly Then
+
+        UpdateNameVariantsWorksheet _
+            GeographyEntries, _
+            CanonicalNameMap
+
+    End If
 
 
     Set GeographyEntries = _
@@ -11448,7 +11438,7 @@ Private Sub BuildRiskGranularitySection( _
     Set StageFinalizationCache = NewExactNameMap()
 
 
-    AddRiskStagingNote StageRows
+    If Not StageOnly Then AddRiskStagingNote StageRows
 
     StageData = _
         FinalizeRiskStageData( _
@@ -11464,16 +11454,18 @@ Private Sub BuildRiskGranularitySection( _
     ' tables below. Each certificate component is already allocated to its
     ' final weight; Account Scope separates Non-DPM and DPM rows.
     WriteRiskStageWorksheet _
-        RISK_STAGE_SHEET, _
-        RISK_STAGE_TABLE, _
+        RiskStageSheetName(AnalysisDate), _
+        IIf(StageOnly, RiskStageTableName(AnalysisDate), RISK_STAGE_TABLE), _
         StageData, _
         AnalysisDate
 
 
-    DeleteLegacyRiskStageWorksheets
+    If Not StageOnly Then DeleteLegacyRiskStageWorksheets
 
 
 StageDataReadyLabel:
+
+    If StageOnly Then Exit Sub
 
     '
     ' Reported whether the staging table was rebuilt or reused, because the
@@ -11488,13 +11480,16 @@ StageDataReadyLabel:
     ' WriteSameAsLeftExposureGroup answers with a single row.
     '
     CertificateNameSameAsLeft = _
-        CertificateResultsMatch("Issuer", RiskSubtableVisibility)
+        CertificateResultsMatch( _
+            "Issuer", RiskSubtableVisibility, RiskStageSheetName(AnalysisDate))
 
     CertificateGeographySameAsLeft = _
-        CertificateResultsMatch("Country", RiskSubtableVisibility)
+        CertificateResultsMatch( _
+            "Country", RiskSubtableVisibility, RiskStageSheetName(AnalysisDate))
 
     CertificateSectorSameAsLeft = _
-        CertificateResultsMatch("Sector", RiskSubtableVisibility)
+        CertificateResultsMatch( _
+            "Sector", RiskSubtableVisibility, RiskStageSheetName(AnalysisDate))
 
 
     RiskNextRow = _
@@ -12038,61 +12033,192 @@ Private Sub WriteRankChange( _
 End Sub
 
 '
-' The compared date's staged exposure: the staging table as the run for
-' that date left it.  Normally that is the live table itself, which this
-' run is about to rebuild, so it is copied aside to its own sheet first;
-' a rerun finds the copy.  Nothing is staged twice.  With no staged
-' exposure for the date, the rank changes are simply not shown.
+' The staging sheet for a snapshot: one per date, named for it.
 '
-Private Function LoadPriorRiskStageData( _
-    ByVal CompareDate As Date) As Variant
+Private Function RiskStageSheetName( _
+    ByVal SnapshotDate As Date) As String
 
-    Dim PriorTable As ListObject
+    RiskStageSheetName = RISK_STAGE_SHEET & " " & GetDateCode(SnapshotDate)
 
-    If CompareDate = 0 Then Exit Function
+End Function
 
-    If StoredRiskStageDate(RISK_STAGE_SHEET) = CompareDate And _
-       RiskStageTableCanBeReused() Then
+'
+' The name a date's staging table carries when it is not the run's own:
+' the report's formulas name the run's table, RiskExposure, and nothing
+' else may carry that name.
+'
+Private Function RiskStageTableName( _
+    ByVal SnapshotDate As Date) As String
 
-        LoadPriorRiskStageData = _
-            LoadRiskStageTableData(RISK_STAGE_SHEET, RISK_STAGE_TABLE)
+    RiskStageTableName = RISK_STAGE_TABLE & "_" & GetDateCode(SnapshotDate)
 
-        WriteRiskStageWorksheet _
-            RISK_STAGE_PRIOR_SHEET, _
-            RISK_STAGE_PRIOR_TABLE, _
-            LoadPriorRiskStageData, _
-            CompareDate
+End Function
 
-        Exit Function
+'
+' A date's staging table, whatever it is named; Nothing when the date was
+' never staged.
+'
+Private Function RiskStageTableFor( _
+    ByVal SnapshotDate As Date) As ListObject
 
-    End If
+    Dim wsStage As Worksheet
 
-    If StoredRiskStageDate(RISK_STAGE_PRIOR_SHEET) = CompareDate Then
+    Set wsStage = GetOptionalWorksheet(RiskStageSheetName(SnapshotDate))
 
-        Set PriorTable = _
-            GetRiskStageTable(RISK_STAGE_PRIOR_SHEET, RISK_STAGE_PRIOR_TABLE)
+    If wsStage Is Nothing Then Exit Function
+    If wsStage.ListObjects.Count = 0 Then Exit Function
 
-        If RiskStageTableSchemaIsValid(PriorTable) Then
+    Set RiskStageTableFor = wsStage.ListObjects(1)
 
-            If RiskStageTableHasData(PriorTable) Then
+End Function
 
-                LoadPriorRiskStageData = _
-                    LoadRiskStageTableData( _
-                        RISK_STAGE_PRIOR_SHEET, _
-                        RISK_STAGE_PRIOR_TABLE)
+'
+' Whether a worksheet is one of the dated staging sheets.
+'
+Private Function IsRiskStageWorksheet( _
+    ByVal SheetName As String) As Boolean
 
-                Exit Function
+    Dim Suffix As String
+
+    If Left(SheetName, Len(RISK_STAGE_SHEET) + 1) <> _
+       RISK_STAGE_SHEET & " " Then Exit Function
+
+    Suffix = Mid(SheetName, Len(RISK_STAGE_SHEET) + 2)
+
+    IsRiskStageWorksheet = (Len(Suffix) = 8 And IsNumeric(Suffix))
+
+End Function
+
+'
+' The run's date takes the table name the report's formulas use,
+' RiskExposure.  Any other date's table still carrying it - the last
+' run's, normally - takes its dated name first.
+'
+Private Sub ClaimRiskStageTableName( _
+    ByVal AnalysisDate As Date)
+
+    Dim wsSheet As Worksheet
+    Dim OwnSheetName As String
+
+    OwnSheetName = RiskStageSheetName(AnalysisDate)
+
+    For Each wsSheet In ThisWorkbook.Worksheets
+
+        If IsRiskStageWorksheet(wsSheet.name) Then
+
+            If StrComp(wsSheet.name, OwnSheetName, vbTextCompare) <> 0 Then
+
+                If wsSheet.ListObjects.Count > 0 Then
+
+                    If StrComp( _
+                           wsSheet.ListObjects(1).name, _
+                           RISK_STAGE_TABLE, vbTextCompare) = 0 Then
+
+                        wsSheet.ListObjects(1).name = _
+                            RISK_STAGE_TABLE & "_" & _
+                            Mid(wsSheet.name, Len(RISK_STAGE_SHEET) + 2)
+
+                    End If
+
+                End If
 
             End If
 
         End If
 
+    Next wsSheet
+
+    Set wsSheet = GetOptionalWorksheet(OwnSheetName)
+
+    If wsSheet Is Nothing Then Exit Sub
+    If wsSheet.ListObjects.Count = 0 Then Exit Sub
+
+    wsSheet.ListObjects(1).name = RISK_STAGE_TABLE
+
+End Sub
+
+'
+' The staging sheets earlier builds wrote without a date - "Risk Exposure"
+' and the copy "Risk Exposure Prior" - become dated sheets on the first
+' run that finds them, so what they hold serves as it is.  One whose date
+' is already staged under its own name, or that records no date, goes.
+'
+Private Sub AdoptUndatedRiskStageWorksheets()
+
+    Dim SheetName As Variant
+    Dim wsOld As Worksheet
+    Dim StageDate As Date
+    Dim PreviousDisplayAlerts As Boolean
+
+    PreviousDisplayAlerts = Application.DisplayAlerts
+
+    For Each SheetName In Array(RISK_STAGE_SHEET, RISK_STAGE_PRIOR_SHEET)
+
+        Set wsOld = GetOptionalWorksheet(CStr(SheetName))
+
+        If Not wsOld Is Nothing Then
+
+            StageDate = StoredRiskStageDate(CStr(SheetName))
+
+            If StageDate > 0 And _
+               GetOptionalWorksheet(RiskStageSheetName(StageDate)) Is Nothing Then
+
+                wsOld.name = RiskStageSheetName(StageDate)
+
+            Else
+
+                Application.DisplayAlerts = False
+                wsOld.Delete
+                Application.DisplayAlerts = PreviousDisplayAlerts
+
+            End If
+
+        End If
+
+    Next SheetName
+
+End Sub
+
+'
+' A date's staged exposure, staged now if it never was: the staging pass
+' alone, quietly - no reference sheet touched, no lookup rows, no notes
+' but the one saying so - onto that date's own sheet, where the next run
+' finds it.
+'
+Private Function EnsureRiskStageData( _
+    ByRef PositionData As Variant, _
+    ByVal SnapshotDate As Date) As Variant
+
+    Dim StageTable As ListObject
+
+    If SnapshotDate = 0 Then Exit Function
+
+    Set StageTable = RiskStageTableFor(SnapshotDate)
+
+    If Not RiskStageTableHasData(StageTable) Then
+
+        If Not WeeklyDataHasRows(PositionData) Then Exit Function
+
+        WriteNoteWeekly _
+            "Exposure as of " & Format(SnapshotDate, "dd/mm/yyyy") & _
+            " was not on file: staged now, for the rank changes."
+
+        RiskStagingQuietly = True
+
+        BuildRiskGranularitySection _
+            Nothing, PositionData, SnapshotDate, Empty, 0, True
+
+        RiskStagingQuietly = False
+
+        Set StageTable = RiskStageTableFor(SnapshotDate)
+
     End If
 
-    Note _
-        "Rank changes not shown: no staged exposure for " & _
-        Format(CompareDate, "dd/mm/yyyy") & vbLf & _
-        "Run the report for that date first, then for this one."
+    If RiskStageTableHasData(StageTable) Then
+
+        EnsureRiskStageData = LoadRiskStageTableData(StageTable)
+
+    End If
 
 End Function
 
@@ -12555,6 +12681,7 @@ Public Sub WriteNoteWeekly( _
 
     End If
 
+    If RiskStagingQuietly Then Exit Sub
     If Trim(Message) = "" Then Exit Sub
 
     ReportNotes.Add Message

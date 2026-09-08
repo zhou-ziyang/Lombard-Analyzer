@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,721 行 / 209 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,848 行 / 213 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,8 +8,8 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,721 |
-| 过程数 | 209 |
+| 行数 | 12,848 |
+| 过程数 | 213 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
 
@@ -241,9 +241,13 @@ Account（全权委托）。于是出现了一个效果：`ResolveTopTenAssetCla
 `PriorRankIndex` 用和公式相同的口径（资产类、scope、只算已解析的名字）把比较日期的 staging 行
 按维度汇总、按金额降序名字升序排，给**所有**名字排名，不只前十，所以从第 14 名升进前十的能写
 出 `▲4`。绿色向上、红色向下、灰色 `=`、蓝色 `new`（比较日期根本没有这个名字）。比较日期的
-staging 数据不重新算：正常情况下它就是上次运行留下的 *Risk Exposure* 表，这次重建之前
-`LoadPriorRiskStageData` 先把它整张复制到 *Risk Exposure Prior*；重跑时从那里读。两处都没有
-比较日期的数据时，变动列留空，Notes 里说明"先跑那个日期再跑这个"。
+staging 表现在每个日期一张，表名带日期（*Risk Exposure 20260907*），所以上次运行留下的
+那张就是比较日期的，直接读；比较日期从没 stage 过的话当场 stage（`EnsureRiskStageData` 以
+StageOnly 模式再跑一遍 `BuildRiskGranularitySection`：只做 staging，不动参照表、不写 lookup、
+不写 Notes，只留一条"当场 stage 了"的说明），这是唯一会明显变慢的情形。本次运行日期的 ListObject
+叫 `RiskExposure`，公式引用它，别的日期的叫 `RiskExposure_yyyymmdd`，每次运行前
+`ClaimRiskStageTableName` 把名字换过来。旧版没有日期的 *Risk Exposure* / *Risk Exposure Prior*
+第一次运行时按它记录的日期改名收编。
 
 `tools/ToolsExposureProbe.bas` 把 22 个子表用公式和一遍 VBA 各算一次并列比较，是替换之前
 用来证明等价的工具，也是改公式之后该跑的检查。
