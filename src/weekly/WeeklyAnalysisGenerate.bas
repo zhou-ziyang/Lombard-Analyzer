@@ -2376,31 +2376,25 @@ End Function
 ' Where the collateral of the NDGs that ran through the month moved, by
 ' category: each NDG's holding in each category now against a month
 ' earlier, the rises summed into Risen and the falls into Fallen, so a
-' customer who sold equity for bonds shows on both sides.  The NDGs behind
-' each side are counted alongside.  Positions in a category GetAssetClass
-' cannot place are left out, as they are everywhere else.
+' customer who sold equity for bonds shows on both sides.  Positions in a
+' category GetAssetClass cannot place are left out, as they are everywhere
+' else.
 '
 Private Sub ContinuingCollateralChanges( _
     ByRef Snaps As ReportSnapshots, _
     ByRef UnknownAssets As Object, _
     ByRef Risen As Object, _
-    ByRef Fallen As Object, _
-    ByRef RisenCount As Long, _
-    ByRef FallenCount As Long)
+    ByRef Fallen As Object)
 
     Dim Continuing As Object
     Dim NowHeld As Object
     Dim ThenHeld As Object
-    Dim RisingNDGs As Object
-    Dim FallingNDGs As Object
 
     Dim Key As Variant
     Dim Delta As Double
 
     Set Risen = NewCollateralDictionary()
     Set Fallen = NewCollateralDictionary()
-    RisenCount = 0
-    FallenCount = 0
 
     Set Continuing = ContinuingNdgSet(Snaps.Accounts, Snaps.MonthAccounts)
 
@@ -2411,30 +2405,22 @@ Private Sub ContinuingCollateralChanges( _
     Set ThenHeld = _
         CollateralByNdgAndClass(Snaps.MonthPositions, Continuing, UnknownAssets)
 
-    Set RisingNDGs = NewNDGSet()
-    Set FallingNDGs = NewNDGSet()
-
     For Each Key In NowHeld.Keys
 
         Delta = NowHeld(Key)
         If ThenHeld.Exists(Key) Then Delta = Delta - ThenHeld(Key)
 
-        RecordCollateralChange _
-            CStr(Key), Delta, Risen, Fallen, RisingNDGs, FallingNDGs
+        RecordCollateralChange CStr(Key), Delta, Risen, Fallen
 
     Next Key
 
     For Each Key In ThenHeld.Keys
 
         If Not NowHeld.Exists(Key) Then
-            RecordCollateralChange _
-                CStr(Key), -ThenHeld(Key), Risen, Fallen, RisingNDGs, FallingNDGs
+            RecordCollateralChange CStr(Key), -ThenHeld(Key), Risen, Fallen
         End If
 
     Next Key
-
-    RisenCount = RisingNDGs.Count
-    FallenCount = FallingNDGs.Count
 
 End Sub
 
@@ -2446,9 +2432,7 @@ Private Sub RecordCollateralChange( _
     ByVal Key As String, _
     ByVal Delta As Double, _
     ByRef Risen As Object, _
-    ByRef Fallen As Object, _
-    ByRef RisingNDGs As Object, _
-    ByRef FallingNDGs As Object)
+    ByRef Fallen As Object)
 
     Dim Parts() As String
 
@@ -2457,15 +2441,9 @@ Private Sub RecordCollateralChange( _
     Parts = Split(Key, vbTab)
 
     If Delta > 0 Then
-
         Risen(Parts(1)) = Risen(Parts(1)) + Delta
-        RisingNDGs(Parts(0)) = True
-
     Else
-
         Fallen(Parts(1)) = Fallen(Parts(1)) - Delta
-        FallingNDGs(Parts(0)) = True
-
     End If
 
 End Sub
@@ -12999,9 +12977,7 @@ Private Sub CreateLoanFlowDiagram( _
     Dim Risen As Object
 
     Dim EndedCount As Long
-    Dim FallenCount As Long
     Dim NewCount As Long
-    Dim RisenCount As Long
 
     Dim EndedTotal As Double
     Dim FallenTotal As Double
@@ -13093,8 +13069,7 @@ Private Sub CreateLoanFlowDiagram( _
     EndedCount = MovedNdgSet(Snaps.MonthAccounts, Snaps.Accounts).Count
     NewCount = MovedNdgSet(Snaps.Accounts, Snaps.MonthAccounts).Count
 
-    ContinuingCollateralChanges _
-        Snaps, UnknownAssets, Risen, Fallen, RisenCount, FallenCount
+    ContinuingCollateralChanges Snaps, UnknownAssets, Risen, Fallen
 
     '
     ' What each category held a month earlier, the base its net move is
@@ -13368,7 +13343,7 @@ Private Sub CreateLoanFlowDiagram( _
         FlowSideLabel( _
             ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelTop, msoAlignRight, _
             "Lombard Loans Ended", _
-            NdgCountText(EndedCount, ""), _
+            NdgCountText(EndedCount), _
             CompactEuro(EndedTotal) & " out").name
 
     LabelTop = _
@@ -13380,7 +13355,7 @@ Private Sub CreateLoanFlowDiagram( _
         FlowSideLabel( _
             ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelTop, msoAlignRight, _
             "Positions Decreased", _
-            NdgCountText(FallenCount, "existing "), _
+            "", _
             CompactEuro(FallenTotal) & " out").name
 
     LabelTop = NewTop + EnteredTotal * PointsPerEuro / 2 - 21
@@ -13389,7 +13364,7 @@ Private Sub CreateLoanFlowDiagram( _
         FlowSideLabel( _
             ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelTop, msoAlignLeft, _
             "New Lombard Loans", _
-            NdgCountText(NewCount, ""), _
+            NdgCountText(NewCount), _
             CompactEuro(EnteredTotal) & " in").name
 
     LabelTop = _
@@ -13401,7 +13376,7 @@ Private Sub CreateLoanFlowDiagram( _
         FlowSideLabel( _
             ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelTop, msoAlignLeft, _
             "Positions Increased", _
-            NdgCountText(RisenCount, "existing "), _
+            "", _
             CompactEuro(RisenTotal) & " in").name
 
     GroupFlowShapes ws, Members
@@ -13476,14 +13451,12 @@ Private Sub AddFlowSideNode( _
 End Sub
 
 '
-' "3 NDGs", "1 NDG", "7 existing NDGs".
+' "3 NDGs", "1 NDG".
 '
 Private Function NdgCountText( _
-    ByVal Count As Long, _
-    ByVal Qualifier As String) As String
+    ByVal Count As Long) As String
 
-    NdgCountText = _
-        Count & " " & Qualifier & IIf(Count = 1, "NDG", "NDGs")
+    NdgCountText = Count & IIf(Count = 1, " NDG", " NDGs")
 
 End Function
 
@@ -13787,8 +13760,9 @@ Private Function BlendTowardsWhite( _
 End Function
 
 '
-' A side node's label, three lines: the title in bold, the NDGs behind it,
-' the collateral and which way it went.
+' A side node's label: the title in bold, the NDGs behind it when they
+' mean something - a loan is an NDG, a moved position is not - and the
+' collateral and which way it went.
 '
 Private Function FlowSideLabel( _
     ByVal ws As Worksheet, _
@@ -13804,7 +13778,7 @@ Private Function FlowSideLabel( _
     Set Label = _
         AddFlowLabel( _
             ws, X, Y, FLOW_LABEL_WIDTH, 42, _
-            Title & vbCr & CountText & vbCr & AmountText, _
+            Title & vbCr & IIf(CountText = "", "", CountText & vbCr) & AmountText, _
             Alignment, 9, False)
 
     Label.TextFrame2.TextRange.Paragraphs(1).Font.Bold = msoTrue
