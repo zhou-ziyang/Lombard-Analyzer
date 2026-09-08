@@ -6068,20 +6068,16 @@ Private Sub AddGeographyLookupEntry( _
             NameVariant)
 
     '
-    ' Names this entity was known by before, kept apart from the variants
-    ' because they are evidence of a rename, and also among them so they
-    ' travel into Companies with everything else.
+    ' Names this entity was known by before: kept apart from the variants,
+    ' never among them.  They are evidence of a rename, and the old name
+    ' belongs to the old company - the lookup sheet records it in Renamed
+    ' From, not in Name Variants.
     '
     If PreviousNames <> "" Then
 
         Entry("PreviousNames") = _
             MergeDelimitedText( _
                 EntryText(Entry, "PreviousNames"), _
-                PreviousNames)
-
-        Entry("Variants") = _
-            MergeDelimitedText( _
-                CStr(Entry("Variants")), _
                 PreviousNames)
 
     End If
@@ -8327,6 +8323,14 @@ Private Sub WriteNewGeoSecLookupWorksheet( _
                         CStr(GeographyEntry("ExposureType"))
                     Output(OutputRow, 4) = CurrentISIN
                     Output(OutputRow, 5) = CurrentRelationship
+
+                    '
+                    ' A name Companies has never had, that Bond Issuers
+                    ' remembers under an earlier one: the rename goes on
+                    ' record here, with no row to copy from.
+                    '
+                    Output(OutputRow, RenamedCol) = _
+                        EntryText(GeographyEntry, "PreviousNames")
 
                 Else
 

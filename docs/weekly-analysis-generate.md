@@ -293,6 +293,11 @@ From` 写旧名
 （列不存在就建），然后删掉 lookup 上那一行。新名已有行、旧名找不到的，跳过并在弹窗里说明。
 按完要重建一次 staging。
 
+Companies 里从来没有过的名字、但 Bond Issuers 记得它以前叫什么的（比如 Deutsche Post AG 改成
+DHL AG，而 Companies 里两个名字都没有）：按普通新公司列出——F / H 是 Bloomberg 公式，没有
+老行可复制——只是 `Renamed From` 填上 Bond Issuers 记得的旧名，贴进 Companies 时改名记录一起
+带过去。旧名不进 Name Variants：旧名是旧公司的。
+
 ### 可选：Weekly Comparison
 
 `GenerateWeeklyAnalysisComparison` 是第二个入口：读 Home 上的 `WeeklyEndDate` 和一个新的命名单元格

@@ -54,7 +54,7 @@ not generated:
 
 | Sheet | Table(s) | Purpose |
 | --- | --- | --- |
-| Companies | `Companies` | Master entity table: canonical name, name variants, exposure types, reference ISIN and its relationship, country of risk and sector with fallbacks; *Renamed From* on a row inserted for a renamed company names the row it was copied from |
+| Companies | `Companies` | Master entity table: canonical name, name variants, exposure types, reference ISIN and its relationship, country of risk and sector with fallbacks; *Renamed From* records the name a company had before — the row it was copied from, when Companies had one |
 | Bond Issuers | `BondIssuers` | Issuer ticker → issuer name and Corporate/Sovereign type; *Previous Names* keeps every name Sophis has since corrected |
 | Fund Parent Companies | `FundParentCompanies`, `Funds` | Fund name prefix → parent company, plus per-fund overrides |
 | Equity Names | `UnmappedEquities` | Queue of equity ISINs that resolved to no company; filled in by hand |
@@ -112,6 +112,13 @@ reference ISIN included, since that is what identified it — with the new
 name, the variants and exposure types the run saw, and *Renamed From*
 recording where it came from. The column is created the
 first time it is needed. The weekly Notes list the renames.
+
+A name Companies has never had in any form, but that *Bond Issuers*
+remembers under an earlier one, is a new company with a history: the lookup
+sheet lists it as any new company — Bloomberg formulas in place, nothing to
+copy from — with *Renamed From* filled from that memory, so the rename is on
+record when the row is pasted in. Previous names never become variants: the
+old name belongs to the old company.
 
 ## Layout
 
