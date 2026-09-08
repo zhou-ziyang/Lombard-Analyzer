@@ -166,7 +166,7 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,800 lines and 213 procedures, and it does not get split, because in
+It is 12,900 lines and 213 procedures, and it does not get split, because in
 VBA splitting it would cost more than it buys. 209 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
@@ -224,11 +224,16 @@ as a green or red arrow with the places moved, `=` for none, `new` for a
 name that date did not rank. The compared date's ranking is read from its
 staged exposure: staging sheets are one per date, *Risk Exposure yyyymmdd*,
 so the last run's is on file, and a date that was never staged is staged on
-the spot — the staging pass alone, quietly, with a note saying so — so the
-moves are always there and nothing is staged twice. The run's own table
-carries the `RiskExposure` name the formulas use; every other date's is
-suffixed with its date. The undated *Risk Exposure* sheet earlier builds
-wrote is adopted as a dated one on the first run. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
+the spot by the same pass the report date gets — alone and quietly: the
+reference sheets brought up to that snapshot but no issuer name corrected,
+no lookup rows, no notes but the one saying so — so the moves are always
+there and both dates resolve names the same way. The reuse question names
+the two dates the run needs and which are on file: the answer rebuilds or
+reuses those, a date not on file is staged either way, and no other date's
+table is ever taken in its place. The run's own table carries the
+`RiskExposure` name the formulas use; every other date's is suffixed with
+its date. The undated *Risk Exposure* sheet earlier builds wrote is adopted
+as a dated one on the first run. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
 loans, breakdown, new loans, loans ended, entered collateral, the pie, the
 concentration tables — and assembles the Outlook message, its intro naming
 the date compared to. `docs/weekly-analysis-generate.md` walks

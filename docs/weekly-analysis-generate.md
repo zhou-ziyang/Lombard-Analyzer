@@ -1,6 +1,6 @@
 # WeeklyAnalysisGenerate 解读
 
-基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,848 行 / 213 个过程；模块头部的版本注释停在
+基于 `src/weekly/WeeklyAnalysisGenerate.bas` 通读整理（12,908 行 / 213 个过程；模块头部的版本注释停在
 v82，之后的改动只在 git 记录里）。
 
 这是整个工作簿里最大的模块，也是唯一一个把「读 CSV」当成工程问题的模块。它把每日 Sophis
@@ -8,7 +8,7 @@ v82，之后的改动只在 git 记录里）。
 
 | | |
 | --- | --- |
-| 行数 | 12,848 |
+| 行数 | 12,908 |
 | 过程数 | 213 |
 | 暂存表字段 | 16 |
 | 输出集中度表 | 6 张（3 维度 × 2 口径），共 22 个子表 |
@@ -242,9 +242,13 @@ Account（全权委托）。于是出现了一个效果：`ResolveTopTenAssetCla
 按维度汇总、按金额降序名字升序排，给**所有**名字排名，不只前十，所以从第 14 名升进前十的能写
 出 `▲4`。绿色向上、红色向下、灰色 `=`、蓝色 `new`（比较日期根本没有这个名字）。比较日期的
 staging 表现在每个日期一张，表名带日期（*Risk Exposure 20260907*），所以上次运行留下的
-那张就是比较日期的，直接读；比较日期从没 stage 过的话当场 stage（`EnsureRiskStageData` 以
-StageOnly 模式再跑一遍 `BuildRiskGranularitySection`：只做 staging，不动参照表、不写 lookup、
-不写 Notes，只留一条"当场 stage 了"的说明），这是唯一会明显变慢的情形。本次运行日期的 ListObject
+那张就是比较日期的，直接读；比较日期从没 stage 过、或者复用问询里选了重建的话当场 stage
+（`EnsureRiskStageData` 以 StageOnly 模式再跑一遍 `BuildRiskGranularitySection`：和报表日期
+完全相同的一遍，只是不写报表、不写 lookup、不写 Notes；参照表照样按那份快照补齐，但 Issuer Name
+只填空不覆盖，否则旧快照会把新名字改回去），这是唯一会明显变慢的情形。比较日期这一遍排在报表日期
+的参照表更新之后，所以 Sophis 改过的名字两边读到的一样。复用问询列出这次需要的两个日期里哪些已经
+在表上：回答决定这些是重建还是复用，不在表上的日期无论如何都会 stage，绝不拿别的日期顶替。
+本次运行日期的 ListObject
 叫 `RiskExposure`，公式引用它，别的日期的叫 `RiskExposure_yyyymmdd`，每次运行前
 `ClaimRiskStageTableName` 把名字换过来。旧版没有日期的 *Risk Exposure* / *Risk Exposure Prior*
 第一次运行时按它记录的日期改名收编。

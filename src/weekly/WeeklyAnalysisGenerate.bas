@@ -3004,7 +3004,8 @@ End Function
 Private Sub UpdateRiskReferenceDatabases( _
     ByRef PositionData As Variant, _
     ByRef RiskPositionData As Variant, _
-    ByVal PreferredWorkbook As Workbook)
+    ByVal PreferredWorkbook As Workbook, _
+    ByVal AllowIssuerNameUpdate As Boolean)
 
     Dim EquityCandidates As Object
     Dim BondCandidates As Object
@@ -3318,29 +3319,36 @@ Private Sub UpdateRiskReferenceDatabases( _
                 ' the only populated field intentionally allowed to update.
                 ' The name it replaces goes to Previous Names: it is what
                 ' lets the issuer be matched back to its row in Companies
-                ' once nothing else about it reads the same.
+                ' once nothing else about it reads the same.  Only the
+                ' report date's snapshot may correct a name: an earlier
+                ' snapshot, staged for the comparison, fills blanks and no
+                ' more, or it would put the old name back.
                 If CStr(Candidate("IssuerName")) <> "" Then
 
                     CurrentValue = _
                         SafeText( _
                             DataRow.Range.Cells(1, BondIssuerCol).Value)
 
-                    If CurrentValue <> "" And _
-                       NormalizeExactNameKey(CurrentValue) <> _
-                       NormalizeExactNameKey( _
-                            CStr(Candidate("IssuerName"))) Then
+                    If CurrentValue = "" Or AllowIssuerNameUpdate Then
 
-                        DataRow.Range.Cells(1, BondPrevCol).Value = _
-                            MergeDelimitedText( _
-                                SafeText( _
-                                    DataRow.Range.Cells( _
-                                        1, BondPrevCol).Value), _
-                                CurrentValue)
+                        If CurrentValue <> "" And _
+                           NormalizeExactNameKey(CurrentValue) <> _
+                           NormalizeExactNameKey( _
+                                CStr(Candidate("IssuerName"))) Then
+
+                            DataRow.Range.Cells(1, BondPrevCol).Value = _
+                                MergeDelimitedText( _
+                                    SafeText( _
+                                        DataRow.Range.Cells( _
+                                            1, BondPrevCol).Value), _
+                                    CurrentValue)
+
+                        End If
+
+                        DataRow.Range.Cells(1, BondIssuerCol).Value = _
+                            CStr(Candidate("IssuerName"))
 
                     End If
-
-                    DataRow.Range.Cells(1, BondIssuerCol).Value = _
-                        CStr(Candidate("IssuerName"))
 
                 End If
 
@@ -10519,57 +10527,59 @@ Private Function StoredRiskStageDate( _
 
 End Function
 
+'
+' What the reuse question says is on file, of the two dates the run
+' needs: "risk detail tables for 07/09/2026 (the report date) and
+' 28/08/2026 (the compared date)".
+'
 Private Function RiskStageReuseDescription( _
-    ByVal AnalysisDate As Date) As String
+    ByVal AnalysisDate As Date, _
+    ByVal CompareDate As Date, _
+    ByVal HaveCurrent As Boolean, _
+    ByVal HavePrior As Boolean) As String
 
-    Dim StageDate As Date
+    Dim Found As String
 
-    StageDate = StoredRiskStageDate(RiskStageSheetName(AnalysisDate))
+    If HaveCurrent Then
+        Found = Format(AnalysisDate, "dd/mm/yyyy") & " (the report date)"
+    End If
 
-    If StageDate > 0 Then
+    If HavePrior Then
 
-        If AnalysisDate > 0 And _
-           StageDate <> AnalysisDate Then
+        If Found <> "" Then Found = Found & " and "
 
-            RiskStageReuseDescription = _
-                "risk detail table (existing as of " & _
-                Format(StageDate, "dd/mm/yyyy") & _
-                "; requested " & _
-                Format(AnalysisDate, "dd/mm/yyyy") & _
-                ")"
-
-        Else
-
-            RiskStageReuseDescription = _
-                "risk detail table (as of " & _
-                Format(StageDate, "dd/mm/yyyy") & _
-                ")"
-
-        End If
-
-    Else
-
-        RiskStageReuseDescription = _
-            "risk detail table (source date not recorded)"
+        Found = Found & _
+            Format(CompareDate, "dd/mm/yyyy") & " (the compared date)"
 
     End If
+
+    RiskStageReuseDescription = "risk detail tables for " & Found
 
 End Function
 
-Private Function ShouldRebuildRiskStageTables( _
-    ByVal AnalysisDate As Date) As Boolean
+'
+' The line under it, for the date that is not on file and is staged
+' whatever the answer; empty when both are on file.
+'
+Private Function RiskStageMissingLine( _
+    ByVal AnalysisDate As Date, _
+    ByVal CompareDate As Date, _
+    ByVal HaveCurrent As Boolean, _
+    ByVal HavePrior As Boolean) As String
 
-    If Not RiskStageTableCanBeReused(AnalysisDate) Then
+    If Not HaveCurrent Then
 
-        ShouldRebuildRiskStageTables = True
+        RiskStageMissingLine = _
+            Format(AnalysisDate, "dd/mm/yyyy") & _
+            " (the report date) is not on file and is staged either way."
 
-        Exit Function
+    ElseIf Not HavePrior Then
+
+        RiskStageMissingLine = _
+            Format(CompareDate, "dd/mm/yyyy") & _
+            " (the compared date) is not on file and is staged either way."
 
     End If
-
-    ShouldRebuildRiskStageTables = _
-        ShouldOverwriteExistingSheets( _
-            RiskStageReuseDescription(AnalysisDate))
 
 End Function
 
@@ -10982,26 +10992,55 @@ Private Sub BuildRiskGranularitySection( _
     Dim SectorNextRow As Long
     Dim SectorExDPMNextRow As Long
     Dim RebuildRiskStage As Boolean
+    Dim RebuildPrior As Boolean
+    Dim HaveCurrent As Boolean
+    Dim HavePrior As Boolean
 
     If ws Is Nothing And Not StageOnly Then Exit Sub
 
     '
-    ' StageOnly is the staging pass alone, for the compared date: no
-    ' report sheet, no reference sheet touched, no lookup rows, no notes;
-    ' the staged rows go onto that date's own sheet under its dated table
-    ' name, and the pass ends where the tables would start.
+    ' StageOnly is the staging pass alone, for the compared date: the same
+    ' pass the report date gets, without the report sheet, the issuer
+    ' name corrections, the lookup rows and the notes; the staged rows go
+    ' onto that date's own sheet under its dated table name, and the pass
+    ' ends where the tables would start.
     '
-    If Not StageOnly Then
+    If StageOnly Then
+
+        RebuildRiskStage = True
+
+    Else
 
         '
         ' The staging sheets are one per date.  The undated ones earlier
-        ' builds wrote are taken in first; then the compared date's staged
-        ' exposure, staged now if it never was; then the run's own date
+        ' builds wrote are taken in first.  Then the one question: of the
+        ' two dates the run needs, those on file are rebuilt or reused as
+        ' answered, and a date not on file is staged whatever the answer -
+        ' never another date's table in its place.  Then the run's own date
         ' takes the table name the report's formulas use.
         '
         AdoptUndatedRiskStageWorksheets
 
-        PriorStageData = EnsureRiskStageData(PriorPositions, CompareDate)
+        HaveCurrent = RiskStageTableCanBeReused(AnalysisDate)
+        HavePrior = RiskStageTableCanBeReused(CompareDate)
+
+        If HaveCurrent Or HavePrior Then
+
+            RebuildRiskStage = _
+                ShouldOverwriteExistingSheets( _
+                    RiskStageReuseDescription( _
+                        AnalysisDate, CompareDate, HaveCurrent, HavePrior), _
+                    RiskStageMissingLine( _
+                        AnalysisDate, CompareDate, HaveCurrent, HavePrior))
+
+        Else
+
+            RebuildRiskStage = True
+
+        End If
+
+        RebuildPrior = RebuildRiskStage Or Not HavePrior
+        RebuildRiskStage = RebuildRiskStage Or Not HaveCurrent
 
         ClaimRiskStageTableName AnalysisDate
 
@@ -11010,18 +11049,13 @@ Private Sub BuildRiskGranularitySection( _
     Set RiskSubtableVisibility = _
         BuildRiskSubtableVisibility()
 
-    If StageOnly Then
-        RebuildRiskStage = True
-    Else
-        RebuildRiskStage = _
-            ShouldRebuildRiskStageTables(AnalysisDate)
-    End If
-
     If Not RebuildRiskStage Then
 
         StageData = _
             LoadRiskStageTableData(RiskStageTableFor(AnalysisDate))
 
+        PriorStageData = _
+            EnsureRiskStageData(PriorPositions, CompareDate, RebuildPrior)
 
         GoTo StageDataReadyLabel
 
@@ -11041,13 +11075,24 @@ Private Sub BuildRiskGranularitySection( _
 
 
     ' The maintained reference tables are append-only. Their formulas are
-    ' calculated before the maps below are loaded for this same run.
+    ' calculated before the maps below are loaded for this same run.  Only
+    ' the report date's snapshot may correct an issuer name.
+    UpdateRiskReferenceDatabases _
+        PositionData, _
+        RiskPositionData, _
+        ThisWorkbook, _
+        Not StageOnly
+
+    '
+    ' The compared date's staged exposure, once the reference sheets are
+    ' up to this snapshot, so that a name Sophis has since corrected reads
+    ' the same on both dates; its own pass brings them up to its snapshot
+    ' in turn, and the maps below are loaded after both.
+    '
     If Not StageOnly Then
 
-        UpdateRiskReferenceDatabases _
-            PositionData, _
-            RiskPositionData, _
-            ThisWorkbook
+        PriorStageData = _
+            EnsureRiskStageData(PriorPositions, CompareDate, RebuildPrior)
 
     End If
 
@@ -12180,35 +12225,50 @@ Private Sub AdoptUndatedRiskStageWorksheets()
 End Sub
 
 '
-' A date's staged exposure, staged now if it never was: the staging pass
-' alone, quietly - no reference sheet touched, no lookup rows, no notes
-' but the one saying so - onto that date's own sheet, where the next run
+' A date's staged exposure, staged now when the run's answer to the reuse
+' question says so or when it never was: the same staging pass the report
+' date gets, alone and quietly - the reference sheets brought up to that
+' snapshot but no issuer name corrected, no lookup rows, no notes but
+' the one saying so - onto that date's own sheet, where the next run
 ' finds it.
 '
 Private Function EnsureRiskStageData( _
     ByRef PositionData As Variant, _
-    ByVal SnapshotDate As Date) As Variant
+    ByVal SnapshotDate As Date, _
+    ByVal Rebuild As Boolean) As Variant
 
     Dim StageTable As ListObject
+    Dim ScannedBefore As Long
+    Dim DroppedBefore As Long
 
     If SnapshotDate = 0 Then Exit Function
 
     Set StageTable = RiskStageTableFor(SnapshotDate)
 
-    If Not RiskStageTableHasData(StageTable) Then
+    If Rebuild Or Not RiskStageTableHasData(StageTable) Then
 
         If Not WeeklyDataHasRows(PositionData) Then Exit Function
 
         WriteNoteWeekly _
             "Exposure as of " & Format(SnapshotDate, "dd/mm/yyyy") & _
-            " was not on file: staged now, for the rank changes."
+            IIf(RiskStageTableHasData(StageTable), _
+                " staged afresh, as chosen.", _
+                " was not on file: staged now, for the rank changes.")
 
+        '
+        ' The pass counts positions into the module's two counters as the
+        ' report's own does; the report's count is what its note reports.
+        '
+        ScannedBefore = RiskStagePositionsScanned
+        DroppedBefore = RiskStageRowsDropped
         RiskStagingQuietly = True
 
         BuildRiskGranularitySection _
             Nothing, PositionData, SnapshotDate, Empty, 0, True
 
         RiskStagingQuietly = False
+        RiskStagePositionsScanned = ScannedBefore
+        RiskStageRowsDropped = DroppedBefore
 
         Set StageTable = RiskStageTableFor(SnapshotDate)
 

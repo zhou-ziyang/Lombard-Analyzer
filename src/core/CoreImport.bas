@@ -69,7 +69,8 @@ End Sub
 
 Public Function ShouldOverwriteExistingSheets( _
     Optional ByVal ExistingItemDescription As String = _
-        "generated worksheets") As Boolean
+        "generated worksheets", _
+    Optional ByVal ExtraLine As String = "") As Boolean
 
     Dim Answer As VbMsgBoxResult
 
@@ -77,7 +78,9 @@ Public Function ShouldOverwriteExistingSheets( _
 
         Answer = MsgBox( _
             "Existing " & ExistingItemDescription & _
-            " were found." & vbCrLf & vbCrLf & _
+            " were found." & _
+            IIf(ExtraLine <> "", vbCrLf & ExtraLine, "") & _
+            vbCrLf & vbCrLf & _
             "YES = Reload/rebuild from current source data" & vbCrLf & _
             "NO = Reuse them unchanged", _
             vbYesNo + vbQuestion, _
