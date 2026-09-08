@@ -55,7 +55,7 @@ not generated:
 | Sheet | Table(s) | Purpose |
 | --- | --- | --- |
 | Companies | `Companies` | Master entity table: canonical name, name variants, exposure types, reference ISIN and its relationship, country of risk and sector with fallbacks; *Renamed From* records the name a company had before — the row it was copied from, when Companies had one |
-| Bond Issuers | `BondIssuers` | Issuer ticker → issuer name and Corporate/Sovereign type; *Previous Names* keeps every name Sophis has since corrected |
+| Bond Issuers | `BondIssuers` | Issuer ticker → issuer name and Corporate/Sovereign type |
 | Fund Parent Companies | `FundParentCompanies`, `Funds` | Fund name prefix → parent company, plus per-fund overrides |
 | Equity Names | `UnmappedEquities` | Queue of equity ISINs that resolved to no company; filled in by hand |
 | Countries | — | Country code → country name |
@@ -88,15 +88,14 @@ with a *Manual Override* column for the cases the merge gets wrong.
 ### Renamed companies
 
 A renamed company arrives as a name Companies has never heard of, and would
-be looked up afresh and shown under *Others* until someone added it. Two
-things vouch for it: for a bond issuer, the name *Bond Issuers* held before
-Sophis corrected it — `UpdateRiskReferenceDatabases` now keeps that in
-*Previous Names* instead of discarding it — and, for anything, the ISIN of
-what it issued against Companies' *Reference ISIN* (issued and underlying
-securities; a fund's ISIN names the fund, not its parent).
+be looked up afresh and shown under *Others* until someone added it. One
+thing vouches for it: the ISIN of what it issued, against Companies'
+*Reference ISIN* (issued and underlying securities; a fund's ISIN names the
+fund, not its parent) — a name changes, the ISIN of what was issued under it
+does not.
 
 A renamed company is **a company of its own**. `DetectRenamedCompanies` runs
-the two bridges over every entity Companies does not know; a match whose name
+that bridge over every entity Companies does not know; a match whose name
 is not merely another spelling of the row's own name is registered for this
 run as a copy of that row under the new name, so the report shows the new
 name with the old row's geography, sector and reference ISIN rather than
@@ -112,13 +111,6 @@ reference ISIN included, since that is what identified it — with the new
 name, the variants and exposure types the run saw, and *Renamed From*
 recording where it came from. The column is created the
 first time it is needed. The weekly Notes list the renames.
-
-A name Companies has never had in any form, but that *Bond Issuers*
-remembers under an earlier one, is a new company with a history: the lookup
-sheet lists it as any new company — Bloomberg formulas in place, nothing to
-copy from — with *Renamed From* filled from that memory, so the rename is on
-record when the row is pasted in. Previous names never become variants: the
-old name belongs to the old company.
 
 ## Layout
 
@@ -169,8 +161,8 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 13,200 lines and 214 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 209 of those procedures are
+It is 13,000 lines and 213 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 208 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
