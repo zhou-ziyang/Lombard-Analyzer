@@ -16,8 +16,8 @@ configuration parameters (as defined names) and one button per entry point.
 | 02 Date Range Analysis | `AnalysisStartDate`, `AnalysisEndDate` | Calculate Delta | `DeltaCalculation.BuildPositionMovements` |
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `DeltaRevenue.BuildRevenueSummary` |
 | 03 Weekly Analysis | `WeeklyEndDate`, `WeeklyCompareDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
-| 03 Weekly Analysis | `FactsEndDate` (or `WeeklyEndDate` when that name does not exist) | Weekly Facts | `WeeklyFacts.GenerateWeeklyFacts` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
+| 05 Portfolio Facts | `FactsStartDate`, `FactsEndDate` | Portfolio Facts | `PortfolioFacts.GeneratePortfolioFacts` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
 `GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet,
@@ -164,7 +164,7 @@ exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
 a button that would not be visible from the source. Three helpers are Public
-because `WeeklyFacts` calls them: the CSV field cleaner, the number parser and
+because `PortfolioFacts` calls them: the CSV field cleaner, the number parser and
 the category list, so the facts read the same files the same way and sum by
 the same categories.
 
@@ -254,38 +254,47 @@ through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three
 separate asset classifications.
 
-**Weekly Facts** — `GenerateWeeklyFacts` builds one sheet of figures and
-superlatives from its own button, for its own date (`FactsEndDate`, or the
-report's date when that name does not exist; a date with no snapshot is read
-as the last one on or before it), and goes into no email. Four sections read
-the end date's snapshots — the book (totals, utilisation, loan to value,
-cover, currencies, margin calls, the median client, the top-5 and top-10
-shares and a Herfindahl index, untouched lines), the clients (largest and
-smallest by collateral, drawn and line; highest and lowest utilisation;
-thinnest and thickest cover; closest to a margin call and deepest in one;
-most positions, securities, currencies and categories; most concentrated and
-most evenly spread; largest cash, non-eligible and above-limit holders) and
-the positions (the largest position over the book and in each category with
-its holder, the most widely held and the largest security, the largest and
-most common issuer, foreign currency, cash, non-eligible and above-limit
-totals, the longest and shortest security names). Every movement is read
-three ways, each against a snapshot on file — the previous snapshot, the
-first on or after one month back, the first on or after year-end, resolved
-the way the report resolves its dates — with the book's totals, new and
-ended loans and the largest of each, the biggest riser and faller, the
-largest position increase and decrease, the most active repositioner, line
-increases and cuts, drawdowns and repayments, the categories gaining and
-losing most, securities new to and gone from the book, and margin calls
-raised and cleared. The last section walks every Accounts snapshot on file
-up to the end date (Accounts only; positions are read for the four dates
-above): the oldest and youngest active loans and their average age, clients
-ever on the book, loans ended and loans that came back, the longest- and
-shortest-lived ended loans, the busiest snapshots for new and ended loans
-and the days since the last of each, record and lowest collateral, drawn and
-loan counts with their dates, the largest line ever approved, and margin
-calls over the run. The module reads the CSVs itself through the weekly
-module's field cleaner and number parser, keeps one row per NDG, and sums
-positions once per snapshot into dictionaries the sections share.
+**Portfolio Facts** — `GeneratePortfolioFacts` builds one sheet of figures and
+superlatives from its own button, for its own dates — `FactsEndDate`, and
+`FactsStartDate` for the first snapshot to read, blank for every one on file,
+as the dashboard's start date works; an end date with no snapshot is read as
+the last one on or before it — and goes into no email. Five sections read the
+end date's snapshots — the book (totals, utilisation, loan to value, cover,
+currencies, margin calls, the median client, the top-5 and top-10 shares and
+a Herfindahl index, untouched lines), the clients (largest and smallest by
+collateral, drawn and line; highest and lowest utilisation; thinnest and
+thickest cover; closest to a margin call and deepest in one; most positions,
+securities, currencies and categories; most concentrated and most evenly
+spread; largest cash, non-eligible and above-limit holders), the positions
+(the largest position over the book and in each category with its holder,
+the most widely held and the largest security, the largest and most common
+issuer, foreign currency, cash, non-eligible and above-limit totals, the
+longest and shortest security names), and the exposure looked through — read
+from the end date's staged *Risk Exposure* table, the one the Weekly Analysis
+leaves behind, and never staged here, since resolving names can take a
+lookup by hand: for names, countries and sectors alike the largest member,
+the most widely held, the client most concentrated in one and the client
+spread over the most, members held by one client only; what is reached
+through certificates, the certificate with the most underlyings and the
+underlying in the most certificates, underlyings that could not be named,
+the DPM share, and how the names were resolved. Every movement is read three
+ways, each against a snapshot on file — the previous snapshot, the first on
+or after one month back, the first on or after year-end, resolved the way
+the report resolves its dates — with the book's totals, new and ended loans
+and the largest of each, the biggest riser and faller, the largest position
+increase and decrease, the most active repositioner, line increases and
+cuts, drawdowns and repayments, the categories gaining and losing most,
+securities new to and gone from the book, and margin calls raised and
+cleared. The last section walks every Accounts snapshot from the start date
+to the end date (Accounts only; positions are read for the four dates above):
+the oldest and youngest active loans and their average age, clients ever on
+the book, loans ended and loans that came back, the longest- and
+shortest-lived ended loans, the busiest snapshots for new and ended loans and
+the days since the last of each, record and lowest collateral, drawn and loan
+counts with their dates, the largest line ever approved, and margin calls
+over the run. The module reads the CSVs itself through the weekly module's
+field cleaner and number parser, keeps one row per NDG, and sums positions
+once per snapshot into dictionaries the sections share.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

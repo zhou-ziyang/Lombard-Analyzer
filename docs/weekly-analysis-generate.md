@@ -126,7 +126,8 @@ Additional Comment 是 `Required:=False` 的——这两列不在也能跑。
 > 后来补上的就是这套写法。
 
 `CleanWeeklyCsvField`、`WeeklyCsvDouble` 和 `CollateralCategories` 是模块里少数几个 Public 的
-过程：`WeeklyFacts`（Home 上的 Weekly Facts 按钮，自己读同样的 CSV 生成一张统计表）用它们清字段、
+过程：`PortfolioFacts`（Home 上的 Portfolio Facts 按钮，自己读同样的 CSV 生成一张统计表，暴露那节
+只读当天已暂存的 Risk Exposure 表、自己不暂存）用它们清字段、
 解析数字、按同一套类别汇总，所以两边的数字对得上。
 
 ---

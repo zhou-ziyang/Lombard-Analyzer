@@ -1,27 +1,44 @@
-Attribute VB_Name = "WeeklyFacts"
+Attribute VB_Name = "PortfolioFacts"
 Option Explicit
 
 '
-' Weekly Facts: one sheet of figures and superlatives about the book as of
-' one date - the largest and smallest clients, the biggest positions and
-' who holds them, what moved and by how much, and what the whole run of
+' Portfolio Facts: one sheet of figures and superlatives about the book as
+' of one date - the largest and smallest clients, the biggest positions
+' and who holds them, where the exposure sits once certificates are
+' looked through, what moved and by how much, and what the whole run of
 ' snapshots on file says.  Its own button on Home; it goes into no email.
 '
-' The one input is the end date, Home!FactsEndDate, or Home!WeeklyEndDate
-' when that name does not exist.  A date with no snapshot is read as the
-' last snapshot on or before it.  Every comparison is made three ways,
-' each to a snapshot on file - the previous snapshot, the month-earlier
-' one and the year's first, which are the finest window the files allow
-' and the report's own two - and the history section walks every
-' Accounts snapshot up to the end date.
+' Two inputs: the end date, Home!FactsEndDate, and a start date,
+' Home!FactsStartDate, blank to read every snapshot on file - as the
+' client dashboard's own start date works.  An end date with no snapshot
+' is read as the last snapshot on or before it.  Every comparison is made
+' three ways, each to a snapshot on file - the previous snapshot, the
+' month-earlier one and the year's first, which are the finest window the
+' files allow and the report's own two - and the history section walks
+' every Accounts snapshot from the start date to the end date.
+'
+' The exposure section reads the end date's staged Risk Exposure table,
+' the one the Weekly Analysis leaves behind, and stages nothing itself:
+' resolving names can take a lookup by hand, so the look-through is read
+' for the end date alone and never for the history.
 '
 ' Reads the snapshots itself, through the weekly module's field cleaner
 ' and number parser, so its figures agree with the report's.
 '
 
-Private Const FACTS_SHEET As String = "Weekly Facts"
+Private Const FACTS_SHEET As String = "Portfolio Facts"
 Private Const FACTS_DATE_NAME As String = "FactsEndDate"
-Private Const REPORT_DATE_NAME As String = "WeeklyEndDate"
+Private Const FACTS_START_NAME As String = "FactsStartDate"
+
+'
+' The weekly module's staging sheets, one per date, and the two markers
+' its rows carry: a certificate looked through to its underlyings, and a
+' certificate whose underlying could not be named.
+'
+Private Const RISK_STAGE_SHEET_PREFIX As String = "Risk Exposure "
+Private Const CERTIFICATE_UNDERLYING_TYPE As String = "Certificate underlying"
+Private Const UNKNOWN_UNDERLYING_TYPE As String = "Unknown certificate underlying"
+Private Const OTHER_RISK_DIMENSION As String = "Others"
 
 Private Const ACCOUNT_FILE_SUFFIX As String = "_Lombard_Loans_ITA_Accounts.csv"
 Private Const POSITION_FILE_SUFFIX As String = "_Lombard_Loans_ITA_Positions.csv"
@@ -81,16 +98,18 @@ Private FactsNotes As Collection
 ' Entry
 '====================================================================
 
-Public Sub GenerateWeeklyFacts()
+Public Sub GeneratePortfolioFacts()
 
     Dim RequestedDate As Date
+    Dim StartDate As Date
+    Dim HasStart As Boolean
     Dim EndDate As Date
     Dim Dates As Variant
     Dim EndSnap As FactSnapshot
 
     On Error GoTo ErrorHandler
 
-    If Not ReadFactsEndDate(RequestedDate) Then Exit Sub
+    If Not ReadFactsDates(StartDate, HasStart, RequestedDate) Then Exit Sub
 
     Application.ScreenUpdating = False
     Application.EnableEvents = False
@@ -99,12 +118,13 @@ Public Sub GenerateWeeklyFacts()
     MissingFiles = ""
     Set FactsNotes = New Collection
 
-    Dates = AccountSnapshotDates(RequestedDate)
+    Dates = AccountSnapshotDates(StartDate, HasStart, RequestedDate)
 
     If IsEmpty(Dates) Then
         Fatal _
-            "No Accounts snapshot on file on or before " & _
-            Format(RequestedDate, FACT_DATE_FORMAT) & "."
+            "No Accounts snapshot on file " & _
+            IIf(HasStart, "from " & Format(StartDate, FACT_DATE_FORMAT) & " ", "") & _
+            "to " & Format(RequestedDate, FACT_DATE_FORMAT) & "."
     End If
 
     EndDate = Dates(UBound(Dates))
@@ -128,10 +148,11 @@ Public Sub GenerateWeeklyFacts()
 
     EndSnap = LoadFactSnapshot(EndDate)
 
-    WriteFactsHeader EndDate
+    WriteFactsHeader Dates(LBound(Dates)), HasStart, EndDate
     WritePortfolioSection EndSnap
     WriteClientSection EndSnap
     WritePositionSection EndSnap
+    WriteExposureSection EndSnap
 
     WriteHorizon EndSnap, PreviousSnapshotDate(Dates, EndDate), _
         "Since the previous snapshot"
@@ -148,9 +169,9 @@ Public Sub GenerateWeeklyFacts()
 
     If MissingFiles <> "" Then
         MsgBox _
-            "Weekly Facts completed with warnings." & vbCrLf & vbCrLf & _
+            "Portfolio Facts completed with warnings." & vbCrLf & vbCrLf & _
             "Missing source files:" & vbCrLf & MissingFiles, _
-            vbExclamation, "Weekly Facts"
+            vbExclamation, "Portfolio Facts"
     End If
 
 ExitRoutine:
@@ -168,54 +189,68 @@ ErrorHandler:
 
     ResetExcel
 
-    MsgBox Err.Description, vbCritical, "Weekly Facts"
+    MsgBox Err.Description, vbCritical, "Portfolio Facts"
 
     GoTo ExitRoutine
 
 End Sub
 
 '
-' The end date from Home: FactsEndDate, or the report's own date when
-' that name has not been created.  False, with a message, when neither
-' holds a date.
+' The two dates from Home.  The end date must be a date; the start date
+' may be blank, or the name may not exist, and then every snapshot on
+' file is read.  False, with a message, when the end date is not there.
 '
-Private Function ReadFactsEndDate( _
+Private Function ReadFactsDates( _
+    ByRef StartDate As Date, _
+    ByRef HasStart As Boolean, _
     ByRef EndDate As Date) As Boolean
 
     Dim RawValue As Variant
-    Dim NameUsed As String
-
-    NameUsed = FACTS_DATE_NAME
 
     On Error Resume Next
-
     RawValue = ThisWorkbook.Worksheets("Home").Range(FACTS_DATE_NAME).Value
-
-    If Err.Number <> 0 Then
-
-        Err.Clear
-        NameUsed = REPORT_DATE_NAME
-        RawValue = ThisWorkbook.Worksheets("Home").Range(REPORT_DATE_NAME).Value
-
-    End If
-
     On Error GoTo 0
 
     If Not IsDate(RawValue) Then
 
         MsgBox _
-            "Home!" & NameUsed & " does not hold a valid date." & _
+            "Home!" & FACTS_DATE_NAME & " does not hold a valid date." & _
             vbCrLf & vbCrLf & _
             "Name a cell on Home " & FACTS_DATE_NAME & _
-            " with the date the facts are wanted for.", _
-            vbExclamation, "Weekly Facts"
+            " with the date the facts are wanted for, and one " & _
+            FACTS_START_NAME & " with the first date to read, or blank for all.", _
+            vbExclamation, "Portfolio Facts"
 
         Exit Function
 
     End If
 
     EndDate = CDate(RawValue)
-    ReadFactsEndDate = True
+
+    RawValue = Empty
+
+    On Error Resume Next
+    RawValue = ThisWorkbook.Worksheets("Home").Range(FACTS_START_NAME).Value
+    On Error GoTo 0
+
+    If IsDate(RawValue) Then
+
+        StartDate = CDate(RawValue)
+        HasStart = True
+
+        If StartDate > EndDate Then
+
+            MsgBox _
+                "Home!" & FACTS_START_NAME & " is later than " & FACTS_DATE_NAME & ".", _
+                vbExclamation, "Portfolio Facts"
+
+            Exit Function
+
+        End If
+
+    End If
+
+    ReadFactsDates = True
 
 End Function
 
@@ -231,10 +266,13 @@ End Sub
 '====================================================================
 
 '
-' Every Accounts snapshot in the source folder dated on or before the
-' date given, ascending; Empty when there is none.
+' Every Accounts snapshot in the source folder dated on or before the end
+' date - and on or after the start date, when there is one - ascending;
+' Empty when there is none.
 '
 Private Function AccountSnapshotDates( _
+    ByVal StartDate As Date, _
+    ByVal HasStart As Boolean, _
     ByVal LastDate As Date) As Variant
 
     Dim BasePath As String
@@ -254,7 +292,9 @@ Private Function AccountSnapshotDates( _
     Do While FileName <> ""
 
         If SnapshotDateFromFileName(FileName, Candidate) Then
-            If Candidate <= LastDate Then Found.Add Candidate
+            If Candidate <= LastDate Then
+                If Not HasStart Or Candidate >= StartDate Then Found.Add Candidate
+            End If
         End If
 
         FileName = Dir
@@ -1304,15 +1344,20 @@ End Function
 '====================================================================
 
 Private Sub WriteFactsHeader( _
+    ByVal FirstDate As Date, _
+    ByVal HasStart As Boolean, _
     ByVal EndDate As Date)
 
     With FactsSheet
 
-        .Cells(2, FIRST_COL).Value = "Weekly Facts"
+        .Cells(2, FIRST_COL).Value = "Portfolio Facts"
         .Cells(2, FIRST_COL).Font.Size = 16
         .Cells(2, FIRST_COL).Font.Bold = True
 
-        .Cells(3, FIRST_COL).Value = "As of " & DateText(EndDate)
+        .Cells(3, FIRST_COL).Value = _
+            "As of " & DateText(EndDate) & "; the history from " & _
+            DateText(FirstDate) & _
+            IIf(HasStart, ", the start date given", ", the first snapshot on file")
         .Cells(3, FIRST_COL).Font.Size = 11
 
         .Cells(5, FIRST_COL).Value = "Fact"
@@ -2165,6 +2210,403 @@ Private Function PositionDetail( _
 End Function
 
 '====================================================================
+' Exposure, looked through, as of the end date
+'====================================================================
+
+'
+' Reads the end date's staged Risk Exposure table - one row per
+' exposure a position resolves to, with the collateral allocated to it,
+' its name, geography, sector and account scope - and says nothing when
+' the Weekly Analysis has not been run for that date: the staging is
+' that run's, and resolving names can take a lookup by hand.
+'
+Private Sub WriteExposureSection( _
+    ByRef Snap As FactSnapshot)
+
+    Dim Rows As Variant
+    Dim Columns As Object
+
+    Dim ByName As Object
+    Dim NameHolders As Object
+    Dim ByGeography As Object
+    Dim GeographyHolders As Object
+    Dim BySector As Object
+    Dim SectorHolders As Object
+    Dim NdgTotal As Object
+    Dim NdgName As Object
+    Dim NdgGeography As Object
+    Dim NdgSector As Object
+    Dim CertificateUnderlyings As Object
+    Dim UnderlyingCertificates As Object
+    Dim IndirectByName As Object
+    Dim BySource As Object
+
+    Dim Key As Variant
+    Dim NDG As String
+    Dim Name As String
+    Dim Geography As String
+    Dim Sector As String
+    Dim ExposureType As String
+    Dim Product As String
+    Dim Scope As String
+    Dim Value As Double
+    Dim Total As Double
+    Dim DpmValue As Double
+    Dim DpmClients As Object
+    Dim UnknownValue As Double
+    Dim UnknownRows As Long
+    Dim IndirectValue As Double
+    Dim SourceText As String
+    Dim r As Long
+
+    StartSection "Exposure, looked through", "as of " & DateText(Snap.AsOfDate)
+
+    If Not LoadStagedExposure(Snap.AsOfDate, Rows, Columns) Then
+        WriteNoFact _
+            "No Risk Exposure sheet for " & DateText(Snap.AsOfDate) & _
+            ": run the Weekly Analysis for that date first. The exposure is not " & _
+            "staged here, since resolving names can take a lookup by hand."
+        Exit Sub
+    End If
+
+    Set ByName = NewTextDictionary()
+    Set NameHolders = NewTextDictionary()
+    Set ByGeography = NewTextDictionary()
+    Set GeographyHolders = NewTextDictionary()
+    Set BySector = NewTextDictionary()
+    Set SectorHolders = NewTextDictionary()
+    Set NdgTotal = NewTextDictionary()
+    Set NdgName = NewTextDictionary()
+    Set NdgGeography = NewTextDictionary()
+    Set NdgSector = NewTextDictionary()
+    Set CertificateUnderlyings = NewTextDictionary()
+    Set UnderlyingCertificates = NewTextDictionary()
+    Set IndirectByName = NewTextDictionary()
+    Set BySource = NewTextDictionary()
+    Set DpmClients = NewTextDictionary()
+
+    For r = LBound(Rows, 1) To UBound(Rows, 1)
+
+        NDG = StagedText(Rows, r, Columns, "NDG")
+        Value = StagedAmount(Rows, r, Columns, "Allocated Collateral Value")
+        ExposureType = StagedText(Rows, r, Columns, "Exposure Type")
+
+        If NDG <> "" And Abs(Value) >= FACT_TOLERANCE Then
+
+            Total = Total + Value
+            AddAmount NdgTotal, NDG, Value
+
+            If StrComp(ExposureType, UNKNOWN_UNDERLYING_TYPE, vbTextCompare) = 0 Then
+
+                UnknownValue = UnknownValue + Value
+                UnknownRows = UnknownRows + 1
+
+            Else
+
+                Name = StagedText(Rows, r, Columns, "Exposure Name")
+                If Name = "" Then Name = OTHER_RISK_DIMENSION
+                Geography = StagedText(Rows, r, Columns, "Geography")
+                If Geography = "" Then Geography = OTHER_RISK_DIMENSION
+                Sector = StagedText(Rows, r, Columns, "Sector")
+                If Sector = "" Then Sector = OTHER_RISK_DIMENSION
+
+                AddAmount ByName, Name, Value
+                MarkInner NameHolders, Name, NDG
+                AddAmount InnerDictionary(NdgName, NDG), Name, Value
+
+                AddAmount ByGeography, Geography, Value
+                MarkInner GeographyHolders, Geography, NDG
+                AddAmount InnerDictionary(NdgGeography, NDG), Geography, Value
+
+                AddAmount BySector, Sector, Value
+                MarkInner SectorHolders, Sector, NDG
+                AddAmount InnerDictionary(NdgSector, NDG), Sector, Value
+
+                If Left$(ExposureType, Len(CERTIFICATE_UNDERLYING_TYPE)) = _
+                   CERTIFICATE_UNDERLYING_TYPE Then
+
+                    IndirectValue = IndirectValue + Value
+                    AddAmount IndirectByName, Name, Value
+                    Product = StagedText(Rows, r, Columns, "Product ISIN")
+                    If Product = "" Then Product = StagedText(Rows, r, Columns, "Security Name")
+                    MarkInner CertificateUnderlyings, Product, Name
+                    MarkInner UnderlyingCertificates, Name, Product
+
+                End If
+
+            End If
+
+            Scope = StagedText(Rows, r, Columns, "Account Scope")
+
+            If StrComp(Scope, "DPM", vbTextCompare) = 0 Then
+                DpmValue = DpmValue + Value
+                DpmClients(NDG) = True
+            End If
+
+            AddAmount BySource, StagedText(Rows, r, Columns, "Resolution Source"), Value
+
+        End If
+
+    Next r
+
+    If Total < FACT_TOLERANCE Then
+        WriteNoFact "The staged table holds no allocated collateral."
+        Exit Sub
+    End If
+
+    WriteFact "Collateral allocated to exposures", Total, "eur", "", _
+        Plural(UBound(Rows, 1) - LBound(Rows, 1) + 1, "staged row", "staged rows") & _
+        " over " & Plural(NdgTotal.Count, "client", "clients")
+
+    '
+    ' Names
+    '
+
+    WriteFact "Exposure names", ByName.Count, "int", "", _
+        PctText(SafeShare(DictAmount(ByName, OTHER_RISK_DIMENSION), Total)) & _
+        " of the allocated collateral has no name (" & OTHER_RISK_DIMENSION & ")"
+
+    WriteDimensionFacts "name", ByName, NameHolders, NdgName, NdgTotal, Total
+
+    If IndirectValue > 0 Then
+
+        WriteFact "Exposure reached through certificates", IndirectValue, "eur", "", _
+            PctText(SafeShare(IndirectValue, Total)) & " of the allocated collateral, in " & _
+            Plural(CertificateUnderlyings.Count, "certificate", "certificates") & " looked through"
+
+        Key = BestKey(IndirectByName, True)
+        If CStr(Key) <> "" Then
+            WriteFact "Largest exposure through certificates", IndirectByName(Key), "eur", _
+                CStr(Key), PctText(SafeShare(IndirectByName(Key), DictAmount(ByName, CStr(Key)))) & _
+                " of everything the book holds in that name"
+        End If
+
+        Key = BestInnerCount(CertificateUnderlyings)
+        If CStr(Key) <> "" Then
+            WriteFact "Certificate with the most underlyings", _
+                CertificateUnderlyings(Key).Count, "int", CStr(Key), "underlying names"
+        End If
+
+        Key = BestInnerCount(UnderlyingCertificates)
+        If CStr(Key) <> "" Then
+            If UnderlyingCertificates(Key).Count > 1 Then
+                WriteFact "Underlying in the most certificates", _
+                    UnderlyingCertificates(Key).Count, "int", CStr(Key), "certificates carry it"
+            End If
+        End If
+
+    End If
+
+    If UnknownRows > 0 Then
+        WriteFact "Certificate underlyings that could not be named", UnknownValue, "eur", "", _
+            Plural(UnknownRows, "row", "rows") & "; " & PctText(SafeShare(UnknownValue, Total)) & _
+            " of the allocated collateral"
+    End If
+
+    '
+    ' Geography and sector
+    '
+
+    WriteFact "Countries", ByGeography.Count, "int", "", _
+        PctText(SafeShare(DictAmount(ByGeography, OTHER_RISK_DIMENSION), Total)) & _
+        " of the allocated collateral has no country"
+    WriteDimensionFacts "country", ByGeography, GeographyHolders, NdgGeography, NdgTotal, Total
+
+    WriteFact "Sectors", BySector.Count, "int", "", _
+        PctText(SafeShare(DictAmount(BySector, OTHER_RISK_DIMENSION), Total)) & _
+        " of the allocated collateral has no sector"
+    WriteDimensionFacts "sector", BySector, SectorHolders, NdgSector, NdgTotal, Total
+
+    '
+    ' Scope and sources
+    '
+
+    WriteFact "Collateral in DPM accounts", DpmValue, "eur", "", _
+        PctText(SafeShare(DpmValue, Total)) & " of the allocated collateral, " & _
+        Plural(DpmClients.Count, "client", "clients")
+
+    For Each Key In BySource.Keys
+        If SourceText <> "" Then SourceText = SourceText & "; "
+        SourceText = SourceText & _
+            IIf(CStr(Key) = "", "(blank)", CStr(Key)) & " " & PctText(SafeShare(BySource(Key), Total))
+    Next Key
+
+    WriteFact "How the names were resolved", BySource.Count, "int", "", SourceText
+
+End Sub
+
+'
+' The three facts every dimension gets: its largest member, its most
+' widely held member, the client most concentrated in one member.
+'
+Private Sub WriteDimensionFacts( _
+    ByVal Dimension As String, _
+    ByVal ByMember As Object, _
+    ByVal Holders As Object, _
+    ByVal NdgMember As Object, _
+    ByVal NdgTotal As Object, _
+    ByVal Total As Double)
+
+    Dim Key As Variant
+    Dim NDG As Variant
+    Dim TopShare As Object
+    Dim TopMember As Object
+    Dim Inner As Object
+    Dim Member As Variant
+    Dim Members As Long
+    Dim MostMembers As Long
+    Dim MostMembersNdg As String
+    Dim Lonely As Long
+
+    Key = BestKey(ByMember, True)
+    If CStr(Key) <> "" Then
+        WriteFact "Largest " & Dimension, ByMember(Key), "eur", CStr(Key), _
+            PctText(SafeShare(ByMember(Key), Total)) & " of the allocated collateral, in " & _
+            Plural(Holders(Key).Count, "client's collateral", "clients' collateral")
+    End If
+
+    Key = BestInnerCount(Holders)
+    If CStr(Key) <> "" Then
+        WriteFact "Most widely held " & Dimension, Holders(Key).Count, "int", CStr(Key), _
+            "clients are exposed to it; " & EuroText(DictAmount(ByMember, CStr(Key))) & " in all"
+    End If
+
+    Set TopShare = NewTextDictionary()
+    Set TopMember = NewTextDictionary()
+
+    For Each NDG In NdgMember.Keys
+
+        Set Inner = NdgMember(NDG)
+        Members = Inner.Count
+
+        If Members > MostMembers Then
+            MostMembers = Members
+            MostMembersNdg = CStr(NDG)
+        End If
+
+        If Members >= 2 And DictAmount(NdgTotal, CStr(NDG)) > 0 Then
+            Member = BestKey(Inner, True)
+            If CStr(Member) <> OTHER_RISK_DIMENSION Then
+                TopShare(NDG) = CDbl(Inner(Member)) / CDbl(NdgTotal(NDG))
+                TopMember(NDG) = Member
+            End If
+        End If
+
+    Next NDG
+
+    NDG = BestKey(TopShare, True)
+    If CStr(NDG) <> "" Then
+        WriteFact "Client most concentrated in one " & Dimension, TopShare(NDG), "pct", _
+            NdgText(CStr(NDG)), "of its collateral in " & CStr(TopMember(NDG)) & _
+            "; among clients exposed to more than one " & Dimension
+    End If
+
+    If MostMembersNdg <> "" Then
+        WriteFact "Client spread over the most " & Dimension & "s", MostMembers, "int", _
+            NdgText(MostMembersNdg), "distinct " & Dimension & "s in its collateral"
+    End If
+
+    For Each Key In Holders.Keys
+        If Holders(Key).Count = 1 And CStr(Key) <> OTHER_RISK_DIMENSION Then Lonely = Lonely + 1
+    Next Key
+
+    WriteFact Dimension & "s held by one client only", Lonely, "int", "", _
+        "of " & Plural(ByMember.Count, Dimension, Dimension & "s")
+
+End Sub
+
+'
+' The key whose inner dictionary has the most members; empty when none.
+'
+Private Function BestInnerCount( _
+    ByVal Outer As Object) As String
+
+    Dim Key As Variant
+    Dim Best As Long
+
+    For Each Key In Outer.Keys
+        If Outer(Key).Count > Best Then
+            Best = Outer(Key).Count
+            BestInnerCount = CStr(Key)
+        End If
+    Next Key
+
+End Function
+
+'
+' The end date's staged table as its body rows and a dictionary from
+' header text to column number; False when the sheet or its table is not
+' there.
+'
+Private Function LoadStagedExposure( _
+    ByVal SnapshotDate As Date, _
+    ByRef Rows As Variant, _
+    ByRef Columns As Object) As Boolean
+
+    Dim ws As Worksheet
+    Dim Table As ListObject
+    Dim Headers As Variant
+    Dim c As Long
+
+    If Not SheetExists(RISK_STAGE_SHEET_PREFIX & GetDateCode(SnapshotDate)) Then Exit Function
+
+    Set ws = ThisWorkbook.Worksheets(RISK_STAGE_SHEET_PREFIX & GetDateCode(SnapshotDate))
+
+    If ws.ListObjects.Count = 0 Then Exit Function
+
+    Set Table = ws.ListObjects(1)
+
+    If Table.DataBodyRange Is Nothing Then Exit Function
+
+    Headers = Table.HeaderRowRange.Value
+    Rows = Table.DataBodyRange.Value
+
+    Set Columns = NewTextDictionary()
+
+    For c = LBound(Headers, 2) To UBound(Headers, 2)
+        Columns(NormalizeFactHeader(CStr(Headers(1, c)))) = c
+    Next c
+
+    LoadStagedExposure = True
+
+End Function
+
+Private Function StagedText( _
+    ByRef Rows As Variant, _
+    ByVal r As Long, _
+    ByVal Columns As Object, _
+    ByVal Header As String) As String
+
+    Dim c As Variant
+
+    If Not Columns.Exists(NormalizeFactHeader(Header)) Then Exit Function
+
+    c = Columns(NormalizeFactHeader(Header))
+
+    If IsError(Rows(r, c)) Then Exit Function
+
+    StagedText = Trim$(CStr(Rows(r, c)))
+
+End Function
+
+Private Function StagedAmount( _
+    ByRef Rows As Variant, _
+    ByVal r As Long, _
+    ByVal Columns As Object, _
+    ByVal Header As String) As Double
+
+    Dim c As Variant
+
+    If Not Columns.Exists(NormalizeFactHeader(Header)) Then Exit Function
+
+    c = Columns(NormalizeFactHeader(Header))
+
+    If IsError(Rows(r, c)) Then Exit Function
+    If IsNumeric(Rows(r, c)) Then StagedAmount = CDbl(Rows(r, c))
+
+End Function
+
+'====================================================================
 ' What moved, read against an earlier snapshot
 '====================================================================
 
@@ -2755,7 +3197,7 @@ Private Sub WriteHistorySection( _
     End If
 
     WriteFact "Snapshots read", SnapshotsRead, "int", "", _
-        "Accounts only; the positions are read for the dates above alone"
+        "Accounts only, from the start date on; the positions are read for the dates above alone"
 
     '
     ' The loans on the book today, by how long they have been there

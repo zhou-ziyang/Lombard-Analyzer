@@ -461,7 +461,7 @@ Private Function WeeklySourceLines( _
 End Function
 
 '
-' The next two are Public for WeeklyFacts, which reads the same files and
+' The next two are Public for PortfolioFacts, which reads the same files and
 ' must parse them the same way.
 '
 Public Function CleanWeeklyCsvField( _
@@ -1563,7 +1563,7 @@ End Sub
 ' this one list, so a category is added or renamed in a single place.
 '
 '
-' Public for WeeklyFacts, which sums by the same categories.
+' Public for PortfolioFacts, which sums by the same categories.
 '
 Public Function CollateralCategories() As Variant
 
