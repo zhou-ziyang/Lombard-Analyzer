@@ -1323,6 +1323,13 @@ Private Function CategoryLabel( _
 
 End Function
 
+Private Function Capital( _
+    ByVal Text As String) As String
+
+    Capital = UCase$(Left$(Text, 1)) & Mid$(Text, 2)
+
+End Function
+
 Private Function DateText( _
     ByVal Value As Date) As String
 
@@ -2223,8 +2230,8 @@ End Function
 Private Sub WriteExposureSection( _
     ByRef Snap As FactSnapshot)
 
-    Dim Rows As Variant
-    Dim Columns As Object
+    Dim StageRows As Variant
+    Dim StageColumns As Object
 
     Dim ByName As Object
     Dim NameHolders As Object
@@ -2261,7 +2268,7 @@ Private Sub WriteExposureSection( _
 
     StartSection "Exposure, looked through", "as of " & DateText(Snap.AsOfDate)
 
-    If Not LoadStagedExposure(Snap.AsOfDate, Rows, Columns) Then
+    If Not LoadStagedExposure(Snap.AsOfDate, StageRows, StageColumns) Then
         WriteNoFact _
             "No Risk Exposure sheet for " & DateText(Snap.AsOfDate) & _
             ": run the Weekly Analysis for that date first. The exposure is not " & _
@@ -2285,11 +2292,11 @@ Private Sub WriteExposureSection( _
     Set BySource = NewTextDictionary()
     Set DpmClients = NewTextDictionary()
 
-    For r = LBound(Rows, 1) To UBound(Rows, 1)
+    For r = LBound(StageRows, 1) To UBound(StageRows, 1)
 
-        NDG = StagedText(Rows, r, Columns, "NDG")
-        Value = StagedAmount(Rows, r, Columns, "Allocated Collateral Value")
-        ExposureType = StagedText(Rows, r, Columns, "Exposure Type")
+        NDG = StagedText(StageRows, r, StageColumns, "NDG")
+        Value = StagedAmount(StageRows, r, StageColumns, "Allocated Collateral Value")
+        ExposureType = StagedText(StageRows, r, StageColumns, "Exposure Type")
 
         If NDG <> "" And Abs(Value) >= FACT_TOLERANCE Then
 
@@ -2303,11 +2310,11 @@ Private Sub WriteExposureSection( _
 
             Else
 
-                Name = StagedText(Rows, r, Columns, "Exposure Name")
+                Name = StagedText(StageRows, r, StageColumns, "Exposure Name")
                 If Name = "" Then Name = OTHER_RISK_DIMENSION
-                Geography = StagedText(Rows, r, Columns, "Geography")
+                Geography = StagedText(StageRows, r, StageColumns, "Geography")
                 If Geography = "" Then Geography = OTHER_RISK_DIMENSION
-                Sector = StagedText(Rows, r, Columns, "Sector")
+                Sector = StagedText(StageRows, r, StageColumns, "Sector")
                 If Sector = "" Then Sector = OTHER_RISK_DIMENSION
 
                 AddAmount ByName, Name, Value
@@ -2327,8 +2334,8 @@ Private Sub WriteExposureSection( _
 
                     IndirectValue = IndirectValue + Value
                     AddAmount IndirectByName, Name, Value
-                    Product = StagedText(Rows, r, Columns, "Product ISIN")
-                    If Product = "" Then Product = StagedText(Rows, r, Columns, "Security Name")
+                    Product = StagedText(StageRows, r, StageColumns, "Product ISIN")
+                    If Product = "" Then Product = StagedText(StageRows, r, StageColumns, "Security Name")
                     MarkInner CertificateUnderlyings, Product, Name
                     MarkInner UnderlyingCertificates, Name, Product
 
@@ -2336,14 +2343,14 @@ Private Sub WriteExposureSection( _
 
             End If
 
-            Scope = StagedText(Rows, r, Columns, "Account Scope")
+            Scope = StagedText(StageRows, r, StageColumns, "Account Scope")
 
             If StrComp(Scope, "DPM", vbTextCompare) = 0 Then
                 DpmValue = DpmValue + Value
                 DpmClients(NDG) = True
             End If
 
-            AddAmount BySource, StagedText(Rows, r, Columns, "Resolution Source"), Value
+            AddAmount BySource, StagedText(StageRows, r, StageColumns, "Resolution Source"), Value
 
         End If
 
@@ -2355,7 +2362,7 @@ Private Sub WriteExposureSection( _
     End If
 
     WriteFact "Collateral allocated to exposures", Total, "eur", "", _
-        Plural(UBound(Rows, 1) - LBound(Rows, 1) + 1, "staged row", "staged rows") & _
+        Plural(UBound(StageRows, 1) - LBound(StageRows, 1) + 1, "staged row", "staged rows") & _
         " over " & Plural(NdgTotal.Count, "client", "clients")
 
     '
@@ -2366,7 +2373,7 @@ Private Sub WriteExposureSection( _
         PctText(SafeShare(DictAmount(ByName, OTHER_RISK_DIMENSION), Total)) & _
         " of the allocated collateral has no name (" & OTHER_RISK_DIMENSION & ")"
 
-    WriteDimensionFacts "name", ByName, NameHolders, NdgName, NdgTotal, Total
+    WriteDimensionFacts "name", "names", ByName, NameHolders, NdgName, NdgTotal, Total
 
     If IndirectValue > 0 Then
 
@@ -2410,12 +2417,12 @@ Private Sub WriteExposureSection( _
     WriteFact "Countries", ByGeography.Count, "int", "", _
         PctText(SafeShare(DictAmount(ByGeography, OTHER_RISK_DIMENSION), Total)) & _
         " of the allocated collateral has no country"
-    WriteDimensionFacts "country", ByGeography, GeographyHolders, NdgGeography, NdgTotal, Total
+    WriteDimensionFacts "country", "countries", ByGeography, GeographyHolders, NdgGeography, NdgTotal, Total
 
     WriteFact "Sectors", BySector.Count, "int", "", _
         PctText(SafeShare(DictAmount(BySector, OTHER_RISK_DIMENSION), Total)) & _
         " of the allocated collateral has no sector"
-    WriteDimensionFacts "sector", BySector, SectorHolders, NdgSector, NdgTotal, Total
+    WriteDimensionFacts "sector", "sectors", BySector, SectorHolders, NdgSector, NdgTotal, Total
 
     '
     ' Scope and sources
@@ -2441,6 +2448,7 @@ End Sub
 '
 Private Sub WriteDimensionFacts( _
     ByVal Dimension As String, _
+    ByVal DimensionPlural As String, _
     ByVal ByMember As Object, _
     ByVal Holders As Object, _
     ByVal NdgMember As Object, _
@@ -2502,16 +2510,16 @@ Private Sub WriteDimensionFacts( _
     End If
 
     If MostMembersNdg <> "" Then
-        WriteFact "Client spread over the most " & Dimension & "s", MostMembers, "int", _
-            NdgText(MostMembersNdg), "distinct " & Dimension & "s in its collateral"
+        WriteFact "Client spread over the most " & DimensionPlural, MostMembers, "int", _
+            NdgText(MostMembersNdg), "distinct " & DimensionPlural & " in its collateral"
     End If
 
     For Each Key In Holders.Keys
         If Holders(Key).Count = 1 And CStr(Key) <> OTHER_RISK_DIMENSION Then Lonely = Lonely + 1
     Next Key
 
-    WriteFact Dimension & "s held by one client only", Lonely, "int", "", _
-        "of " & Plural(ByMember.Count, Dimension, Dimension & "s")
+    WriteFact Capital(DimensionPlural) & " held by one client only", Lonely, "int", "", _
+        "of " & Plural(ByMember.Count, Dimension, DimensionPlural)
 
 End Sub
 
@@ -2540,8 +2548,8 @@ End Function
 '
 Private Function LoadStagedExposure( _
     ByVal SnapshotDate As Date, _
-    ByRef Rows As Variant, _
-    ByRef Columns As Object) As Boolean
+    ByRef StageRows As Variant, _
+    ByRef StageColumns As Object) As Boolean
 
     Dim ws As Worksheet
     Dim Table As ListObject
@@ -2559,12 +2567,12 @@ Private Function LoadStagedExposure( _
     If Table.DataBodyRange Is Nothing Then Exit Function
 
     Headers = Table.HeaderRowRange.Value
-    Rows = Table.DataBodyRange.Value
+    StageRows = Table.DataBodyRange.Value
 
-    Set Columns = NewTextDictionary()
+    Set StageColumns = NewTextDictionary()
 
     For c = LBound(Headers, 2) To UBound(Headers, 2)
-        Columns(NormalizeFactHeader(CStr(Headers(1, c)))) = c
+        StageColumns(NormalizeFactHeader(CStr(Headers(1, c)))) = c
     Next c
 
     LoadStagedExposure = True
@@ -2572,37 +2580,37 @@ Private Function LoadStagedExposure( _
 End Function
 
 Private Function StagedText( _
-    ByRef Rows As Variant, _
+    ByRef StageRows As Variant, _
     ByVal r As Long, _
-    ByVal Columns As Object, _
+    ByVal StageColumns As Object, _
     ByVal Header As String) As String
 
     Dim c As Variant
 
-    If Not Columns.Exists(NormalizeFactHeader(Header)) Then Exit Function
+    If Not StageColumns.Exists(NormalizeFactHeader(Header)) Then Exit Function
 
-    c = Columns(NormalizeFactHeader(Header))
+    c = StageColumns(NormalizeFactHeader(Header))
 
-    If IsError(Rows(r, c)) Then Exit Function
+    If IsError(StageRows(r, c)) Then Exit Function
 
-    StagedText = Trim$(CStr(Rows(r, c)))
+    StagedText = Trim$(CStr(StageRows(r, c)))
 
 End Function
 
 Private Function StagedAmount( _
-    ByRef Rows As Variant, _
+    ByRef StageRows As Variant, _
     ByVal r As Long, _
-    ByVal Columns As Object, _
+    ByVal StageColumns As Object, _
     ByVal Header As String) As Double
 
     Dim c As Variant
 
-    If Not Columns.Exists(NormalizeFactHeader(Header)) Then Exit Function
+    If Not StageColumns.Exists(NormalizeFactHeader(Header)) Then Exit Function
 
-    c = Columns(NormalizeFactHeader(Header))
+    c = StageColumns(NormalizeFactHeader(Header))
 
-    If IsError(Rows(r, c)) Then Exit Function
-    If IsNumeric(Rows(r, c)) Then StagedAmount = CDbl(Rows(r, c))
+    If IsError(StageRows(r, c)) Then Exit Function
+    If IsNumeric(StageRows(r, c)) Then StagedAmount = CDbl(StageRows(r, c))
 
 End Function
 
