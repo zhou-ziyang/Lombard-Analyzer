@@ -311,7 +311,7 @@ Private Function BuildRiskSubtableVisibility() As Object
     Visibility.Add "Issuer|Sovereign Bonds", True
     Visibility.Add "Issuer|Funds", True
     Visibility.Add "Issuer|Certificates", True
-    ' Visibility.Add "Issuer|Overall", True
+    Visibility.Add "Issuer|Overall", True
 
     Visibility.Add "Country|Equity", True
     Visibility.Add "Country|Corporate Bonds", True

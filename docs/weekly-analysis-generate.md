@@ -286,7 +286,7 @@ staging 表现在每个日期一张，表名带日期（*Risk Exposure 20260907*
 
 | 维度 | Equity | Corp Bonds | Sov Bonds | Funds | Certificates | Overall |
 | --- | --- | --- | --- | --- | --- | --- |
-| Issuer | 开 | 开 | 开 | 开 | 开 | 关 |
+| Issuer | 开 | 开 | 开 | 开 | 开 | 开 |
 | Country | 开 | 开 | 关 | 关 | 开 | 关 |
 | Sector | 开 | 开 | 关 | 关 | 开 | 关 |
 
