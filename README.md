@@ -303,11 +303,16 @@ The module reads the CSVs itself through the weekly module's field cleaner
 and number parser, keeps one row per NDG, and sums positions once per
 snapshot into dictionaries the sections share. The sheet carries a *Slides*
 button: `ExportPortfolioFactsSlides` reads it back through the row markers it
-keeps in a hidden column and writes one self-contained HTML deck — a title
-slide, then every section eight facts to a slide as cards, arrow keys or a
-click to turn the pages, printable to a landscape PDF — where a Save As
-dialog puts it, opening on the workbook's folder, or on the source folder
-when the workbook lives on SharePoint, and opens it in the browser.
+keeps in a hidden column and writes one self-contained HTML deck where a Save
+As dialog puts it — opening on the workbook's folder, or on the source folder
+when the workbook lives on SharePoint — then opens it in the browser. The
+deck tells the sheet as a story: a cover with the headline figures, then one
+slide per theme — the book, how it is spread, the clients at its edges, what
+the collateral is made of, where the exposure sits, each window of movement,
+the whole run — each with a one-line takeaway composed from the facts it
+leads with, found by name, tiles for the figures that lead and columns of
+rows for the rest; the type scales to the window, arrow keys or a click turn
+the pages, and it prints one slide per landscape page.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

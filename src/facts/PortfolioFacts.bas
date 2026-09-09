@@ -23,7 +23,8 @@ Option Explicit
 ' for the end date alone and never for the history.
 '
 ' The sheet carries a Slides button: ExportPortfolioFactsSlides turns it
-' into one HTML file of slides next to the workbook and opens it.
+' into one HTML file of slides - a story told slide by slide from the
+' facts, found by name - saved where a dialog puts it and opened.
 '
 ' Reads the snapshots itself, through the weekly module's field cleaner
 ' and number parser, so its figures agree with the report's.
@@ -57,8 +58,14 @@ Private Const FIRST_COL As Long = 2
 ' facts to a slide.
 '
 Private Const MARKER_COL As Long = FIRST_COL + 6
-Private Const FACTS_PER_SLIDE As Long = 8
 Private Const SLIDES_BUTTON As String = "btnFactsSlides"
+
+'
+' Where a section read back from the sheet keeps what is not a fact: the
+' line under its title and its notes.  No fact is labelled with a star.
+'
+Private Const SECTION_BASIS_KEY As String = "*basis"
+Private Const SECTION_NOTES_KEY As String = "*notes"
 
 '
 ' One Accounts row.  The two flags come in as numbers, one for set.
@@ -3566,12 +3573,15 @@ End Function
 '====================================================================
 
 '
-' The facts sheet as a deck of HTML slides: one file next to the workbook
-' - a title slide, then every section eight facts to a slide - opened in
-' the browser once written.  Public and argument-free for the Slides
-' button the sheet carries, and for a Home button if one is wanted.
-' Nothing is recomputed: the deck says what the sheet says, read row by
-' row through the markers in the hidden column.
+' The facts sheet as a deck of HTML slides, one file saved where a dialog
+' puts it and opened in the browser: a cover with the headline figures,
+' then one slide per theme - the book, how it is spread, the clients at
+' its edges, what the collateral is, where the exposure sits, each window
+' of movement, the whole run - each with a one-line takeaway, tiles for
+' the figures that lead and columns of rows for the rest.  Public and
+' argument-free for the Slides button the sheet carries, and for a Home
+' button if one is wanted.  Nothing is recomputed: the deck says what the
+' sheet says, read back through the markers in the hidden column.
 '
 Public Sub ExportPortfolioFactsSlides()
 
@@ -3673,28 +3683,26 @@ Private Function SlidesDefaultFolder() As String
 End Function
 
 '
-' The whole page: head and styles, the title slide, the sections' slides,
-' the page counter and the script that turns the pages.
+' The whole page: head and styles, then the slides in the order the story
+' runs - the cover with the headline figures, the book, how it is spread,
+' the clients at its edges, what the collateral is made of, where the
+' exposure sits once looked through, what moved over each window, the
+' whole run on file, the notes.  Each slide is composed from the facts it
+' needs, found by name in the section the sheet wrote them to, and a fact
+' the sheet does not have leaves its place empty rather than the slide out.
 '
 Private Function BuildSlidesHtml( _
     ByVal ws As Worksheet, _
     ByVal EndDate As Date) As String
 
     Dim Parts As Collection
-    Dim Cards As Collection
-    Dim Notes As Collection
-
-    Dim SectionTitle As String
-    Dim SectionBasis As String
-    Dim Marker As String
-    Dim LastRow As Long
-    Dim r As Long
+    Dim Facts As Object
+    Dim Order As Collection
+    Dim Title As Variant
 
     Set Parts = New Collection
-    Set Cards = New Collection
-    Set Notes = New Collection
-
-    LastRow = ws.Cells(ws.Rows.Count, FIRST_COL).End(xlUp).Row
+    Set Order = New Collection
+    Set Facts = ReadFactsSheet(ws, Order)
 
     Parts.Add _
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>" & _
@@ -3702,39 +3710,21 @@ Private Function BuildSlidesHtml( _
         "<title>" & HtmlEscape("Portfolio Facts " & DateText(EndDate)) & "</title>" & _
         "<style>" & SlidesCss() & "</style></head><body>"
 
-    Parts.Add _
-        "<section class='slide title'>" & _
-        "<div class='eyebrow'>Lombard Loans</div>" & _
-        "<h1>Portfolio Facts</h1>" & _
-        "<p class='sub'>" & HtmlEscape(CStr(ws.Cells(3, FIRST_COL).Value)) & "</p>" & _
-        "<p class='meta'>" & HtmlEscape("Generated " & Format(Now, "dd/mm/yyyy hh:nn")) & "</p>" & _
-        "</section>"
+    Parts.Add CoverSlide(ws, Facts, EndDate)
+    Parts.Add BookSlide(Facts, EndDate)
+    Parts.Add SpreadSlide(Facts, EndDate)
+    Parts.Add EdgesSlide(Facts, EndDate)
+    Parts.Add PositionsSlide(Facts, EndDate)
+    Parts.Add ExposureSlide(Facts, EndDate)
 
-    For r = 6 To LastRow
+    For Each Title In Order
+        If Left$(CStr(Title), 6) = "Since " Then
+            Parts.Add MovementSlide(Facts, CStr(Title), EndDate)
+        End If
+    Next Title
 
-        Marker = CStr(ws.Cells(r, MARKER_COL).Value)
-
-        Select Case Marker
-
-            Case "section"
-
-                AddSectionSlides Parts, SectionTitle, SectionBasis, Cards, Notes, EndDate
-                SectionTitle = CStr(ws.Cells(r, FIRST_COL).Value)
-                SectionBasis = CStr(ws.Cells(r, FIRST_COL + 2).Value)
-
-            Case "fact"
-
-                Cards.Add FactCardHtml(ws, r)
-
-            Case "note"
-
-                Notes.Add HtmlEscape(CStr(ws.Cells(r, FIRST_COL).Value))
-
-        End Select
-
-    Next r
-
-    AddSectionSlides Parts, SectionTitle, SectionBasis, Cards, Notes, EndDate
+    Parts.Add HistorySlide(Facts, EndDate)
+    Parts.Add NotesSlide(Facts, EndDate)
 
     Parts.Add _
         "<div id='pg' class='pager'></div>" & _
@@ -3745,108 +3735,761 @@ Private Function BuildSlidesHtml( _
 End Function
 
 '
-' One section's slides: its cards in groups, the group number in the
-' title when there is more than one, its notes under the last group - or
-' alone, for a section with no facts.  The collections are emptied for
-' the next section.
+' The sheet read back through its markers: a dictionary of sections by
+' title, each a dictionary of its facts by label - the value as shown,
+' who, the detail, the raw value - with its basis line and its notes under
+' the two starred keys; the titles in the order they were written.
 '
-Private Sub AddSectionSlides( _
-    ByVal Parts As Collection, _
-    ByVal SectionTitle As String, _
-    ByVal SectionBasis As String, _
-    ByRef Cards As Collection, _
-    ByRef Notes As Collection, _
-    ByVal EndDate As Date)
-
-    Dim SlideCount As Long
-    Dim Slide As Long
-    Dim First As Long
-    Dim Last As Long
-    Dim i As Long
-    Dim Body As String
-    Dim Heading As String
-
-    If SectionTitle = "" Then Exit Sub
-
-    SlideCount = (Cards.Count + FACTS_PER_SLIDE - 1) \ FACTS_PER_SLIDE
-    If SlideCount < 1 Then SlideCount = 1
-
-    For Slide = 1 To SlideCount
-
-        Heading = HtmlEscape(SectionTitle)
-        If SlideCount > 1 Then Heading = Heading & " <span class='part'>" & Slide & " / " & SlideCount & "</span>"
-
-        Body = "<section class='slide'><h2>" & Heading & "</h2>" & _
-               "<div class='basis'>" & HtmlEscape(SectionBasis) & "</div>"
-
-        First = (Slide - 1) * FACTS_PER_SLIDE + 1
-        Last = Slide * FACTS_PER_SLIDE
-        If Last > Cards.Count Then Last = Cards.Count
-
-        If Last >= First Then
-            Body = Body & "<div class='cards'>"
-            For i = First To Last
-                Body = Body & Cards(i)
-            Next i
-            Body = Body & "</div>"
-        End If
-
-        If Slide = SlideCount Then
-            For i = 1 To Notes.Count
-                Body = Body & "<p class='note'>" & Notes(i) & "</p>"
-            Next i
-        End If
-
-        Body = Body & _
-            "<div class='foot'>Portfolio Facts &middot; As of " & _
-            HtmlEscape(DateText(EndDate)) & "</div></section>"
-
-        Parts.Add Body
-
-    Next Slide
-
-    Set Cards = New Collection
-    Set Notes = New Collection
-
-End Sub
-
-'
-' One fact as a card: its label, the value as the sheet shows it, who or
-' what it is about, the detail.  A negative number reads in red.
-'
-Private Function FactCardHtml( _
+Private Function ReadFactsSheet( _
     ByVal ws As Worksheet, _
-    ByVal r As Long) As String
+    ByVal Order As Collection) As Object
 
-    Dim ValueCell As Range
-    Dim ValueClass As String
+    Dim Facts As Object
+    Dim Sect As Object
+    Dim Notes As Collection
+    Dim Marker As String
+    Dim Label As String
+    Dim LastRow As Long
+    Dim r As Long
+
+    Set Facts = NewTextDictionary()
+    LastRow = ws.Cells(ws.Rows.Count, FIRST_COL).End(xlUp).Row
+
+    For r = 6 To LastRow
+
+        Marker = CStr(ws.Cells(r, MARKER_COL).Value)
+
+        Select Case Marker
+
+            Case "section"
+
+                Set Sect = NewTextDictionary()
+                Set Notes = New Collection
+                Sect.Add SECTION_BASIS_KEY, CStr(ws.Cells(r, FIRST_COL + 2).Value)
+                Sect.Add SECTION_NOTES_KEY, Notes
+
+                Label = CStr(ws.Cells(r, FIRST_COL).Value)
+
+                If Not Facts.Exists(Label) Then
+                    Facts.Add Label, Sect
+                    Order.Add Label
+                End If
+
+            Case "fact"
+
+                If Not Sect Is Nothing Then
+
+                    Label = CStr(ws.Cells(r, FIRST_COL).Value)
+
+                    If Not Sect.Exists(Label) Then
+                        Sect.Add Label, Array( _
+                            CellDisplayText(ws.Cells(r, FIRST_COL + 1)), _
+                            CStr(ws.Cells(r, FIRST_COL + 2).Value), _
+                            CStr(ws.Cells(r, FIRST_COL + 3).Value), _
+                            ws.Cells(r, FIRST_COL + 1).Value)
+                    End If
+
+                End If
+
+            Case "note"
+
+                If Not Notes Is Nothing Then Notes.Add CStr(ws.Cells(r, FIRST_COL).Value)
+
+        End Select
+
+    Next r
+
+    Set ReadFactsSheet = Facts
+
+End Function
+
+'====================================================================
+' Reading facts back by name
+'====================================================================
+
+Private Function HasFact( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String) As Boolean
+
+    Dim Sect As Object
+
+    If Not Facts.Exists(SectionTitle) Then Exit Function
+
+    Set Sect = Facts(SectionTitle)
+
+    HasFact = Sect.Exists(Label)
+
+End Function
+
+'
+' One of a fact's four parts: 0 the value as shown, 1 who, 2 the detail,
+' 3 the raw value.  Empty text for a fact the sheet does not have.
+'
+Private Function FactPart( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String, _
+    ByVal Part As Long) As Variant
+
+    Dim Sect As Object
+    Dim Rec As Variant
+
+    FactPart = ""
+
+    If Not HasFact(Facts, SectionTitle, Label) Then Exit Function
+
+    Set Sect = Facts(SectionTitle)
+    Rec = Sect(Label)
+
+    FactPart = Rec(Part)
+
+End Function
+
+Private Function FV( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String) As String
+
+    FV = CStr(FactPart(Facts, SectionTitle, Label, 0))
+
+End Function
+
+Private Function FW( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String) As String
+
+    FW = CStr(FactPart(Facts, SectionTitle, Label, 1))
+
+End Function
+
+Private Function SectionBasis( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String) As String
+
+    Dim Sect As Object
+
+    If Not Facts.Exists(SectionTitle) Then Exit Function
+
+    Set Sect = Facts(SectionTitle)
+
+    If Sect.Exists(SECTION_BASIS_KEY) Then SectionBasis = CStr(Sect(SECTION_BASIS_KEY))
+
+End Function
+
+Private Function SectionNotes( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String) As Collection
+
+    Dim Sect As Object
+
+    Set SectionNotes = New Collection
+
+    If Not Facts.Exists(SectionTitle) Then Exit Function
+
+    Set Sect = Facts(SectionTitle)
+
+    If Sect.Exists(SECTION_NOTES_KEY) Then Set SectionNotes = Sect(SECTION_NOTES_KEY)
+
+End Function
+
+'
+' Whether a section holds any fact at all, or only its notes.
+'
+Private Function SectionHasFacts( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String) As Boolean
+
+    Dim Sect As Object
+
+    If Not Facts.Exists(SectionTitle) Then Exit Function
+
+    Set Sect = Facts(SectionTitle)
+
+    SectionHasFacts = (Sect.Count > 2)
+
+End Function
+
+'====================================================================
+' The pieces a slide is made of
+'====================================================================
+
+'
+' A number in a sentence: bold, in the report's red.
+'
+Private Function Em( _
+    ByVal Text As String) As String
+
+    Em = "<b>" & HtmlEscape(Text) & "</b>"
+
+End Function
+
+'
+' The class a value's sign earns: red below zero; green above it too when
+' the sign is the point, as it is for a change.
+'
+Private Function SignClass( _
+    ByVal RawValue As Variant, _
+    ByVal Signed As Boolean) As String
+
+    If IsDate(RawValue) Then Exit Function
+    If Not IsNumeric(RawValue) Then Exit Function
+
+    If CDbl(RawValue) < 0 Then
+        SignClass = " neg"
+    ElseIf Signed And CDbl(RawValue) > 0 Then
+        SignClass = " pos"
+    End If
+
+End Function
+
+'
+' A tile: the label small over the value large, and under it who or the
+' detail or both, as asked.  Nothing for a fact the sheet does not have.
+'
+Private Function FactTile( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String, _
+    Optional ByVal SubKind As String = "detail", _
+    Optional ByVal Signed As Boolean = False, _
+    Optional ByVal ShownLabel As String = "") As String
+
+    Dim SubText As String
+
+    If Not HasFact(Facts, SectionTitle, Label) Then Exit Function
+
+    Select Case SubKind
+        Case "who"
+            SubText = FW(Facts, SectionTitle, Label)
+        Case "detail"
+            SubText = CStr(FactPart(Facts, SectionTitle, Label, 2))
+        Case "both"
+            SubText = FW(Facts, SectionTitle, Label)
+            If SubText <> "" And CStr(FactPart(Facts, SectionTitle, Label, 2)) <> "" Then
+                SubText = SubText & " - "
+            End If
+            SubText = SubText & CStr(FactPart(Facts, SectionTitle, Label, 2))
+        Case Else
+            SubText = ""
+    End Select
+
+    If ShownLabel = "" Then ShownLabel = Label
+
+    FactTile = _
+        "<div class='tile'><div class='k'>" & HtmlEscape(ShownLabel) & "</div>" & _
+        "<div class='v" & SignClass(FactPart(Facts, SectionTitle, Label, 3), Signed) & "'>" & _
+        HtmlEscape(FV(Facts, SectionTitle, Label)) & "</div>"
+
+    If SubText <> "" Then
+        FactTile = FactTile & "<div class='s'>" & HtmlEscape(SubText) & "</div>"
+    End If
+
+    FactTile = FactTile & "</div>"
+
+End Function
+
+'
+' A row in a list: the label small, the value bold with who beside it,
+' the detail under.  Nothing for a fact the sheet does not have.
+'
+Private Function FactRow( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String, _
+    Optional ByVal ShownLabel As String = "", _
+    Optional ByVal Signed As Boolean = False) As String
+
     Dim Who As String
     Dim Detail As String
 
-    Set ValueCell = ws.Cells(r, FIRST_COL + 1)
+    If Not HasFact(Facts, SectionTitle, Label) Then Exit Function
 
-    ValueClass = "value"
-    If IsNumeric(ValueCell.Value) And Not IsDate(ValueCell.Value) Then
-        If ValueCell.Value < 0 Then ValueClass = "value neg"
+    If ShownLabel = "" Then ShownLabel = Label
+    Who = FW(Facts, SectionTitle, Label)
+    Detail = CStr(FactPart(Facts, SectionTitle, Label, 2))
+
+    FactRow = _
+        "<div class='row'><div class='rl'>" & HtmlEscape(ShownLabel) & "</div>" & _
+        "<div class='rv'><span class='n" & SignClass(FactPart(Facts, SectionTitle, Label, 3), Signed) & "'>" & _
+        HtmlEscape(FV(Facts, SectionTitle, Label)) & "</span>"
+
+    If Who <> "" Then FactRow = FactRow & " <span class='who'>" & HtmlEscape(Who) & "</span>"
+
+    FactRow = FactRow & "</div>"
+
+    If Detail <> "" Then FactRow = FactRow & "<div class='rd'>" & HtmlEscape(Detail) & "</div>"
+
+    FactRow = FactRow & "</div>"
+
+End Function
+
+'
+' Rows for a list of labels, in that order, the missing ones skipped.
+'
+Private Function FactRows( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Labels As Variant, _
+    Optional ByVal Signed As Boolean = False) As String
+
+    Dim i As Long
+
+    For i = LBound(Labels) To UBound(Labels)
+        FactRows = FactRows & FactRow(Facts, SectionTitle, CStr(Labels(i)), "", Signed)
+    Next i
+
+End Function
+
+'
+' A column of rows under a small heading, with a figure beside the
+' heading when there is one.  Nothing when there are no rows.
+'
+Private Function FactColumn( _
+    ByVal Heading As String, _
+    ByVal RowsHtml As String, _
+    Optional ByVal Figure As String = "", _
+    Optional ByVal Tight As Boolean = False) As String
+
+    If RowsHtml = "" Then Exit Function
+
+    FactColumn = "<div class='col" & IIf(Tight, " tight", "") & "'>"
+
+    If Heading <> "" Then
+        FactColumn = FactColumn & "<h3>" & HtmlEscape(Heading)
+        If Figure <> "" Then FactColumn = FactColumn & "<span>" & HtmlEscape(Figure) & "</span>"
+        FactColumn = FactColumn & "</h3>"
     End If
 
-    Who = CStr(ws.Cells(r, FIRST_COL + 2).Value)
-    Detail = CStr(ws.Cells(r, FIRST_COL + 3).Value)
+    FactColumn = FactColumn & RowsHtml & "</div>"
 
-    FactCardHtml = _
-        "<div class='card'>" & _
-        "<div class='label'>" & HtmlEscape(CStr(ws.Cells(r, FIRST_COL).Value)) & "</div>" & _
-        "<div class='" & ValueClass & "'>" & HtmlEscape(CellDisplayText(ValueCell)) & "</div>"
+End Function
 
-    If Who <> "" Then
-        FactCardHtml = FactCardHtml & "<div class='who'>" & HtmlEscape(Who) & "</div>"
+Private Function SlideOpen( _
+    ByVal Title As String, _
+    ByVal Basis As String, _
+    ByVal Takeaway As String) As String
+
+    SlideOpen = "<section class='slide'><div class='hd'><h2>" & HtmlEscape(Title) & "</h2>"
+
+    If Basis <> "" Then SlideOpen = SlideOpen & "<div class='basis'>" & HtmlEscape(Basis) & "</div>"
+
+    SlideOpen = SlideOpen & "</div>"
+
+    If Takeaway <> "" Then SlideOpen = SlideOpen & "<p class='take'>" & Takeaway & "</p>"
+
+    SlideOpen = SlideOpen & "<div class='body'>"
+
+End Function
+
+Private Function SlideClose( _
+    ByVal EndDate As Date) As String
+
+    SlideClose = _
+        "</div><div class='foot'>Portfolio Facts &middot; As of " & _
+        HtmlEscape(DateText(EndDate)) & "</div></section>"
+
+End Function
+
+'
+' A section's notes as lines, for a slide whose section had nothing but
+' notes to say.
+'
+Private Function NoteLines( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String) As String
+
+    Dim Notes As Collection
+    Dim i As Long
+
+    Set Notes = SectionNotes(Facts, SectionTitle)
+
+    For i = 1 To Notes.Count
+        NoteLines = NoteLines & "<p class='note'>" & HtmlEscape(CStr(Notes(i))) & "</p>"
+    Next i
+
+End Function
+
+'====================================================================
+' The slides
+'====================================================================
+
+Private Function CoverSlide( _
+    ByVal ws As Worksheet, _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    Const S As String = "The book"
+
+    CoverSlide = _
+        "<section class='slide title'>" & _
+        "<div class='eyebrow'>Lombard Loans</div>" & _
+        "<h1>Portfolio Facts</h1>" & _
+        "<p class='sub'>" & HtmlEscape(CStr(ws.Cells(3, FIRST_COL).Value)) & "</p>" & _
+        "<div class='strip'>" & _
+        FactTile(Facts, S, "Active loans", "none") & _
+        FactTile(Facts, S, "Collateral", "none") & _
+        FactTile(Facts, S, "Drawn", "none") & _
+        FactTile(Facts, S, "Loan to value", "none") & _
+        "</div>" & _
+        "<p class='meta'>" & HtmlEscape("Generated " & Format(Now, "dd/mm/yyyy hh:nn")) & "</p>" & _
+        "</section>"
+
+End Function
+
+Private Function BookSlide( _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    Const S As String = "The book"
+
+    Dim Take As String
+
+    If Not SectionHasFacts(Facts, S) Then Exit Function
+
+    Take = _
+        Em(FV(Facts, S, "Active loans")) & " active loans hold " & _
+        Em(FV(Facts, S, "Collateral")) & " of collateral against " & _
+        Em(FV(Facts, S, "Drawn")) & " drawn on " & _
+        Em(FV(Facts, S, "Approved lines")) & " of approved lines: " & _
+        Em(FV(Facts, S, "Utilisation")) & " of the lines is used, and the loan to value is " & _
+        Em(FV(Facts, S, "Loan to value")) & "."
+
+    BookSlide = SlideOpen("The book", SectionBasis(Facts, S), Take) & _
+        "<div class='hero'>" & _
+        FactTile(Facts, S, "Active loans", "none") & _
+        FactTile(Facts, S, "Collateral", "detail") & _
+        FactTile(Facts, S, "Drawn", "none") & _
+        FactTile(Facts, S, "Approved lines", "none") & _
+        "</div>" & _
+        "<div class='mid'>" & _
+        FactTile(Facts, S, "Loan to value", "detail") & _
+        FactTile(Facts, S, "Utilisation", "detail") & _
+        FactTile(Facts, S, "Haircut collateral value", "detail") & _
+        FactTile(Facts, S, "Collateral as Accounts carry it (MTM)", "detail") & _
+        "</div>" & _
+        "<div class='cols'>" & _
+        FactColumn("What it is made of", FactRows(Facts, S, Array( _
+            "Securities held", "Issuers", "Currencies", "Clients with a single security"))) & _
+        FactColumn("Mandates and alerts", FactRows(Facts, S, Array( _
+            "Clients holding every category outside DPM", _
+            "Clients whose DPM mandate spans equity, bonds and funds", _
+            "Clients with both a DPM mandate and other collateral", _
+            "Clients in margin call", "Clients in shortfall"))) & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+End Function
+
+Private Function SpreadSlide( _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    Const S As String = "The book"
+    Const C As String = "Clients"
+
+    Dim Take As String
+
+    If Not SectionHasFacts(Facts, S) And Not SectionHasFacts(Facts, C) Then Exit Function
+
+    Take = "The ten largest clients hold " & Em(FV(Facts, S, "Top 10 clients' share")) & _
+        " of the collateral"
+
+    If HasFact(Facts, S, "Top 5 clients' share") Then
+        Take = Take & ", the five largest " & Em(FV(Facts, S, "Top 5 clients' share"))
     End If
 
-    If Detail <> "" Then
-        FactCardHtml = FactCardHtml & "<div class='detail'>" & HtmlEscape(Detail) & "</div>"
+    If HasFact(Facts, C, "Largest client by collateral") Then
+        Take = Take & "; the largest, " & Em(FW(Facts, C, "Largest client by collateral")) & _
+            ", holds " & Em(FV(Facts, C, "Largest client by collateral"))
     End If
 
-    FactCardHtml = FactCardHtml & "</div>"
+    If HasFact(Facts, S, "Median client") Then
+        Take = Take & " against a median client of " & Em(FV(Facts, S, "Median client"))
+    End If
+
+    Take = Take & "."
+
+    SpreadSlide = SlideOpen("How the book is spread", SectionBasis(Facts, S), Take) & _
+        "<div class='hero'>" & _
+        FactTile(Facts, S, "Top 5 clients' share", "detail") & _
+        FactTile(Facts, S, "Top 10 clients' share", "detail") & _
+        FactTile(Facts, S, "Concentration (Herfindahl index)", "detail") & _
+        FactTile(Facts, S, "Median client", "detail") & _
+        "</div>" & _
+        "<div class='cols three'>" & _
+        FactColumn("The largest", FactRows(Facts, C, Array( _
+            "Largest client by collateral", "Largest client by drawn amount", "Largest approved line"))) & _
+        FactColumn("The smallest", FactRows(Facts, C, Array( _
+            "Smallest client by collateral", "Smallest approved line"))) & _
+        FactColumn("The lines", FactRows(Facts, S, Array( _
+            "Untouched lines", "Lines drawn above 90%"))) & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+End Function
+
+Private Function EdgesSlide( _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    Const C As String = "Clients"
+
+    Dim Take As String
+
+    If Not SectionHasFacts(Facts, C) Then Exit Function
+
+    If HasFact(Facts, C, "Lowest loan to value") And HasFact(Facts, C, "Highest loan to value") Then
+        Take = "Loan to value runs from " & Em(FV(Facts, C, "Lowest loan to value")) & _
+            " to " & Em(FV(Facts, C, "Highest loan to value")) & " (" & _
+            HtmlEscape(FW(Facts, C, "Highest loan to value")) & ")"
+    End If
+
+    If HasFact(Facts, C, "Closest to a margin call") Then
+        If Take <> "" Then Take = Take & "; "
+        Take = Take & Em(FW(Facts, C, "Closest to a margin call")) & " has the least headroom before a margin call, " & _
+            Em(FV(Facts, C, "Closest to a margin call"))
+    End If
+
+    If HasFact(Facts, C, "Deepest margin call") Then
+        If Take <> "" Then Take = Take & "; "
+        Take = Take & "the deepest margin call is " & Em(FV(Facts, C, "Deepest margin call")) & _
+            " (" & HtmlEscape(FW(Facts, C, "Deepest margin call")) & ")"
+    End If
+
+    If Take <> "" Then Take = Take & "."
+
+    EdgesSlide = SlideOpen("The clients at the edges", SectionBasis(Facts, C), Take) & _
+        "<div class='cols'>" & _
+        FactColumn("Lending", FactRows(Facts, C, Array( _
+            "Highest loan to value", "Lowest loan to value", "Closest to a margin call", _
+            "Deepest margin call", "Most collateral above a concentration limit", _
+            "Most non-eligible collateral"))) & _
+        FactColumn("Holdings", FactRows(Facts, C, Array( _
+            "Largest cash holder", "Most positions", "Most currencies", "Most categories held", _
+            "Most concentrated client", "Most evenly spread client"))) & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+End Function
+
+Private Function PositionsSlide( _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    Const P As String = "Positions and securities"
+
+    Dim Take As String
+    Dim Category As Variant
+    Dim CategoryRows As String
+
+    If Not SectionHasFacts(Facts, P) Then Exit Function
+
+    If HasFact(Facts, P, "Largest position") Then
+        Take = "The largest single position is " & Em(FV(Facts, P, "Largest position")) & ", " & _
+            HtmlEscape(FW(Facts, P, "Largest position"))
+    End If
+
+    If HasFact(Facts, P, "Most widely held security") Then
+        If Take <> "" Then Take = Take & "; "
+        Take = Take & Em(FW(Facts, P, "Most widely held security")) & " sits in " & _
+            Em(FV(Facts, P, "Most widely held security")) & " clients' collateral"
+    End If
+
+    If Take <> "" Then Take = Take & "."
+
+    CategoryRows = FactRow(Facts, P, "Largest position", "Largest position, any category")
+
+    For Each Category In CollateralCategories()
+        CategoryRows = CategoryRows & _
+            FactRow(Facts, P, "Largest " & CStr(Category(1)) & " position", CStr(Category(1)))
+    Next Category
+
+    PositionsSlide = SlideOpen("What the collateral is made of", SectionBasis(Facts, P), Take) & _
+        "<div class='mid'>" & _
+        FactTile(Facts, P, "Cash", "detail") & _
+        FactTile(Facts, P, "Non-eligible collateral", "detail") & _
+        FactTile(Facts, P, "Collateral not priced in euro", "detail") & _
+        FactTile(Facts, P, "Collateral above concentration limits", "detail") & _
+        "</div>" & _
+        "<div class='cols'>" & _
+        FactColumn("The largest position in each category", CategoryRows, "", True) & _
+        FactColumn("Securities and issuers", FactRows(Facts, P, Array( _
+            "Most widely held security", "Largest security across the book", _
+            "Securities held by one client only", "Largest issuer", "Most common issuer", _
+            "Largest foreign currency", "Collateral of an unmapped asset type"))) & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+End Function
+
+Private Function ExposureSlide( _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    Const X As String = "Exposure, looked through"
+
+    Dim Take As String
+
+    If Not Facts.Exists(X) Then Exit Function
+
+    If Not SectionHasFacts(Facts, X) Then
+        ExposureSlide = SlideOpen("Where the exposure sits", SectionBasis(Facts, X), "") & _
+            NoteLines(Facts, X) & SlideClose(EndDate)
+        Exit Function
+    End If
+
+    If HasFact(Facts, X, "Largest name") Then
+        Take = "Looked through, the largest name is " & Em(FW(Facts, X, "Largest name")) & _
+            " at " & Em(FV(Facts, X, "Largest name"))
+    End If
+
+    If HasFact(Facts, X, "Countries") And HasFact(Facts, X, "Sectors") Then
+        If Take <> "" Then Take = Take & "; "
+        Take = Take & "the book reaches " & Em(FV(Facts, X, "Countries")) & " countries and " & _
+            Em(FV(Facts, X, "Sectors")) & " sectors"
+    End If
+
+    If HasFact(Facts, X, "Exposure reached through certificates") Then
+        If Take <> "" Then Take = Take & ", "
+        Take = Take & Em(FV(Facts, X, "Exposure reached through certificates")) & _
+            " of it through certificates"
+    End If
+
+    If Take <> "" Then Take = Take & "."
+
+    ExposureSlide = SlideOpen("Where the exposure sits", SectionBasis(Facts, X), Take) & _
+        "<div class='cols three'>" & _
+        FactColumn("Names", FactRows(Facts, X, Array( _
+            "Largest name", "Most widely held name", "Client most concentrated in one name", _
+            "Client spread over the most names", "Names held by one client only")), _
+            FV(Facts, X, "Exposure names"), True) & _
+        FactColumn("Countries", FactRows(Facts, X, Array( _
+            "Largest country", "Most widely held country", "Client most concentrated in one country", _
+            "Client spread over the most countries", "Countries held by one client only")), _
+            FV(Facts, X, "Countries"), True) & _
+        FactColumn("Sectors", FactRows(Facts, X, Array( _
+            "Largest sector", "Most widely held sector", "Client most concentrated in one sector", _
+            "Client spread over the most sectors", "Sectors held by one client only")), _
+            FV(Facts, X, "Sectors"), True) & _
+        "</div>" & _
+        "<div class='mid six'>" & _
+        FactTile(Facts, X, "Exposure reached through certificates", "detail", False, "Through certificates") & _
+        FactTile(Facts, X, "Largest exposure through certificates", "who", False, "Largest through certificates") & _
+        FactTile(Facts, X, "Certificate with the most underlyings", "who", False, "Most underlyings") & _
+        FactTile(Facts, X, "Underlying in the most certificates", "who", False, "In the most certificates") & _
+        FactTile(Facts, X, "Certificate underlyings that could not be named", "detail", False, "Underlyings not named") & _
+        FactTile(Facts, X, "Collateral in DPM accounts", "detail", False, "In DPM accounts") & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+End Function
+
+Private Function MovementSlide( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal EndDate As Date) As String
+
+    Dim Take As String
+
+    If Not SectionHasFacts(Facts, SectionTitle) Then
+        MovementSlide = SlideOpen(SectionTitle, SectionBasis(Facts, SectionTitle), "") & _
+            NoteLines(Facts, SectionTitle) & SlideClose(EndDate)
+        Exit Function
+    End If
+
+    Take = "Collateral " & Em(FV(Facts, SectionTitle, "Collateral")) & ", drawn " & _
+        Em(FV(Facts, SectionTitle, "Drawn")) & ", " & _
+        Em(FV(Facts, SectionTitle, "Active loans")) & " loans net: " & _
+        Em(FV(Facts, SectionTitle, "New loans")) & " new against " & _
+        Em(FV(Facts, SectionTitle, "Ended loans")) & " ended"
+
+    If HasFact(Facts, SectionTitle, "Biggest riser") Then
+        Take = Take & "; the biggest riser " & Em(FW(Facts, SectionTitle, "Biggest riser")) & _
+            " at " & Em(FV(Facts, SectionTitle, "Biggest riser"))
+    End If
+
+    If HasFact(Facts, SectionTitle, "Biggest faller") Then
+        Take = Take & ", the biggest faller " & Em(FW(Facts, SectionTitle, "Biggest faller")) & _
+            " at " & Em(FV(Facts, SectionTitle, "Biggest faller"))
+    End If
+
+    Take = Take & "."
+
+    MovementSlide = SlideOpen(SectionTitle, SectionBasis(Facts, SectionTitle), Take) & _
+        "<div class='hero five'>" & _
+        FactTile(Facts, SectionTitle, "Collateral", "detail", True) & _
+        FactTile(Facts, SectionTitle, "Drawn", "detail", True) & _
+        FactTile(Facts, SectionTitle, "Approved lines", "detail", True) & _
+        FactTile(Facts, SectionTitle, "Active loans", "detail", True) & _
+        FactTile(Facts, SectionTitle, "Positions", "detail", True) & _
+        "</div>" & _
+        "<div class='cols'>" & _
+        FactColumn("In", FactRows(Facts, SectionTitle, Array( _
+            "New loans", "Largest new loan", "Biggest riser", "Largest position increase", _
+            "Biggest line increase", "Biggest drawdown", "Category gaining most", _
+            "Securities new to the book", "Largest newcomer", "New margin calls"), True), "", True) & _
+        FactColumn("Out", FactRows(Facts, SectionTitle, Array( _
+            "Ended loans", "Largest ended loan", "Biggest faller", "Largest position decrease", _
+            "Biggest line cut", "Biggest repayment", "Category losing most", _
+            "Securities gone from the book", "Margin calls cleared", "Most active repositioner"), True), "", True) & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+End Function
+
+Private Function HistorySlide( _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    Const H As String = "The whole run on file"
+
+    Dim Take As String
+
+    If Not SectionHasFacts(Facts, H) Then Exit Function
+
+    Take = Em(FV(Facts, H, "Clients ever on the book")) & " clients have been on the book over the run; " & _
+        Em(FV(Facts, H, "Loans ended within the window")) & " loans ended and " & _
+        Em(FV(Facts, H, "Loans that came back")) & " came back"
+
+    If HasFact(Facts, H, "Record collateral (MTM in Accounts)") Then
+        Take = Take & ". The record collateral was " & _
+            Em(FV(Facts, H, "Record collateral (MTM in Accounts)")) & " on " & _
+            Em(FW(Facts, H, "Record collateral (MTM in Accounts)"))
+    End If
+
+    Take = Take & "."
+
+    HistorySlide = SlideOpen("The whole run on file", SectionBasis(Facts, H), Take) & _
+        "<div class='hero five'>" & _
+        FactTile(Facts, H, "Clients ever on the book", "detail") & _
+        FactTile(Facts, H, "Loans ended within the window", "none", False, "Loans ended") & _
+        FactTile(Facts, H, "Loans that came back", "none") & _
+        FactTile(Facts, H, "Clients ever in margin call", "detail") & _
+        FactTile(Facts, H, "Clients ever in shortfall", "none") & _
+        "</div>" & _
+        "<div class='cols'>" & _
+        FactColumn("Records", FactRows(Facts, H, Array( _
+            "Record collateral (MTM in Accounts)", "Lowest collateral (MTM in Accounts)", _
+            "Record drawn", "Lowest drawn", "Most loans at once", "Fewest loans at once", _
+            "Largest line ever approved")), "", True) & _
+        FactColumn("Lives and spells", FactRows(Facts, H, Array( _
+            "Oldest active loan", "Longest-lived ended loan", "Shortest-lived ended loan", _
+            "Most spells on the book", "Busiest snapshot for new loans", "Busiest snapshot for ended loans", _
+            "Most snapshots in margin call", "Longest margin call spell")), "", True) & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+End Function
+
+Private Function NotesSlide( _
+    ByVal Facts As Object, _
+    ByVal EndDate As Date) As String
+
+    If SectionNotes(Facts, "Notes").Count = 0 Then Exit Function
+
+    NotesSlide = SlideOpen("Notes", "", "") & NoteLines(Facts, "Notes") & SlideClose(EndDate)
 
 End Function
 
@@ -3919,38 +4562,64 @@ End Sub
 
 '
 ' The deck's look: white 16:9 slides on a warm grey ground, the report's
-' dark red for titles and the cards' edge, two columns of cards, a print
-' rule that lays one slide per landscape page.
+' dark red for the titles and the tiles' edge; the type scaled to the
+' window so a slide fills whatever it is shown on; a hero row of tiles,
+' a middle row, then columns of rows; a print rule that lays one slide
+' per landscape page.
 '
 Private Function SlidesCss() As String
 
     Dim Css As String
 
-    Css = "html,body{margin:0;height:100%;background:#efece7;color:#222;" & _
+    Css = "html{font-size:calc(.45vw + .45vh);}"
+    Css = Css & "html,body{margin:0;height:100%;background:#efece7;color:#222;" & _
           "font-family:Aptos Display,Aptos,Segoe UI,Calibri,sans-serif;}"
     Css = Css & ".slide{display:none;position:relative;box-sizing:border-box;width:100vw;height:100vh;" & _
-          "padding:44px 64px 56px;background:#fff;flex-direction:column;}"
+          "padding:4.5vh 4vw 5vh;background:#fff;flex-direction:column;overflow:hidden;}"
     Css = Css & ".slide.on{display:flex;}"
+    Css = Css & ".hd h2{font-size:3.1rem;margin:0;color:#943634;line-height:1.1;}"
+    Css = Css & ".basis{font-size:1.5rem;color:#666;margin-top:.3rem;}"
+    Css = Css & ".take{font-size:1.9rem;line-height:1.35;margin:1.4rem 0 1.6rem;color:#222;}"
+    Css = Css & ".take b{color:#943634;}"
+    Css = Css & ".body{flex:1;min-height:0;display:flex;flex-direction:column;gap:1.6rem;}"
+    Css = Css & ".hero,.mid,.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1.4rem;}"
+    Css = Css & ".hero.five,.mid.five{grid-template-columns:repeat(5,1fr);}"
+    Css = Css & ".mid.six{grid-template-columns:repeat(6,1fr);}"
+    Css = Css & ".tile{border-left:.35rem solid #943634;padding:.2rem 0 .2rem 1.2rem;min-width:0;}"
+    Css = Css & ".tile .k{font-size:1.3rem;color:#777;text-transform:uppercase;letter-spacing:.05em;" & _
+          "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
+    Css = Css & ".hero .tile .v{font-size:4.6rem;font-weight:700;line-height:1.1;}"
+    Css = Css & ".mid .tile .v,.strip .tile .v{font-size:2.9rem;font-weight:700;line-height:1.15;}"
+    Css = Css & ".mid.six .tile .v{font-size:2.2rem;}"
+    Css = Css & ".tile .s{font-size:1.3rem;color:#666;margin-top:.2rem;display:-webkit-box;" & _
+          "-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}"
+    Css = Css & ".v.neg,.n.neg{color:#b02a26;}.v.pos,.n.pos{color:#2e7d4f;}"
+    Css = Css & ".cols{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem 3.5rem;flex:1;min-height:0;}"
+    Css = Css & ".cols.three{grid-template-columns:1fr 1fr 1fr;}"
+    Css = Css & ".col{min-width:0;overflow:hidden;}"
+    Css = Css & ".col h3{font-size:1.4rem;color:#943634;text-transform:uppercase;letter-spacing:.08em;" & _
+          "margin:0 0 .6rem;border-bottom:1px solid #e0d9d2;padding-bottom:.3rem;}"
+    Css = Css & ".col h3 span{color:#222;text-transform:none;letter-spacing:0;font-size:1.9rem;margin-left:.8rem;}"
+    Css = Css & ".row{padding:.45rem 0;border-bottom:1px solid #f0ece7;}"
+    Css = Css & ".rl{font-size:1.25rem;color:#777;text-transform:uppercase;letter-spacing:.05em;}"
+    Css = Css & ".rv{font-size:2.1rem;line-height:1.2;}"
+    Css = Css & ".rv .n{font-weight:700;}"
+    Css = Css & ".rv .who{font-size:1.5rem;color:#333;}"
+    Css = Css & ".rd{font-size:1.25rem;color:#666;margin-top:.1rem;display:-webkit-box;" & _
+          "-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}"
+    Css = Css & ".tight .row{padding:.3rem 0;}.tight .rv{font-size:1.85rem;}.tight .rd{-webkit-line-clamp:1;}"
+    Css = Css & ".note{font-size:1.8rem;color:#444;margin:.6rem 0;}"
     Css = Css & ".slide.title{justify-content:center;background:#943634;color:#fff;}"
-    Css = Css & ".title h1{font-size:64px;margin:0 0 12px;font-weight:700;}"
-    Css = Css & ".title .eyebrow{font-size:18px;letter-spacing:.2em;text-transform:uppercase;opacity:.8;}"
-    Css = Css & ".title .sub{font-size:22px;margin:0 0 8px;opacity:.95;}"
-    Css = Css & ".title .meta{font-size:14px;opacity:.7;}"
-    Css = Css & "h2{font-size:30px;margin:0;color:#943634;}"
-    Css = Css & ".part{font-size:16px;color:#999;font-weight:400;margin-left:10px;}"
-    Css = Css & ".basis{font-size:15px;color:#666;margin:4px 0 22px;}"
-    Css = Css & ".cards{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;" & _
-          "gap:14px 40px;flex:1;min-height:0;}"
-    Css = Css & ".card{border-left:3px solid #943634;padding:2px 0 2px 16px;min-width:0;overflow:hidden;}"
-    Css = Css & ".label{font-size:12.5px;color:#777;text-transform:uppercase;letter-spacing:.05em;}"
-    Css = Css & ".value{font-size:30px;font-weight:700;line-height:1.15;margin:2px 0;}"
-    Css = Css & ".value.neg{color:#b02a26;}"
-    Css = Css & ".who{font-size:15px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
-    Css = Css & ".detail{font-size:12.5px;color:#666;margin-top:2px;display:-webkit-box;" & _
-          "-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}"
-    Css = Css & ".note{font-size:16px;color:#444;margin:6px 0;}"
-    Css = Css & ".pager{position:fixed;right:24px;bottom:16px;font-size:13px;color:#888;}"
-    Css = Css & ".foot{position:absolute;left:64px;bottom:20px;font-size:12px;color:#999;}"
+    Css = Css & ".title h1{font-size:7rem;margin:0 0 1rem;font-weight:700;}"
+    Css = Css & ".title .eyebrow{font-size:1.8rem;letter-spacing:.2em;text-transform:uppercase;opacity:.8;}"
+    Css = Css & ".title .sub{font-size:2.2rem;margin:0 0 3rem;opacity:.95;}"
+    Css = Css & ".title .strip{margin-bottom:3rem;}"
+    Css = Css & ".title .tile{border-left-color:rgba(255,255,255,.6);}"
+    Css = Css & ".title .tile .k{color:rgba(255,255,255,.75);}"
+    Css = Css & ".title .strip .tile .v{color:#fff;font-size:3.6rem;}"
+    Css = Css & ".title .meta{font-size:1.4rem;opacity:.7;}"
+    Css = Css & ".pager{position:fixed;right:2vw;bottom:1.8vh;font-size:1.4rem;color:#888;}"
+    Css = Css & ".foot{position:absolute;left:4vw;bottom:1.8vh;font-size:1.2rem;color:#999;}"
     Css = Css & "@media print{html,body{background:#fff;}" & _
           ".slide{display:flex!important;page-break-after:always;height:100vh;}" & _
           ".pager{display:none;}@page{size:landscape;margin:0;}}"
