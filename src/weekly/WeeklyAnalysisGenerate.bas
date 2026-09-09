@@ -293,7 +293,11 @@ Private Type ReportSnapshots
 
 End Type
 
-Private Function BuildRiskSubtableVisibility() As Object
+'
+' Public for PortfolioFacts, whose country and sector facts run over the
+' classes these tables show, so the two agree on what a country is.
+'
+Public Function BuildRiskSubtableVisibility() As Object
 
     Dim Visibility As Object
 

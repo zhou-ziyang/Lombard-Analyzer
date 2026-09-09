@@ -260,48 +260,54 @@ separate asset classifications.
 superlatives from its own button, for its own dates — `FactsEndDate`, and
 `FactsStartDate` for the first snapshot to read, blank for every one on file,
 as the dashboard's start date works; an end date with no snapshot is read as
-the last one on or before it — and goes into no email. Five sections read the
-end date's snapshots — the book (totals, utilisation, loan to value, cover,
-currencies, margin calls, the median client, the top-5 and top-10 shares and
-a Herfindahl index, untouched lines), the clients (largest and smallest by
-collateral, drawn and line; highest and lowest utilisation; thinnest and
-thickest cover; closest to a margin call and deepest in one; most positions,
-securities, currencies and categories; most concentrated and most evenly
+the last one on or before it — and goes into no email. Four sections read the
+end date's snapshots — the book (totals, utilisation, loan to value as the
+dashboard reads it — the approved lines over the MTM collateral Accounts
+carry — the haircut collateral value with its weighted Max LTV and its
+headroom over the lines, currencies, margin calls, the median client, the
+top-5 and top-10 shares and a Herfindahl index, untouched lines, and the
+clients holding every category outside DPM, whose DPM mandate spans equity,
+bonds and funds, or who hold both), the clients (largest and smallest by
+collateral, drawn and line; highest and lowest loan to value; closest to a
+margin call and deepest in one, both against the approved line; most
+positions, currencies and categories; most concentrated and most evenly
 spread; largest cash, non-eligible and above-limit holders), the positions
 (the largest position over the book and in each category with its holder,
 the most widely held and the largest security, the largest and most common
-issuer, foreign currency, cash, non-eligible and above-limit totals, the
-longest and shortest security names), and the exposure looked through — read
-from the end date's staged *Risk Exposure* table, the one the Weekly Analysis
-leaves behind, and never staged here, since resolving names can take a
-lookup by hand: for names, countries and sectors alike the largest member,
-the most widely held, the client most concentrated in one and the client
-spread over the most, members held by one client only; what is reached
-through certificates, the certificate with the most underlyings and the
-underlying in the most certificates, underlyings that could not be named,
-the DPM share, and how the names were resolved. Every movement is read three
-ways, each against a snapshot on file — the previous snapshot, the first on
-or after one month back, the first on or after year-end, resolved the way
-the report resolves its dates — with the book's totals, new and ended loans
-and the largest of each, the biggest riser and faller, the largest position
-increase and decrease, the most active repositioner, line increases and
-cuts, drawdowns and repayments, the categories gaining and losing most,
-securities new to and gone from the book, and margin calls raised and
-cleared. The last section walks every Accounts snapshot from the start date
-to the end date (Accounts only; positions are read for the four dates above):
-the oldest and youngest active loans and their average age, clients ever on
-the book, loans ended and loans that came back, the longest- and
-shortest-lived ended loans, the busiest snapshots for new and ended loans and
-the days since the last of each, record and lowest collateral, drawn and loan
-counts with their dates, the largest line ever approved, and margin calls
-over the run. The module reads the CSVs itself through the weekly module's
-field cleaner and number parser, keeps one row per NDG, and sums positions
-once per snapshot into dictionaries the sections share. The sheet carries a
-*Slides* button: `ExportPortfolioFactsSlides` reads it back through the row
-markers it keeps in a hidden column and writes one self-contained HTML deck
-next to the workbook — a title slide, then every section eight facts to a
-slide as cards, arrow keys or a click to turn the pages, printable to a
-landscape PDF — and opens it in the browser.
+issuer, foreign currency, cash, non-eligible and above-limit totals), and the
+exposure looked through — read from the end date's staged *Risk Exposure*
+table, the one the Weekly Analysis leaves behind, and never staged here,
+since resolving names can take a lookup by hand; each dimension runs over
+the classes the report's own tables show for it (`BuildRiskSubtableVisibility`
+is Public for that), so countries and sectors leave funds out as the report
+does: the largest member, the most widely held, the client most concentrated
+in one and the client spread over the most, members held by one client only;
+what is reached through certificates, the certificate with the most
+underlyings and the underlying in the most certificates, underlyings that
+could not be named, and the DPM share. Where several clients or securities
+tie for a superlative they are all listed. Every movement is read two ways,
+each against a snapshot on file — the first on or after one month back, the
+first on or after year-end, resolved the way the report resolves its dates —
+with the book's totals, new and ended loans and the largest of each, the
+biggest riser and faller, the largest position increase and decrease, the
+most active repositioner, line increases and cuts, drawdowns and repayments,
+the categories gaining and losing most, securities new to and gone from the
+book, and margin calls raised and cleared. The last section walks every
+Accounts snapshot from the start date to the end date (Accounts only;
+positions are read for the three dates above): the oldest active loan,
+clients ever on the book, loans ended within the window and loans that came
+back, the longest- and shortest-lived ended loans, the busiest snapshots for
+new and ended loans, record and lowest collateral, drawn and loan counts with
+their dates, the largest line ever approved, and margin calls over the run.
+The module reads the CSVs itself through the weekly module's field cleaner
+and number parser, keeps one row per NDG, and sums positions once per
+snapshot into dictionaries the sections share. The sheet carries a *Slides*
+button: `ExportPortfolioFactsSlides` reads it back through the row markers it
+keeps in a hidden column and writes one self-contained HTML deck — a title
+slide, then every section eight facts to a slide as cards, arrow keys or a
+click to turn the pages, printable to a landscape PDF — where a Save As
+dialog puts it, opening on the workbook's folder, or on the source folder
+when the workbook lives on SharePoint, and opens it in the browser.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

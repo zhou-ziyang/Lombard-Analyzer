@@ -89,9 +89,10 @@ Private Enum FactPositionField
     FactPosValue = 8
     FactPosHCV = 9
     FactPosAboveLimit = 10
+    FactPosComment = 11
 End Enum
 
-Private Const FACT_POSITION_FIELDS As Long = 10
+Private Const FACT_POSITION_FIELDS As Long = 11
 
 '
 ' A date's two snapshots and the sums drawn from its positions.
@@ -167,8 +168,6 @@ Public Sub GeneratePortfolioFacts()
     WritePositionSection EndSnap
     WriteExposureSection EndSnap
 
-    WriteHorizon EndSnap, PreviousSnapshotDate(Dates, EndDate), _
-        "Since the previous snapshot"
     WriteHorizon EndSnap, _
         SnapshotOnOrAfter(Dates, GetComparisonDate(EndDate), EndDate), _
         "Since a month earlier"
@@ -366,29 +365,6 @@ Private Function SnapshotDateFromFileName( _
 BadDate:
 
     Err.Clear
-
-End Function
-
-'
-' The last snapshot before the end date that has positions too; zero when
-' there is none.
-'
-Private Function PreviousSnapshotDate( _
-    ByRef Dates As Variant, _
-    ByVal EndDate As Date) As Date
-
-    Dim i As Long
-
-    For i = UBound(Dates) To LBound(Dates) Step -1
-
-        If Dates(i) < EndDate Then
-            If SourceFileExists(Dates(i), "POSITIONS") Then
-                PreviousSnapshotDate = Dates(i)
-                Exit Function
-            End If
-        End If
-
-    Next i
 
 End Function
 
@@ -678,6 +654,7 @@ Private Function LoadFactPositions( _
     Dim ColValue As Long
     Dim ColHCV As Long
     Dim ColAboveLimit As Long
+    Dim ColComment As Long
 
     Dim AssetType As String
     Dim RowCount As Long
@@ -716,6 +693,8 @@ Private Function LoadFactPositions( _
         HeaderFields, _
         Array("Position MV above limit (Haircut to Zero)", "Position MV above limit"), _
         False, FilePath)
+    ColComment = FactHeaderIndex( _
+        HeaderFields, Array("Additional Comment"), False, FilePath)
 
     For r = 1 To UBound(Lines)
         If Len(Trim$(CStr(Lines(r)))) > 0 Then RowCount = RowCount + 1
@@ -747,6 +726,7 @@ Private Function LoadFactPositions( _
                 WeeklyCsvDouble(FactField(Fields, ColHCV))
             Data(OutputRow, FactPosAboveLimit) = _
                 WeeklyCsvDouble(FactField(Fields, ColAboveLimit))
+            Data(OutputRow, FactPosComment) = FactField(Fields, ColComment)
 
         End If
 
@@ -895,6 +875,115 @@ Private Function BestKey( _
 
 End Function
 
+'
+' Every key holding the same amount as the key given, that key first:
+' the clients or securities that tie for a superlative.
+'
+Private Function TiedKeys( _
+    ByVal Dict As Object, _
+    ByVal Key As String) As Collection
+
+    Dim Result As Collection
+    Dim Best As Double
+    Dim K As Variant
+
+    Set Result = New Collection
+    Result.Add Key
+    Set TiedKeys = Result
+
+    If Not Dict.Exists(Key) Then Exit Function
+
+    Best = CDbl(Dict(Key))
+
+    For Each K In Dict.Keys
+        If CStr(K) <> Key Then
+            If Abs(CDbl(Dict(K)) - Best) < FACT_TOLERANCE Then Result.Add CStr(K)
+        End If
+    Next K
+
+End Function
+
+'
+' A list of tied keys as text, each behind the prefix, the first MaxShown
+' spelt out and the rest counted.
+'
+Private Function JoinTied( _
+    ByVal Keys As Collection, _
+    ByVal Prefix As String, _
+    ByVal MaxShown As Long) As String
+
+    Dim i As Long
+
+    For i = 1 To Keys.Count
+
+        If i > MaxShown Then
+            JoinTied = JoinTied & " and " & (Keys.Count - MaxShown) & " more"
+            Exit For
+        End If
+
+        If i > 1 Then JoinTied = JoinTied & ", "
+        JoinTied = JoinTied & Prefix & Keys(i)
+
+    Next i
+
+End Function
+
+Private Function TiedNdgText( _
+    ByVal Dict As Object, _
+    ByVal NDG As String) As String
+
+    TiedNdgText = JoinTied(TiedKeys(Dict, NDG), "NDG ", 8)
+
+End Function
+
+Private Function TiedKeyText( _
+    ByVal Dict As Object, _
+    ByVal Key As String) As String
+
+    TiedKeyText = JoinTied(TiedKeys(Dict, Key), "", 4)
+
+End Function
+
+Private Function TiedSecurityText( _
+    ByVal Dict As Object, _
+    ByVal SecKey As String, _
+    ByVal Agg As Object) As String
+
+    Dim Keys As Collection
+    Dim Names As Collection
+    Dim i As Long
+
+    Set Keys = TiedKeys(Dict, SecKey)
+    Set Names = New Collection
+
+    For i = 1 To Keys.Count
+        Names.Add SecurityText(Agg, CStr(Keys(i)))
+    Next i
+
+    TiedSecurityText = JoinTied(Names, "", 3)
+
+End Function
+
+'
+' The keys whose inner dictionaries hold as many members as the key's.
+'
+Private Function TiedInnerText( _
+    ByVal Outer As Object, _
+    ByVal Key As String) As String
+
+    Dim Counts As Object
+    Dim K As Variant
+
+    Set Counts = NewTextDictionary()
+
+    For Each K In Outer.Keys
+        Counts(K) = Outer(K).Count
+    Next K
+
+    TiedInnerText = JoinTied(TiedKeys(Counts, Key), "", 4)
+
+End Function
+
 Private Function SecurityKey( _
     ByVal ISIN As String, _
     ByVal Name As String) As String
@@ -924,6 +1013,7 @@ Private Function BuildPositionAggregates( _
     Dim NdgIsinClass As Object
     Dim NdgIsinName As Object
     Dim NdgClass As Object
+    Dim NdgDpm As Object
     Dim NdgCurrency As Object
     Dim NdgSecurities As Object
     Dim NdgHcv As Object
@@ -962,6 +1052,7 @@ Private Function BuildPositionAggregates( _
     Set NdgIsinClass = NewTextDictionary()
     Set NdgIsinName = NewTextDictionary()
     Set NdgClass = NewTextDictionary()
+    Set NdgDpm = NewTextDictionary()
     Set NdgCurrency = NewTextDictionary()
     Set NdgSecurities = NewTextDictionary()
     Set NdgHcv = NewTextDictionary()
@@ -981,6 +1072,7 @@ Private Function BuildPositionAggregates( _
     Agg.Add "NdgIsinClass", NdgIsinClass
     Agg.Add "NdgIsinName", NdgIsinName
     Agg.Add "NdgClass", NdgClass
+    Agg.Add "NdgDpm", NdgDpm
     Agg.Add "NdgCurrency", NdgCurrency
     Agg.Add "NdgSecurities", NdgSecurities
     Agg.Add "NdgHcv", NdgHcv
@@ -1032,6 +1124,11 @@ Private Function BuildPositionAggregates( _
             End If
 
             AddAmount InnerDictionary(NdgClass, NDG), AssetClass, Value
+
+            If StrComp(AssetClass, "GP", vbTextCompare) = 0 Then
+                AddAmount InnerDictionary(NdgDpm, NDG), _
+                    DpmSubClass(CStr(Positions(r, FactPosComment))), Value
+            End If
             AddAmount InnerDictionary(NdgCurrency, NDG), Ccy, Value
             MarkInner NdgSecurities, NDG, SecKey
 
@@ -1058,6 +1155,33 @@ Private Function BuildPositionAggregates( _
 End Function
 
 '
+' What a DPM position holds, read from its Additional Comment the way the
+' report's Top 10 reads it: equity, fixed income or a fund by the first
+' word, anything else the mandate as such.
+'
+Private Function DpmSubClass( _
+    ByVal Comment As String) As String
+
+    Dim Normalized As String
+
+    Normalized = UCase$(Trim$(Comment))
+    Normalized = Replace(Normalized, " ", "")
+    Normalized = Replace(Normalized, "-", "")
+    Normalized = Replace(Normalized, "_", "")
+
+    If Left$(Normalized, 6) = "EQUITY" Then
+        DpmSubClass = "Equity"
+    ElseIf Left$(Normalized, 11) = "FIXEDINCOME" Then
+        DpmSubClass = "Bonds"
+    ElseIf Left$(Normalized, 4) = "FUND" Then
+        DpmSubClass = "Funds"
+    Else
+        DpmSubClass = "GP"
+    End If
+
+End Function
+
+'
 ' The NDGs of an Accounts snapshot, each to its row.
 '
 Private Function AccountIndex( _
@@ -1076,6 +1200,23 @@ Private Function AccountIndex( _
             Index.Add CStr(Accounts(r, FactAccNDG)), r
         End If
     Next r
+
+End Function
+
+'
+' The collateral a client's loan to value is read against: the MTM its
+' Accounts row carries, or its positions' total where the row carries none.
+'
+Private Function ClientCollateralBase( _
+    ByRef Snap As FactSnapshot, _
+    ByVal r As Long, _
+    ByVal Collateral As Object) As Double
+
+    ClientCollateralBase = CDbl(Snap.Accounts(r, FactAccMTM))
+
+    If ClientCollateralBase <= 0 Then
+        ClientCollateralBase = DictAmount(Collateral, CStr(Snap.Accounts(r, FactAccNDG)))
+    End If
 
 End Function
 
@@ -1598,9 +1739,12 @@ Private Sub WritePortfolioSection( _
     Dim UnusedApproved As Double
     Dim HighUse As Long
     Dim SingleSecurity As Long
-    Dim FullHouse As Long
+    Dim OutsideFull As Long
+    Dim DpmFull As Long
+    Dim BothSides As Long
     Dim CategoryCount As Long
     Dim Held As Long
+    Dim Inner As Object
 
     Dim i As Long
     Dim r As Long
@@ -1634,14 +1778,14 @@ Private Sub WritePortfolioSection( _
 
     If Hcv > 0 Then
         WriteFact "Haircut collateral value", Hcv, "eur", "", _
-            "an advance rate of " & PctText(SafeShare(Hcv, Collateral)) & _
-            " on the collateral; headroom over drawn " & SignedEuroText(Hcv - Drawn)
+            PctText(SafeShare(Hcv, IIf(Mtm > 0, Mtm, Collateral))) & _
+            " of the collateral, its value-weighted Max LTV; headroom over the approved lines " & _
+            SignedEuroText(Hcv - Approved)
     End If
 
-    WriteFact "Loan to value", SafeShare(Drawn, Collateral), "pct", "", _
-        "drawn over collateral"
-    WriteFact "Cover", SafeShare(Collateral, Drawn), "x", "", _
-        "collateral over drawn"
+    WriteFact "Loan to value", SafeShare(Approved, IIf(Mtm > 0, Mtm, Collateral)), "pct", "", _
+        "approved lines over collateral, as the dashboard reads it" & _
+        IIf(Mtm > 0, " (the MTM Accounts carry)", "")
 
     For Each Key In Agg("Security").Keys
         If StrComp(CStr(Agg("SecurityClass")(Key)), "Cash", vbTextCompare) <> 0 Then
@@ -1682,8 +1826,8 @@ Private Sub WritePortfolioSection( _
         WriteFact "Top 5 clients' share", TopFive, "pct", "", "of the collateral"
         WriteFact "Top 10 clients' share", TopTen, "pct", "", "of the collateral"
         WriteFact "Concentration (Herfindahl index)", Hhi, "ratio", "", _
-            "as concentrated as " & Format(SafeShare(1, Hhi), "0.0") & _
-            " equal clients would be"
+            "the sum of every client's squared share of the collateral, 1 for a single client; " & _
+            "as concentrated as " & Format(SafeShare(1, Hhi), "0.0") & " equal clients would be"
 
     End If
 
@@ -1713,6 +1857,12 @@ Private Sub WritePortfolioSection( _
 
     CategoryCount = UBound(CollateralCategories()) + 1
 
+    '
+    ' A DPM mandate (GP) holds the other categories inside it, so nobody
+    ' holds all eight as positions of their own: the coverage is read on
+    ' either side of the mandate, and the two sides are counted together.
+    '
+
     For Each Key In Agg("NdgSecurities").Keys
 
         If Agg("NdgSecurities")(Key).Count = 1 Then SingleSecurity = SingleSecurity + 1
@@ -1720,16 +1870,35 @@ Private Sub WritePortfolioSection( _
         Held = 0
 
         For Each Category In CollateralCategories()
-            If Agg("NdgClass")(Key).Exists(Category(0)) Then Held = Held + 1
+            If StrComp(CStr(Category(0)), "GP", vbTextCompare) <> 0 Then
+                If Agg("NdgClass")(Key).Exists(Category(0)) Then Held = Held + 1
+            End If
         Next Category
 
-        If Held = CategoryCount Then FullHouse = FullHouse + 1
+        If Held = CategoryCount - 1 Then OutsideFull = OutsideFull + 1
+
+        If Agg("NdgClass")(Key).Exists("GP") Then
+
+            If Held > 0 Then BothSides = BothSides + 1
+
+            If Agg("NdgDpm").Exists(Key) Then
+                Set Inner = Agg("NdgDpm")(Key)
+                If Inner.Exists("Equity") And Inner.Exists("Bonds") And Inner.Exists("Funds") Then
+                    DpmFull = DpmFull + 1
+                End If
+            End If
+
+        End If
 
     Next Key
 
     WriteFact "Clients with a single security", SingleSecurity, "int"
-    WriteFact "Clients holding every category", FullHouse, "int", "", _
-        "all " & CategoryCount & " collateral categories at once"
+    WriteFact "Clients holding every category outside DPM", OutsideFull, "int", "", _
+        "all " & (CategoryCount - 1) & " categories other than GP, as positions of their own"
+    WriteFact "Clients whose DPM mandate spans equity, bonds and funds", DpmFull, "int", "", _
+        "the three the mandate's positions can show, read from Additional Comment as the report's Top 10 reads it"
+    WriteFact "Clients with both a DPM mandate and other collateral", BothSides, "int", "", _
+        "GP positions beside positions of any other category"
 
 End Sub
 
@@ -1745,9 +1914,8 @@ Private Sub WriteClientSection( _
     Dim DrawnBy As Object
     Dim ApprovedBy As Object
     Dim HcvBy As Object
-    Dim Utilisation As Object
-    Dim UtilisationDrawn As Object
-    Dim Cover As Object
+    Dim MtmBy As Object
+    Dim Ltv As Object
     Dim Headroom As Object
     Dim Depth As Object
     Dim SecurityCount As Object
@@ -1773,6 +1941,7 @@ Private Sub WriteClientSection( _
     Set DrawnBy = AccountColumn(Snap.Accounts, FactAccDrawn)
     Set ApprovedBy = AccountColumn(Snap.Accounts, FactAccApproved)
     Set HcvBy = AccountColumn(Snap.Accounts, FactAccHCV)
+    Set MtmBy = AccountColumn(Snap.Accounts, FactAccMTM)
 
     StartSection "Clients", "as of " & DateText(Snap.AsOfDate)
 
@@ -1787,7 +1956,7 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(Collateral, True)
     If NDG <> "" Then
-        WriteFact "Largest client by collateral", Collateral(NDG), "eur", NdgText(NDG), _
+        WriteFact "Largest client by collateral", Collateral(NDG), "eur", TiedNdgText(Collateral, NDG), _
             PctText(SafeShare(Collateral(NDG), Total)) & " of the book; drawn " & _
             EuroText(DictAmount(DrawnBy, NDG)) & "; " & _
             Plural(CLng(DictAmount(Agg("PosCount"), NDG)), "position", "positions")
@@ -1795,45 +1964,40 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(Collateral, False, True)
     If NDG <> "" Then
-        WriteFact "Smallest client by collateral", Collateral(NDG), "eur", NdgText(NDG), _
+        WriteFact "Smallest client by collateral", Collateral(NDG), "eur", TiedNdgText(Collateral, NDG), _
             "drawn " & EuroText(DictAmount(DrawnBy, NDG)) & "; approved " & _
             EuroText(DictAmount(ApprovedBy, NDG))
     End If
 
     NDG = BestKey(DrawnBy, True)
     If NDG <> "" Then
-        WriteFact "Largest client by drawn amount", DrawnBy(NDG), "eur", NdgText(NDG), _
+        WriteFact "Largest client by drawn amount", DrawnBy(NDG), "eur", TiedNdgText(DrawnBy, NDG), _
             PctText(SafeShare(DrawnBy(NDG), DictAmount(ApprovedBy, NDG))) & _
             " of a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line; collateral " & _
             EuroText(DictAmount(Collateral, NDG))
     End If
 
-    NDG = BestKey(DrawnBy, False, True)
-    If NDG <> "" Then
-        WriteFact "Smallest drawn amount", DrawnBy(NDG), "eur", NdgText(NDG), _
-            "on a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line"
-    End If
-
     NDG = BestKey(ApprovedBy, True)
     If NDG <> "" Then
-        WriteFact "Largest approved line", ApprovedBy(NDG), "eur", NdgText(NDG), _
+        WriteFact "Largest approved line", ApprovedBy(NDG), "eur", TiedNdgText(ApprovedBy, NDG), _
             "drawn " & EuroText(DictAmount(DrawnBy, NDG)) & " (" & _
             PctText(SafeShare(DictAmount(DrawnBy, NDG), ApprovedBy(NDG))) & ")"
     End If
 
     NDG = BestKey(ApprovedBy, False, True)
     If NDG <> "" Then
-        WriteFact "Smallest approved line", ApprovedBy(NDG), "eur", NdgText(NDG), _
+        WriteFact "Smallest approved line", ApprovedBy(NDG), "eur", TiedNdgText(ApprovedBy, NDG), _
             "drawn " & EuroText(DictAmount(DrawnBy, NDG))
     End If
 
     '
-    ' Use of the line, cover and headroom
+    ' Loan to value as the dashboard reads it - the approved line over the
+    ' MTM collateral Accounts carry, the positions' total where Accounts
+    ' carry none - and the haircut collateral value against the line, which
+    ' is what a margin call is.
     '
 
-    Set Utilisation = NewTextDictionary()
-    Set UtilisationDrawn = NewTextDictionary()
-    Set Cover = NewTextDictionary()
+    Set Ltv = NewTextDictionary()
     Set Headroom = NewTextDictionary()
     Set Depth = NewTextDictionary()
 
@@ -1844,28 +2008,22 @@ Private Sub WriteClientSection( _
             NDG = CStr(Snap.Accounts(r, FactAccNDG))
 
             If CDbl(Snap.Accounts(r, FactAccApproved)) > 0 Then
-                Utilisation(NDG) = _
-                    CDbl(Snap.Accounts(r, FactAccDrawn)) / _
-                    CDbl(Snap.Accounts(r, FactAccApproved))
-                If CDbl(Snap.Accounts(r, FactAccDrawn)) >= FACT_TOLERANCE Then
-                    UtilisationDrawn(NDG) = Utilisation(NDG)
+
+                If ClientCollateralBase(Snap, r, Collateral) > 0 Then
+                    Ltv(NDG) = _
+                        CDbl(Snap.Accounts(r, FactAccApproved)) / _
+                        ClientCollateralBase(Snap, r, Collateral)
                 End If
-            End If
-
-            If CDbl(Snap.Accounts(r, FactAccDrawn)) >= FACT_TOLERANCE Then
-
-                Cover(NDG) = _
-                    DictAmount(Collateral, NDG) / CDbl(Snap.Accounts(r, FactAccDrawn))
 
                 If CDbl(Snap.Accounts(r, FactAccHCV)) > 0 Then
                     If CBool(Snap.Accounts(r, FactAccMarginCall)) Then
                         Depth(NDG) = _
-                            CDbl(Snap.Accounts(r, FactAccDrawn)) - _
+                            CDbl(Snap.Accounts(r, FactAccApproved)) - _
                             CDbl(Snap.Accounts(r, FactAccHCV))
                     Else
                         Headroom(NDG) = _
                             CDbl(Snap.Accounts(r, FactAccHCV)) - _
-                            CDbl(Snap.Accounts(r, FactAccDrawn))
+                            CDbl(Snap.Accounts(r, FactAccApproved))
                     End If
                 End If
 
@@ -1875,47 +2033,32 @@ Private Sub WriteClientSection( _
 
     End If
 
-    NDG = BestKey(Utilisation, True)
+    NDG = BestKey(Ltv, True)
     If NDG <> "" Then
-        WriteFact "Highest utilisation", Utilisation(NDG), "pct", NdgText(NDG), _
-            EuroText(DictAmount(DrawnBy, NDG)) & " drawn of " & _
-            EuroText(DictAmount(ApprovedBy, NDG))
+        WriteFact "Highest loan to value", Ltv(NDG), "pct", TiedNdgText(Ltv, NDG), _
+            "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line over " & _
+            EuroText(DictAmount(ApprovedBy, NDG) / Ltv(NDG)) & " of collateral"
     End If
 
-    NDG = BestKey(UtilisationDrawn, False)
+    NDG = BestKey(Ltv, False, True)
     If NDG <> "" Then
-        WriteFact "Lowest utilisation among drawn lines", UtilisationDrawn(NDG), "pct", _
-            NdgText(NDG), EuroText(DictAmount(DrawnBy, NDG)) & " drawn of " & _
-            EuroText(DictAmount(ApprovedBy, NDG))
-    End If
-
-    NDG = BestKey(Cover, False)
-    If NDG <> "" Then
-        WriteFact "Thinnest cover", Cover(NDG), "x", NdgText(NDG), _
-            EuroText(DictAmount(Collateral, NDG)) & " of collateral over " & _
-            EuroText(DictAmount(DrawnBy, NDG)) & " drawn; loan to value " & _
-            PctText(SafeShare(DictAmount(DrawnBy, NDG), DictAmount(Collateral, NDG)))
-    End If
-
-    NDG = BestKey(Cover, True)
-    If NDG <> "" Then
-        WriteFact "Thickest cover", Cover(NDG), "x", NdgText(NDG), _
-            EuroText(DictAmount(Collateral, NDG)) & " of collateral over " & _
-            EuroText(DictAmount(DrawnBy, NDG)) & " drawn"
+        WriteFact "Lowest loan to value", Ltv(NDG), "pct", TiedNdgText(Ltv, NDG), _
+            "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line over " & _
+            EuroText(DictAmount(ApprovedBy, NDG) / Ltv(NDG)) & " of collateral"
     End If
 
     NDG = BestKey(Headroom, False)
     If NDG <> "" Then
-        WriteFact "Closest to a margin call", Headroom(NDG), "eur", NdgText(NDG), _
+        WriteFact "Closest to a margin call", Headroom(NDG), "eur", TiedNdgText(Headroom, NDG), _
             "haircut collateral value " & EuroText(DictAmount(HcvBy, NDG)) & _
-            " over " & EuroText(DictAmount(DrawnBy, NDG)) & " drawn; " & _
-            PctText(SafeShare(Headroom(NDG), DictAmount(DrawnBy, NDG))) & " of headroom"
+            " over a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line; " & _
+            PctText(SafeShare(Headroom(NDG), DictAmount(ApprovedBy, NDG))) & " of headroom"
     End If
 
     NDG = BestKey(Depth, True)
     If NDG <> "" Then
-        WriteFact "Deepest margin call", Depth(NDG), "eur", NdgText(NDG), _
-            EuroText(DictAmount(DrawnBy, NDG)) & " drawn against " & _
+        WriteFact "Deepest margin call", Depth(NDG), "eur", TiedNdgText(Depth, NDG), _
+            "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line against " & _
             EuroText(DictAmount(HcvBy, NDG)) & " of haircut collateral value"
     End If
 
@@ -1975,34 +2118,28 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(Agg("PosCount"), True)
     If NDG <> "" Then
-        WriteFact "Most positions", Agg("PosCount")(NDG), "int", NdgText(NDG), _
+        WriteFact "Most positions", Agg("PosCount")(NDG), "int", TiedNdgText(Agg("PosCount"), NDG), _
             Plural(CLng(DictAmount(SecurityCount, NDG)), "security", "securities") & _
             " worth " & EuroText(DictAmount(Collateral, NDG))
-    End If
-
-    NDG = BestKey(SecurityCount, True)
-    If NDG <> "" Then
-        WriteFact "Most securities", SecurityCount(NDG), "int", NdgText(NDG), _
-            "collateral " & EuroText(DictAmount(Collateral, NDG))
     End If
 
     NDG = BestKey(CurrencyCount, True)
     If NDG <> "" Then
         If CDbl(CurrencyCount(NDG)) > 1 Then
-            WriteFact "Most currencies", CurrencyCount(NDG), "int", NdgText(NDG), _
+            WriteFact "Most currencies", CurrencyCount(NDG), "int", TiedNdgText(CurrencyCount, NDG), _
                 Join(Agg("NdgCurrency")(NDG).Keys, ", ")
         End If
     End If
 
     NDG = BestKey(CategoryCount, True)
     If NDG <> "" Then
-        WriteFact "Most categories held", CategoryCount(NDG), "int", NdgText(NDG), _
+        WriteFact "Most categories held", CategoryCount(NDG), "int", TiedNdgText(CategoryCount, NDG), _
             "of " & (UBound(CollateralCategories()) + 1)
     End If
 
     NDG = BestKey(TopShare, True)
     If NDG <> "" Then
-        WriteFact "Most concentrated client", TopShare(NDG), "pct", NdgText(NDG), _
+        WriteFact "Most concentrated client", TopShare(NDG), "pct", TiedNdgText(TopShare, NDG), _
             "of its " & EuroText(DictAmount(Collateral, NDG)) & " in " & _
             SecurityText(Agg, PosKeySecurity(CStr(TopKey(NDG)))) & _
             "; among clients with more than one security"
@@ -2010,7 +2147,7 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(TopShare, False)
     If NDG <> "" Then
-        WriteFact "Most evenly spread client", TopShare(NDG), "pct", NdgText(NDG), _
+        WriteFact "Most evenly spread client", TopShare(NDG), "pct", TiedNdgText(TopShare, NDG), _
             "its largest holding, " & _
             SecurityText(Agg, PosKeySecurity(CStr(TopKey(NDG)))) & _
             ", out of " & Plural(CLng(DictAmount(SecurityCount, NDG)), "security", "securities")
@@ -2018,14 +2155,14 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(CashBy, True, True)
     If NDG <> "" Then
-        WriteFact "Largest cash holder", CashBy(NDG), "eur", NdgText(NDG), _
+        WriteFact "Largest cash holder", CashBy(NDG), "eur", TiedNdgText(CashBy, NDG), _
             PctText(SafeShare(CashBy(NDG), DictAmount(Collateral, NDG))) & _
             " of its collateral"
     End If
 
     NDG = BestKey(NonEligibleBy, True, True)
     If NDG <> "" Then
-        WriteFact "Most non-eligible collateral", NonEligibleBy(NDG), "eur", NdgText(NDG), _
+        WriteFact "Most non-eligible collateral", NonEligibleBy(NDG), "eur", TiedNdgText(NonEligibleBy, NDG), _
             PctText(SafeShare(NonEligibleBy(NDG), DictAmount(Collateral, NDG))) & _
             " of its collateral"
     End If
@@ -2033,7 +2170,7 @@ Private Sub WriteClientSection( _
     NDG = BestKey(Agg("NdgAboveLimit"), True, True)
     If NDG <> "" Then
         WriteFact "Most collateral above a concentration limit", _
-            Agg("NdgAboveLimit")(NDG), "eur", NdgText(NDG), _
+            Agg("NdgAboveLimit")(NDG), "eur", TiedNdgText(Agg("NdgAboveLimit"), NDG), _
             PctText(SafeShare(Agg("NdgAboveLimit")(NDG), DictAmount(Collateral, NDG))) & _
             " of its collateral counts for nothing"
     End If
@@ -2062,9 +2199,6 @@ Private Sub WritePositionSection( _
     Dim AssetClass As String
     Dim Total As Double
     Dim Value As Double
-    Dim LongestName As String
-    Dim ShortestName As String
-    Dim Name As String
     Dim Singletons As Long
     Dim SingletonValue As Double
 
@@ -2143,7 +2277,7 @@ Private Sub WritePositionSection( _
     SecKey = BestKey(HolderCount, True)
     If SecKey <> "" Then
         WriteFact "Most widely held security", HolderCount(SecKey), "int", _
-            SecurityText(Agg, SecKey), _
+            TiedSecurityText(HolderCount, SecKey, Agg), _
             "clients hold it; " & EuroText(DictAmount(NonCash, SecKey)) & " across the book"
     End If
 
@@ -2173,7 +2307,8 @@ Private Sub WritePositionSection( _
 
     SecKey = BestKey(IssuerHolderCount, True)
     If SecKey <> "" Then
-        WriteFact "Most common issuer", IssuerHolderCount(SecKey), "int", SecKey, _
+        WriteFact "Most common issuer", IssuerHolderCount(SecKey), "int", _
+            TiedKeyText(IssuerHolderCount, SecKey), _
             "clients hold its paper; " & EuroText(DictAmount(Agg("Issuer"), SecKey)) & _
             " across the book"
     End If
@@ -2219,26 +2354,6 @@ Private Sub WritePositionSection( _
         WriteFact "Collateral above concentration limits", CDbl(Agg("AboveLimitTotal")), "eur", "", _
             PctText(SafeShare(CDbl(Agg("AboveLimitTotal")), Total)) & _
             " of the collateral is haircut to zero"
-    End If
-
-    '
-    ' Names
-    '
-
-    For Each Key In Agg("SecurityName").Keys
-
-        Name = CStr(Agg("SecurityName")(Key))
-
-        If Name <> "" Then
-            If Len(Name) > Len(LongestName) Then LongestName = Name
-            If ShortestName = "" Or Len(Name) < Len(ShortestName) Then ShortestName = Name
-        End If
-
-    Next Key
-
-    If LongestName <> "" Then
-        WriteFact "Longest security name", Len(LongestName), "int", LongestName, "characters"
-        WriteFact "Shortest security name", Len(ShortestName), "int", ShortestName, "characters"
     End If
 
 End Sub
@@ -2294,9 +2409,16 @@ Private Sub WriteExposureSection( _
     Dim CertificateUnderlyings As Object
     Dim UnderlyingCertificates As Object
     Dim IndirectByName As Object
-    Dim BySource As Object
+    Dim Visibility As Object
+    Dim NdgNameTotal As Object
+    Dim NdgGeographyTotal As Object
+    Dim NdgSectorTotal As Object
 
     Dim Key As Variant
+    Dim RiskClass As String
+    Dim NameTotal As Double
+    Dim GeographyTotal As Double
+    Dim SectorTotal As Double
     Dim NDG As String
     Dim Name As String
     Dim Geography As String
@@ -2311,10 +2433,11 @@ Private Sub WriteExposureSection( _
     Dim UnknownValue As Double
     Dim UnknownRows As Long
     Dim IndirectValue As Double
-    Dim SourceText As String
     Dim r As Long
 
-    StartSection "Exposure, looked through", "as of " & DateText(Snap.AsOfDate)
+    StartSection "Exposure, looked through", _
+        "as of " & DateText(Snap.AsOfDate) & _
+        "; each dimension over the classes the report's tables show for it"
 
     If Not LoadStagedExposure(Snap.AsOfDate, StageRows, StageColumns) Then
         WriteNoFact _
@@ -2337,8 +2460,11 @@ Private Sub WriteExposureSection( _
     Set CertificateUnderlyings = NewTextDictionary()
     Set UnderlyingCertificates = NewTextDictionary()
     Set IndirectByName = NewTextDictionary()
-    Set BySource = NewTextDictionary()
     Set DpmClients = NewTextDictionary()
+    Set NdgNameTotal = NewTextDictionary()
+    Set NdgGeographyTotal = NewTextDictionary()
+    Set NdgSectorTotal = NewTextDictionary()
+    Set Visibility = BuildRiskSubtableVisibility()
 
     For r = LBound(StageRows, 1) To UBound(StageRows, 1)
 
@@ -2358,6 +2484,8 @@ Private Sub WriteExposureSection( _
 
             Else
 
+                RiskClass = StagedText(StageRows, r, StageColumns, "Risk Asset Class")
+
                 Name = StagedText(StageRows, r, StageColumns, "Exposure Name")
                 If Name = "" Then Name = OTHER_RISK_DIMENSION
                 Geography = StagedText(StageRows, r, StageColumns, "Geography")
@@ -2365,20 +2493,33 @@ Private Sub WriteExposureSection( _
                 Sector = StagedText(StageRows, r, StageColumns, "Sector")
                 If Sector = "" Then Sector = OTHER_RISK_DIMENSION
 
-                AddAmount ByName, Name, Value
-                MarkInner NameHolders, Name, NDG
-                AddAmount InnerDictionary(NdgName, NDG), Name, Value
+                If ClassShown(Visibility, "Issuer", RiskClass) Then
+                    NameTotal = NameTotal + Value
+                    AddAmount NdgNameTotal, NDG, Value
+                    AddAmount ByName, Name, Value
+                    MarkInner NameHolders, Name, NDG
+                    AddAmount InnerDictionary(NdgName, NDG), Name, Value
+                End If
 
-                AddAmount ByGeography, Geography, Value
-                MarkInner GeographyHolders, Geography, NDG
-                AddAmount InnerDictionary(NdgGeography, NDG), Geography, Value
+                If ClassShown(Visibility, "Country", RiskClass) Then
+                    GeographyTotal = GeographyTotal + Value
+                    AddAmount NdgGeographyTotal, NDG, Value
+                    AddAmount ByGeography, Geography, Value
+                    MarkInner GeographyHolders, Geography, NDG
+                    AddAmount InnerDictionary(NdgGeography, NDG), Geography, Value
+                End If
 
-                AddAmount BySector, Sector, Value
-                MarkInner SectorHolders, Sector, NDG
-                AddAmount InnerDictionary(NdgSector, NDG), Sector, Value
+                If ClassShown(Visibility, "Sector", RiskClass) Then
+                    SectorTotal = SectorTotal + Value
+                    AddAmount NdgSectorTotal, NDG, Value
+                    AddAmount BySector, Sector, Value
+                    MarkInner SectorHolders, Sector, NDG
+                    AddAmount InnerDictionary(NdgSector, NDG), Sector, Value
+                End If
 
                 If Left$(ExposureType, Len(CERTIFICATE_UNDERLYING_TYPE)) = _
-                   CERTIFICATE_UNDERLYING_TYPE Then
+                   CERTIFICATE_UNDERLYING_TYPE And _
+                   ClassShown(Visibility, "Issuer", RiskClass) Then
 
                     IndirectValue = IndirectValue + Value
                     AddAmount IndirectByName, Name, Value
@@ -2398,8 +2539,6 @@ Private Sub WriteExposureSection( _
                 DpmClients(NDG) = True
             End If
 
-            AddAmount BySource, StagedText(StageRows, r, StageColumns, "Resolution Source"), Value
-
         End If
 
     Next r
@@ -2409,24 +2548,21 @@ Private Sub WriteExposureSection( _
         Exit Sub
     End If
 
-    WriteFact "Collateral allocated to exposures", Total, "eur", "", _
-        Plural(UBound(StageRows, 1) - LBound(StageRows, 1) + 1, "staged row", "staged rows") & _
-        " over " & Plural(NdgTotal.Count, "client", "clients")
-
     '
     ' Names
     '
 
     WriteFact "Exposure names", ByName.Count, "int", "", _
-        PctText(SafeShare(DictAmount(ByName, OTHER_RISK_DIMENSION), Total)) & _
-        " of the allocated collateral has no name (" & OTHER_RISK_DIMENSION & ")"
+        PctText(SafeShare(DictAmount(ByName, OTHER_RISK_DIMENSION), NameTotal)) & _
+        " of the collateral has no name (" & OTHER_RISK_DIMENSION & "); over " & _
+        VisibleClassesText(Visibility, "Issuer")
 
-    WriteDimensionFacts "name", "names", ByName, NameHolders, NdgName, NdgTotal, Total
+    WriteDimensionFacts "name", "names", ByName, NameHolders, NdgName, NdgNameTotal, NameTotal
 
     If IndirectValue > 0 Then
 
         WriteFact "Exposure reached through certificates", IndirectValue, "eur", "", _
-            PctText(SafeShare(IndirectValue, Total)) & " of the allocated collateral, in " & _
+            PctText(SafeShare(IndirectValue, NameTotal)) & " of the named exposure, in " & _
             Plural(CertificateUnderlyings.Count, "certificate", "certificates") & " looked through"
 
         Key = BestKey(IndirectByName, True)
@@ -2439,14 +2575,16 @@ Private Sub WriteExposureSection( _
         Key = BestInnerCount(CertificateUnderlyings)
         If CStr(Key) <> "" Then
             WriteFact "Certificate with the most underlyings", _
-                CertificateUnderlyings(Key).Count, "int", CStr(Key), "underlying names"
+                CertificateUnderlyings(Key).Count, "int", _
+                TiedInnerText(CertificateUnderlyings, CStr(Key)), "underlying names"
         End If
 
         Key = BestInnerCount(UnderlyingCertificates)
         If CStr(Key) <> "" Then
             If UnderlyingCertificates(Key).Count > 1 Then
                 WriteFact "Underlying in the most certificates", _
-                    UnderlyingCertificates(Key).Count, "int", CStr(Key), "certificates carry it"
+                    UnderlyingCertificates(Key).Count, "int", _
+                    TiedInnerText(UnderlyingCertificates, CStr(Key)), "certificates carry it"
             End If
         End If
 
@@ -2462,33 +2600,82 @@ Private Sub WriteExposureSection( _
     ' Geography and sector
     '
 
-    WriteFact "Countries", ByGeography.Count, "int", "", _
-        PctText(SafeShare(DictAmount(ByGeography, OTHER_RISK_DIMENSION), Total)) & _
-        " of the allocated collateral has no country"
-    WriteDimensionFacts "country", "countries", ByGeography, GeographyHolders, NdgGeography, NdgTotal, Total
+    If GeographyTotal > 0 Then
+        WriteFact "Countries", ByGeography.Count, "int", "", _
+            PctText(SafeShare(DictAmount(ByGeography, OTHER_RISK_DIMENSION), GeographyTotal)) & _
+            " of the collateral has no country; over " & VisibleClassesText(Visibility, "Country")
+        WriteDimensionFacts "country", "countries", ByGeography, GeographyHolders, _
+            NdgGeography, NdgGeographyTotal, GeographyTotal
+    End If
 
-    WriteFact "Sectors", BySector.Count, "int", "", _
-        PctText(SafeShare(DictAmount(BySector, OTHER_RISK_DIMENSION), Total)) & _
-        " of the allocated collateral has no sector"
-    WriteDimensionFacts "sector", "sectors", BySector, SectorHolders, NdgSector, NdgTotal, Total
+    If SectorTotal > 0 Then
+        WriteFact "Sectors", BySector.Count, "int", "", _
+            PctText(SafeShare(DictAmount(BySector, OTHER_RISK_DIMENSION), SectorTotal)) & _
+            " of the collateral has no sector; over " & VisibleClassesText(Visibility, "Sector")
+        WriteDimensionFacts "sector", "sectors", BySector, SectorHolders, _
+            NdgSector, NdgSectorTotal, SectorTotal
+    End If
 
     '
-    ' Scope and sources
+    ' Scope
     '
 
     WriteFact "Collateral in DPM accounts", DpmValue, "eur", "", _
         PctText(SafeShare(DpmValue, Total)) & " of the allocated collateral, " & _
         Plural(DpmClients.Count, "client", "clients")
 
-    For Each Key In BySource.Keys
-        If SourceText <> "" Then SourceText = SourceText & "; "
-        SourceText = SourceText & _
-            IIf(CStr(Key) = "", "(blank)", CStr(Key)) & " " & PctText(SafeShare(BySource(Key), Total))
-    Next Key
-
-    WriteFact "How the names were resolved", BySource.Count, "int", "", SourceText
-
 End Sub
+
+'
+' Whether the report shows a class in a dimension's tables: the same
+' switch list the report reads, so a country here is a country there.
+'
+Private Function ClassShown( _
+    ByVal Visibility As Object, _
+    ByVal DimensionKey As String, _
+    ByVal RiskClass As String) As Boolean
+
+    If Visibility Is Nothing Then Exit Function
+    If Not Visibility.Exists(DimensionKey & "|" & RiskClass) Then Exit Function
+
+    ClassShown = CBool(Visibility(DimensionKey & "|" & RiskClass))
+
+End Function
+
+'
+' The classes a dimension's tables show, spelt out: "equity, corporate
+' bonds and certificates".
+'
+Private Function VisibleClassesText( _
+    ByVal Visibility As Object, _
+    ByVal DimensionKey As String) As String
+
+    Dim Classes As Variant
+    Dim Shown As Collection
+    Dim i As Long
+
+    Classes = Array("Equity", "Corporate Bonds", "Sovereign Bonds", "Funds", "Certificates")
+    Set Shown = New Collection
+
+    For i = LBound(Classes) To UBound(Classes)
+        If ClassShown(Visibility, DimensionKey, CStr(Classes(i))) Then
+            Shown.Add LCase$(CStr(Classes(i)))
+        End If
+    Next i
+
+    For i = 1 To Shown.Count
+
+        If i > 1 Then
+            VisibleClassesText = VisibleClassesText & IIf(i = Shown.Count, " and ", ", ")
+        End If
+
+        VisibleClassesText = VisibleClassesText & Shown(i)
+
+    Next i
+
+    If VisibleClassesText = "" Then VisibleClassesText = "no class"
+
+End Function
 
 '
 ' The three facts every dimension gets: its largest member, its most
@@ -2510,8 +2697,7 @@ Private Sub WriteDimensionFacts( _
     Dim Inner As Object
     Dim Member As Variant
     Dim Members As Long
-    Dim MostMembers As Long
-    Dim MostMembersNdg As String
+    Dim MemberCount As Object
     Dim Lonely As Long
 
     Key = BestKey(ByMember, True)
@@ -2523,22 +2709,20 @@ Private Sub WriteDimensionFacts( _
 
     Key = BestInnerCount(Holders)
     If CStr(Key) <> "" Then
-        WriteFact "Most widely held " & Dimension, Holders(Key).Count, "int", CStr(Key), _
+        WriteFact "Most widely held " & Dimension, Holders(Key).Count, "int", _
+            TiedInnerText(Holders, CStr(Key)), _
             "clients are exposed to it; " & EuroText(DictAmount(ByMember, CStr(Key))) & " in all"
     End If
 
     Set TopShare = NewTextDictionary()
     Set TopMember = NewTextDictionary()
+    Set MemberCount = NewTextDictionary()
 
     For Each NDG In NdgMember.Keys
 
         Set Inner = NdgMember(NDG)
         Members = Inner.Count
-
-        If Members > MostMembers Then
-            MostMembers = Members
-            MostMembersNdg = CStr(NDG)
-        End If
+        MemberCount(NDG) = Members
 
         If Members >= 2 And DictAmount(NdgTotal, CStr(NDG)) > 0 Then
             Member = BestKey(Inner, True)
@@ -2553,13 +2737,14 @@ Private Sub WriteDimensionFacts( _
     NDG = BestKey(TopShare, True)
     If CStr(NDG) <> "" Then
         WriteFact "Client most concentrated in one " & Dimension, TopShare(NDG), "pct", _
-            NdgText(CStr(NDG)), "of its collateral in " & CStr(TopMember(NDG)) & _
+            TiedNdgText(TopShare, CStr(NDG)), "of its collateral in " & CStr(TopMember(NDG)) & _
             "; among clients exposed to more than one " & Dimension
     End If
 
-    If MostMembersNdg <> "" Then
-        WriteFact "Client spread over the most " & DimensionPlural, MostMembers, "int", _
-            NdgText(MostMembersNdg), "distinct " & DimensionPlural & " in its collateral"
+    NDG = BestKey(MemberCount, True)
+    If CStr(NDG) <> "" Then
+        WriteFact "Client spread over the most " & DimensionPlural, MemberCount(NDG), "int", _
+            TiedNdgText(MemberCount, CStr(NDG)), "distinct " & DimensionPlural & " in its collateral"
     End If
 
     For Each Key In Holders.Keys
@@ -2794,7 +2979,7 @@ Private Sub WriteMovementFacts( _
 
     NDG = BestKey(NewCollateral, True)
     If NDG <> "" Then
-        WriteFact "Largest new loan", NewCollateral(NDG), "eur", NdgText(NDG), _
+        WriteFact "Largest new loan", NewCollateral(NDG), "eur", TiedNdgText(NewCollateral, NDG), _
             "collateral; line " & EuroText(DictAmount(EndApproved, NDG)) & ", drawn " & _
             EuroText(DictAmount(EndDrawn, NDG))
     End If
@@ -2805,7 +2990,7 @@ Private Sub WriteMovementFacts( _
 
     NDG = BestKey(EndedCollateral, True)
     If NDG <> "" Then
-        WriteFact "Largest ended loan", EndedCollateral(NDG), "eur", NdgText(NDG), _
+        WriteFact "Largest ended loan", EndedCollateral(NDG), "eur", TiedNdgText(EndedCollateral, NDG), _
             "collateral as it last stood; line " & EuroText(DictAmount(BaseApproved, NDG)) & _
             ", drawn " & EuroText(DictAmount(BaseDrawn, NDG))
     End If
@@ -2837,7 +3022,7 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(Delta, True)
     If NDG <> "" Then
         If Delta(NDG) > 0 Then
-            WriteFact "Biggest riser", Delta(NDG), "eur", NdgText(NDG), _
+            WriteFact "Biggest riser", Delta(NDG), "eur", TiedNdgText(Delta, NDG), _
                 RangeDetail(DictAmount(BaseAgg("Collateral"), NDG), DictAmount(EndAgg("Collateral"), NDG))
         End If
     End If
@@ -2845,7 +3030,7 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(Delta, False)
     If NDG <> "" Then
         If Delta(NDG) < 0 Then
-            WriteFact "Biggest faller", Delta(NDG), "eur", NdgText(NDG), _
+            WriteFact "Biggest faller", Delta(NDG), "eur", TiedNdgText(Delta, NDG), _
                 RangeDetail(DictAmount(BaseAgg("Collateral"), NDG), DictAmount(EndAgg("Collateral"), NDG))
         End If
     End If
@@ -2895,7 +3080,7 @@ Private Sub WriteMovementFacts( _
 
     NDG = BestKey(Turnover, True, True)
     If NDG <> "" Then
-        WriteFact "Most active repositioner", Turnover(NDG), "eur", NdgText(NDG), _
+        WriteFact "Most active repositioner", Turnover(NDG), "eur", TiedNdgText(Turnover, NDG), _
             "moved across its positions, " & _
             PctText(SafeShare(Turnover(NDG), DictAmount(BaseAgg("Collateral"), NDG))) & _
             " of the collateral it started with"
@@ -2908,7 +3093,7 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(DeltaApproved, True)
     If NDG <> "" Then
         If DeltaApproved(NDG) > 0 Then
-            WriteFact "Biggest line increase", DeltaApproved(NDG), "eur", NdgText(NDG), _
+            WriteFact "Biggest line increase", DeltaApproved(NDG), "eur", TiedNdgText(DeltaApproved, NDG), _
                 RangeDetail(DictAmount(BaseApproved, NDG), DictAmount(EndApproved, NDG))
         End If
     End If
@@ -2916,7 +3101,7 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(DeltaApproved, False)
     If NDG <> "" Then
         If DeltaApproved(NDG) < 0 Then
-            WriteFact "Biggest line cut", DeltaApproved(NDG), "eur", NdgText(NDG), _
+            WriteFact "Biggest line cut", DeltaApproved(NDG), "eur", TiedNdgText(DeltaApproved, NDG), _
                 RangeDetail(DictAmount(BaseApproved, NDG), DictAmount(EndApproved, NDG))
         End If
     End If
@@ -2924,7 +3109,7 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(DeltaDrawn, True)
     If NDG <> "" Then
         If DeltaDrawn(NDG) > 0 Then
-            WriteFact "Biggest drawdown", DeltaDrawn(NDG), "eur", NdgText(NDG), _
+            WriteFact "Biggest drawdown", DeltaDrawn(NDG), "eur", TiedNdgText(DeltaDrawn, NDG), _
                 RangeDetail(DictAmount(BaseDrawn, NDG), DictAmount(EndDrawn, NDG))
         End If
     End If
@@ -2932,7 +3117,7 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(DeltaDrawn, False)
     If NDG <> "" Then
         If DeltaDrawn(NDG) < 0 Then
-            WriteFact "Biggest repayment", DeltaDrawn(NDG), "eur", NdgText(NDG), _
+            WriteFact "Biggest repayment", DeltaDrawn(NDG), "eur", TiedNdgText(DeltaDrawn, NDG), _
                 RangeDetail(DictAmount(BaseDrawn, NDG), DictAmount(EndDrawn, NDG))
         End If
     End If
@@ -3076,7 +3261,6 @@ Private Sub WriteHistorySection( _
     Dim EndIndex As Object
     Dim Ages As Object
     Dim Lives As Object
-    Dim Sorted As Variant
 
     Dim SnapshotDate As Date
     Dim NDG As String
@@ -3109,13 +3293,10 @@ Private Sub WriteHistorySection( _
     Dim BusiestNewDate As Date
     Dim BusiestEnded As Long
     Dim BusiestEndedDate As Date
-    Dim LastNewDate As Date
-    Dim LastEndedDate As Date
     Dim SnapshotsRead As Long
     Dim EndedCount As Long
     Dim ReturnedCount As Long
     Dim EverMc As Long
-    Dim AgeSum As Double
 
     Set Present = NewTextDictionary()
     Set FirstSeen = NewTextDictionary()
@@ -3228,7 +3409,6 @@ Private Sub WriteHistorySection( _
             End If
 
             If NewToday > 0 Then
-                LastNewDate = SnapshotDate
                 If NewToday > BusiestNew Then
                     BusiestNew = NewToday
                     BusiestNewDate = SnapshotDate
@@ -3236,7 +3416,6 @@ Private Sub WriteHistorySection( _
             End If
 
             If EndedToday > 0 Then
-                LastEndedDate = SnapshotDate
                 If EndedToday > BusiestEnded Then
                     BusiestEnded = EndedToday
                     BusiestEndedDate = SnapshotDate
@@ -3252,9 +3431,6 @@ Private Sub WriteHistorySection( _
         Exit Sub
     End If
 
-    WriteFact "Snapshots read", SnapshotsRead, "int", "", _
-        "Accounts only, from the start date on; the positions are read for the dates above alone"
-
     '
     ' The loans on the book today, by how long they have been there
     '
@@ -3267,7 +3443,6 @@ Private Sub WriteHistorySection( _
 
         If EndIndex.Exists(Key) Then
             Ages(Key) = CDbl(EndSnap.AsOfDate - CDate(FirstSeen(Key)))
-            AgeSum = AgeSum + CDbl(Ages(Key))
         Else
             EndedCount = EndedCount + 1
             Lives(Key) = CDbl(CDate(LastSeen(Key)) - CDate(FirstSeen(Key)))
@@ -3280,22 +3455,9 @@ Private Sub WriteHistorySection( _
 
     NDG = BestKey(Ages, True)
     If NDG <> "" Then
-        WriteFact "Oldest active loan", CDate(FirstSeen(NDG)), "date", NdgText(NDG), _
+        WriteFact "Oldest active loan", CDate(FirstSeen(NDG)), "date", TiedNdgText(Ages, NDG), _
             "first seen; " & Plural(CLng(Ages(NDG)), "day", "days") & " on the book" & _
             SpellsText(Spells, NDG)
-    End If
-
-    NDG = BestKey(Ages, False)
-    If NDG <> "" Then
-        WriteFact "Youngest active loan", CDate(FirstSeen(NDG)), "date", NdgText(NDG), _
-            "first seen; " & Plural(CLng(Ages(NDG)), "day", "days") & " on the book" & _
-            SpellsText(Spells, NDG)
-    End If
-
-    If Ages.Count > 0 Then
-        Sorted = SortedAmounts(Ages)
-        WriteFact "Average age of an active loan", AgeSum / Ages.Count, "int", "", _
-            "days since first seen; the median is " & Plural(CLng(MedianOf(Sorted)), "day", "days")
     End If
 
     '
@@ -3304,14 +3466,16 @@ Private Sub WriteHistorySection( _
 
     WriteFact "Clients ever on the book", FirstSeen.Count, "int", "", _
         EndIndex.Count & " on it today"
-    WriteFact "Loans ended since the first snapshot", EndedCount, "int"
+    WriteFact "Loans ended within the window", EndedCount, "int", "", _
+        "every NDG seen since the start that is not on the book today, loans begun after the start " & _
+        "included; a horizon's Ended loans counts only those on the book at its start"
     WriteFact "Loans that came back", ReturnedCount, "int", "", _
         "clients that left and reappeared"
 
     NDG = BestKey(Spells, True)
     If NDG <> "" Then
         If DictAmount(Spells, NDG) > 1 Then
-            WriteFact "Most spells on the book", Spells(NDG), "int", NdgText(NDG), _
+            WriteFact "Most spells on the book", Spells(NDG), "int", TiedNdgText(Spells, NDG), _
                 "first seen " & DateText(CDate(FirstSeen(NDG))) & ", last " & _
                 DateText(CDate(LastSeen(NDG)))
         End If
@@ -3319,13 +3483,13 @@ Private Sub WriteHistorySection( _
 
     NDG = BestKey(Lives, True)
     If NDG <> "" Then
-        WriteFact "Longest-lived ended loan", Lives(NDG), "int", NdgText(NDG), _
+        WriteFact "Longest-lived ended loan", Lives(NDG), "int", TiedNdgText(Lives, NDG), _
             "days from " & DateText(CDate(FirstSeen(NDG))) & " to " & DateText(CDate(LastSeen(NDG)))
     End If
 
     NDG = BestKey(Lives, False)
     If NDG <> "" Then
-        WriteFact "Shortest-lived ended loan", Lives(NDG), "int", NdgText(NDG), _
+        WriteFact "Shortest-lived ended loan", Lives(NDG), "int", TiedNdgText(Lives, NDG), _
             IIf(CDbl(Lives(NDG)) = 0, "seen in one snapshot only, ", "days; ") & _
             DateText(CDate(FirstSeen(NDG))) & " to " & DateText(CDate(LastSeen(NDG)))
     End If
@@ -3335,16 +3499,6 @@ Private Sub WriteHistorySection( _
         "new loans in one snapshot, the first snapshot aside"
     WriteFact "Busiest snapshot for ended loans", BusiestEnded, "int", _
         IIf(BusiestEnded > 0, DateText(BusiestEndedDate), ""), "loans ended in one snapshot"
-
-    If LastNewDate > 0 Then
-        WriteFact "Days since the last new loan", CLng(EndSnap.AsOfDate - LastNewDate), "int", _
-            DateText(LastNewDate), "the last snapshot with a new NDG"
-    End If
-
-    If LastEndedDate > 0 Then
-        WriteFact "Days since the last ended loan", CLng(EndSnap.AsOfDate - LastEndedDate), "int", _
-            DateText(LastEndedDate), "the last snapshot an NDG went missing from"
-    End If
 
     '
     ' Records
@@ -3385,13 +3539,13 @@ Private Sub WriteHistorySection( _
 
     NDG = BestKey(McCount, True, True)
     If NDG <> "" Then
-        WriteFact "Most snapshots in margin call", McCount(NDG), "int", NdgText(NDG), _
+        WriteFact "Most snapshots in margin call", McCount(NDG), "int", TiedNdgText(McCount, NDG), _
             IIf(EndIndex.Exists(NDG), "still on the book", "since ended")
     End If
 
     NDG = BestKey(McBest, True, True)
     If NDG <> "" Then
-        WriteFact "Longest margin call spell", McBest(NDG), "int", NdgText(NDG), _
+        WriteFact "Longest margin call spell", McBest(NDG), "int", TiedNdgText(McBest, NDG), _
             "snapshots in a row, ending " & DateText(CDate(McBestEnd(NDG)))
     End If
 
@@ -3450,25 +3604,25 @@ Public Sub ExportPortfolioFactsSlides()
 
     SuggestedFileName = _
         "Portfolio Facts " & GetDateCode(EndDate) & ".html"
-    
+
     SelectedPath = Application.GetSaveAsFilename( _
-        InitialFileName:=SuggestedFileName, _
+        InitialFileName:=SlidesDefaultFolder() & SuggestedFileName, _
         FileFilter:="HTML Files (*.html),*.html", _
         FilterIndex:=1, _
         Title:="Save Portfolio Facts Slides")
-    
+
     ' User clicked Cancel
     If VarType(SelectedPath) = vbBoolean Then
         If SelectedPath = False Then Exit Sub
     End If
-    
+
     FilePath = CStr(SelectedPath)
-    
+
     ' Ensure the HTML extension is present
     If LCase$(Right$(FilePath, 5)) <> ".html" Then
         FilePath = FilePath & ".html"
     End If
-    
+
     SaveUtf8Text FilePath, BuildSlidesHtml(ws, EndDate)
 
     On Error Resume Next
@@ -3496,6 +3650,27 @@ ErrorHandler:
 
 End Sub
 
+
+'
+' Where the Save As dialog opens: the workbook's own folder when that is
+' a folder on disk, the source folder when the workbook lives on
+' SharePoint or OneDrive and its path is a web address.
+'
+Private Function SlidesDefaultFolder() As String
+
+    Dim FolderPath As String
+
+    FolderPath = ThisWorkbook.Path
+
+    If FolderPath = "" Or LCase$(Left$(FolderPath, 4)) = "http" Then
+        FolderPath = PathSelection()
+    End If
+
+    If Right$(FolderPath, 1) <> "\" Then FolderPath = FolderPath & "\"
+
+    SlidesDefaultFolder = FolderPath
+
+End Function
 
 '
 ' The whole page: head and styles, the title slide, the sections' slides,
