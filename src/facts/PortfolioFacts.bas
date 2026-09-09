@@ -3926,6 +3926,86 @@ Private Function Em( _
 End Function
 
 '
+' A shown value short enough for a tile or a sentence: a euro amount from
+' a hundred thousand up reads "117.7m", "1.23bn" or "400k" behind the
+' sign; anything else stays as the sheet shows it.
+'
+Private Function ShortText( _
+    ByVal Shown As String, _
+    ByVal RawValue As Variant) As String
+
+    Dim Magnitude As Double
+
+    ShortText = Shown
+
+    If IsDate(RawValue) Then Exit Function
+    If Not IsNumeric(RawValue) Then Exit Function
+    If InStr(Shown, ChrW(&H20AC)) = 0 Then Exit Function
+
+    Magnitude = Abs(CDbl(RawValue))
+
+    If Magnitude < 100000 Then Exit Function
+
+    ShortText = IIf(CDbl(RawValue) < 0, ChrW(&H2212), "") & CompactAmount(Magnitude)
+
+End Function
+
+Private Function CompactAmount( _
+    ByVal Magnitude As Double) As String
+
+    If Magnitude >= 1000000000 Then
+        CompactAmount = Format(Magnitude / 1000000000, "0.00") & "bn"
+    ElseIf Magnitude >= 1000000 Then
+        CompactAmount = Format(Magnitude / 1000000, "0.0") & "m"
+    Else
+        CompactAmount = Format(Magnitude / 1000, "0") & "k"
+    End If
+
+    CompactAmount = ChrW(&H20AC) & CompactAmount
+
+End Function
+
+'
+' A fact's value, shortened, for a sentence.
+'
+Private Function SV( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String) As String
+
+    SV = ShortText(FV(Facts, SectionTitle, Label), FactPart(Facts, SectionTitle, Label, 3))
+
+End Function
+
+'
+' A change as words: "up EUR 117.7m", "down 3", "unchanged" - the sign
+' spoken, the amount shortened and unsigned.
+'
+Private Function ChangeText( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String) As String
+
+    Dim RawValue As Variant
+    Dim Shown As String
+
+    RawValue = FactPart(Facts, SectionTitle, Label, 3)
+    Shown = FV(Facts, SectionTitle, Label)
+
+    If Not IsNumeric(RawValue) Or IsDate(RawValue) Then
+        ChangeText = Shown
+    ElseIf Abs(CDbl(RawValue)) < FACT_TOLERANCE Then
+        ChangeText = "unchanged"
+    Else
+        Shown = ShortText(Shown, RawValue)
+        Shown = Replace(Shown, ChrW(&H2212), "")
+        Shown = Replace(Shown, "-", "")
+        ChangeText = IIf(CDbl(RawValue) > 0, "up ", "down ") & Shown
+    End If
+
+End Function
+
+'
 ' The class a value's sign earns: red below zero; green above it too when
 ' the sign is the point, as it is for a change.
 '
@@ -3980,7 +4060,7 @@ Private Function FactTile( _
     FactTile = _
         "<div class='tile'><div class='k'>" & HtmlEscape(ShownLabel) & "</div>" & _
         "<div class='v" & SignClass(FactPart(Facts, SectionTitle, Label, 3), Signed) & "'>" & _
-        HtmlEscape(FV(Facts, SectionTitle, Label)) & "</div>"
+        HtmlEscape(SV(Facts, SectionTitle, Label)) & "</div>"
 
     If SubText <> "" Then
         FactTile = FactTile & "<div class='s'>" & HtmlEscape(SubText) & "</div>"
@@ -4022,6 +4102,29 @@ Private Function FactRow( _
     If Detail <> "" Then FactRow = FactRow & "<div class='rd'>" & HtmlEscape(Detail) & "</div>"
 
     FactRow = FactRow & "</div>"
+
+End Function
+
+'
+' A one-line table row: the label, the value, who.  For a list too long
+' for rows with a detail under each, such as the largest position in every
+' category.  Nothing for a fact the sheet does not have.
+'
+Private Function FactTableRow( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal Label As String, _
+    Optional ByVal ShownLabel As String = "") As String
+
+    If Not HasFact(Facts, SectionTitle, Label) Then Exit Function
+
+    If ShownLabel = "" Then ShownLabel = Label
+
+    FactTableRow = _
+        "<tr><td class='tl'>" & HtmlEscape(ShownLabel) & "</td>" & _
+        "<td class='tv" & SignClass(FactPart(Facts, SectionTitle, Label, 3), False) & "'>" & _
+        HtmlEscape(FV(Facts, SectionTitle, Label)) & "</td>" & _
+        "<td class='tw'>" & HtmlEscape(FW(Facts, SectionTitle, Label)) & "</td></tr>"
 
 End Function
 
@@ -4149,10 +4252,10 @@ Private Function BookSlide( _
     If Not SectionHasFacts(Facts, S) Then Exit Function
 
     Take = _
-        Em(FV(Facts, S, "Active loans")) & " active loans hold " & _
-        Em(FV(Facts, S, "Collateral")) & " of collateral against " & _
-        Em(FV(Facts, S, "Drawn")) & " drawn on " & _
-        Em(FV(Facts, S, "Approved lines")) & " of approved lines: " & _
+        Em(SV(Facts, S, "Active loans")) & " active loans hold " & _
+        Em(SV(Facts, S, "Collateral")) & " of collateral against " & _
+        Em(SV(Facts, S, "Drawn")) & " drawn on " & _
+        Em(SV(Facts, S, "Approved lines")) & " of approved lines: " & _
         Em(FV(Facts, S, "Utilisation")) & " of the lines is used, and the loan to value is " & _
         Em(FV(Facts, S, "Loan to value")) & "."
 
@@ -4163,20 +4266,20 @@ Private Function BookSlide( _
         FactTile(Facts, S, "Drawn", "none") & _
         FactTile(Facts, S, "Approved lines", "none") & _
         "</div>" & _
-        "<div class='mid'>" & _
+        "<div class='mid five'>" & _
         FactTile(Facts, S, "Loan to value", "detail") & _
         FactTile(Facts, S, "Utilisation", "detail") & _
         FactTile(Facts, S, "Haircut collateral value", "detail") & _
-        FactTile(Facts, S, "Collateral as Accounts carry it (MTM)", "detail") & _
+        FactTile(Facts, S, "Clients in margin call", "detail") & _
+        FactTile(Facts, S, "Clients in shortfall", "detail") & _
         "</div>" & _
         "<div class='cols'>" & _
         FactColumn("What it is made of", FactRows(Facts, S, Array( _
             "Securities held", "Issuers", "Currencies", "Clients with a single security"))) & _
-        FactColumn("Mandates and alerts", FactRows(Facts, S, Array( _
+        FactColumn("Categories and mandates", FactRows(Facts, S, Array( _
             "Clients holding every category outside DPM", _
             "Clients whose DPM mandate spans equity, bonds and funds", _
-            "Clients with both a DPM mandate and other collateral", _
-            "Clients in margin call", "Clients in shortfall"))) & _
+            "Clients with both a DPM mandate and other collateral"))) & _
         "</div>" & _
         SlideClose(EndDate)
 
@@ -4202,11 +4305,11 @@ Private Function SpreadSlide( _
 
     If HasFact(Facts, C, "Largest client by collateral") Then
         Take = Take & "; the largest, " & Em(FW(Facts, C, "Largest client by collateral")) & _
-            ", holds " & Em(FV(Facts, C, "Largest client by collateral"))
+            ", holds " & Em(SV(Facts, C, "Largest client by collateral"))
     End If
 
     If HasFact(Facts, S, "Median client") Then
-        Take = Take & " against a median client of " & Em(FV(Facts, S, "Median client"))
+        Take = Take & " against a median client of " & Em(SV(Facts, S, "Median client"))
     End If
 
     Take = Take & "."
@@ -4248,13 +4351,14 @@ Private Function EdgesSlide( _
 
     If HasFact(Facts, C, "Closest to a margin call") Then
         If Take <> "" Then Take = Take & "; "
-        Take = Take & Em(FW(Facts, C, "Closest to a margin call")) & " has the least headroom before a margin call, " & _
-            Em(FV(Facts, C, "Closest to a margin call"))
+        Take = Take & Em(FW(Facts, C, "Closest to a margin call")) & _
+            " has the least headroom before a margin call, " & _
+            Em(SV(Facts, C, "Closest to a margin call"))
     End If
 
     If HasFact(Facts, C, "Deepest margin call") Then
         If Take <> "" Then Take = Take & "; "
-        Take = Take & "the deepest margin call is " & Em(FV(Facts, C, "Deepest margin call")) & _
+        Take = Take & "the deepest margin call is " & Em(SV(Facts, C, "Deepest margin call")) & _
             " (" & HtmlEscape(FW(Facts, C, "Deepest margin call")) & ")"
     End If
 
@@ -4287,7 +4391,7 @@ Private Function PositionsSlide( _
     If Not SectionHasFacts(Facts, P) Then Exit Function
 
     If HasFact(Facts, P, "Largest position") Then
-        Take = "The largest single position is " & Em(FV(Facts, P, "Largest position")) & ", " & _
+        Take = "The largest single position is " & Em(SV(Facts, P, "Largest position")) & ", " & _
             HtmlEscape(FW(Facts, P, "Largest position"))
     End If
 
@@ -4299,26 +4403,31 @@ Private Function PositionsSlide( _
 
     If Take <> "" Then Take = Take & "."
 
-    CategoryRows = FactRow(Facts, P, "Largest position", "Largest position, any category")
+    CategoryRows = FactTableRow(Facts, P, "Largest position", "Any category")
 
     For Each Category In CollateralCategories()
         CategoryRows = CategoryRows & _
-            FactRow(Facts, P, "Largest " & CStr(Category(1)) & " position", CStr(Category(1)))
+            FactTableRow(Facts, P, "Largest " & CStr(Category(1)) & " position", CStr(Category(1)))
     Next Category
 
+    If CategoryRows <> "" Then
+        CategoryRows = "<table class='tbl'>" & CategoryRows & "</table>"
+    End If
+
     PositionsSlide = SlideOpen("What the collateral is made of", SectionBasis(Facts, P), Take) & _
-        "<div class='mid'>" & _
+        "<div class='mid six'>" & _
         FactTile(Facts, P, "Cash", "detail") & _
-        FactTile(Facts, P, "Non-eligible collateral", "detail") & _
-        FactTile(Facts, P, "Collateral not priced in euro", "detail") & _
-        FactTile(Facts, P, "Collateral above concentration limits", "detail") & _
+        FactTile(Facts, P, "Non-eligible collateral", "detail", False, "Non-eligible") & _
+        FactTile(Facts, P, "Collateral not priced in euro", "detail", False, "Not in euro") & _
+        FactTile(Facts, P, "Largest foreign currency", "who", False, "Largest foreign currency") & _
+        FactTile(Facts, P, "Collateral above concentration limits", "detail", False, "Above a limit") & _
+        FactTile(Facts, P, "Collateral of an unmapped asset type", "detail", False, "Unmapped type") & _
         "</div>" & _
         "<div class='cols'>" & _
-        FactColumn("The largest position in each category", CategoryRows, "", True) & _
+        FactColumn("The largest position in each category", CategoryRows) & _
         FactColumn("Securities and issuers", FactRows(Facts, P, Array( _
             "Most widely held security", "Largest security across the book", _
-            "Securities held by one client only", "Largest issuer", "Most common issuer", _
-            "Largest foreign currency", "Collateral of an unmapped asset type"))) & _
+            "Securities held by one client only", "Largest issuer", "Most common issuer"))) & _
         "</div>" & _
         SlideClose(EndDate)
 
@@ -4342,7 +4451,7 @@ Private Function ExposureSlide( _
 
     If HasFact(Facts, X, "Largest name") Then
         Take = "Looked through, the largest name is " & Em(FW(Facts, X, "Largest name")) & _
-            " at " & Em(FV(Facts, X, "Largest name"))
+            " at " & Em(SV(Facts, X, "Largest name"))
     End If
 
     If HasFact(Facts, X, "Countries") And HasFact(Facts, X, "Sectors") Then
@@ -4353,7 +4462,7 @@ Private Function ExposureSlide( _
 
     If HasFact(Facts, X, "Exposure reached through certificates") Then
         If Take <> "" Then Take = Take & ", "
-        Take = Take & Em(FV(Facts, X, "Exposure reached through certificates")) & _
+        Take = Take & Em(SV(Facts, X, "Exposure reached through certificates")) & _
             " of it through certificates"
     End If
 
@@ -4386,6 +4495,10 @@ Private Function ExposureSlide( _
 
 End Function
 
+'
+' A window of movement takes two slides: the book and its loans, then
+' the positions and securities that moved.
+'
 Private Function MovementSlide( _
     ByVal Facts As Object, _
     ByVal SectionTitle As String, _
@@ -4399,20 +4512,20 @@ Private Function MovementSlide( _
         Exit Function
     End If
 
-    Take = "Collateral " & Em(FV(Facts, SectionTitle, "Collateral")) & ", drawn " & _
-        Em(FV(Facts, SectionTitle, "Drawn")) & ", " & _
-        Em(FV(Facts, SectionTitle, "Active loans")) & " loans net: " & _
-        Em(FV(Facts, SectionTitle, "New loans")) & " new against " & _
-        Em(FV(Facts, SectionTitle, "Ended loans")) & " ended"
+    Take = "Collateral " & Em(ChangeText(Facts, SectionTitle, "Collateral")) & _
+        ", drawn " & Em(ChangeText(Facts, SectionTitle, "Drawn")) & "; " & _
+        Em(FV(Facts, SectionTitle, "New loans")) & " new loans against " & _
+        Em(FV(Facts, SectionTitle, "Ended loans")) & " ended, the book " & _
+        Em(ChangeText(Facts, SectionTitle, "Active loans")) & " loans"
 
     If HasFact(Facts, SectionTitle, "Biggest riser") Then
         Take = Take & "; the biggest riser " & Em(FW(Facts, SectionTitle, "Biggest riser")) & _
-            " at " & Em(FV(Facts, SectionTitle, "Biggest riser"))
+            ", " & Em(ChangeText(Facts, SectionTitle, "Biggest riser"))
     End If
 
     If HasFact(Facts, SectionTitle, "Biggest faller") Then
         Take = Take & ", the biggest faller " & Em(FW(Facts, SectionTitle, "Biggest faller")) & _
-            " at " & Em(FV(Facts, SectionTitle, "Biggest faller"))
+            ", " & Em(ChangeText(Facts, SectionTitle, "Biggest faller"))
     End If
 
     Take = Take & "."
@@ -4426,14 +4539,61 @@ Private Function MovementSlide( _
         FactTile(Facts, SectionTitle, "Positions", "detail", True) & _
         "</div>" & _
         "<div class='cols'>" & _
+        FactColumn("Loans in", FactRows(Facts, SectionTitle, Array( _
+            "New loans", "Largest new loan", "Biggest riser", "Biggest line increase", _
+            "Biggest drawdown"), True)) & _
+        FactColumn("Loans out", FactRows(Facts, SectionTitle, Array( _
+            "Ended loans", "Largest ended loan", "Biggest faller", "Biggest line cut", _
+            "Biggest repayment"), True)) & _
+        "</div>" & _
+        SlideClose(EndDate)
+
+    MovementSlide = MovementSlide & vbLf & MovementPositionsSlide(Facts, SectionTitle, EndDate)
+
+End Function
+
+Private Function MovementPositionsSlide( _
+    ByVal Facts As Object, _
+    ByVal SectionTitle As String, _
+    ByVal EndDate As Date) As String
+
+    Dim Take As String
+
+    If HasFact(Facts, SectionTitle, "Largest position increase") Then
+        Take = "The largest position increase was " & _
+            Em(SV(Facts, SectionTitle, "Largest position increase")) & " (" & _
+            HtmlEscape(FW(Facts, SectionTitle, "Largest position increase")) & ")"
+    End If
+
+    If HasFact(Facts, SectionTitle, "Largest position decrease") Then
+        If Take <> "" Then Take = Take & ", the largest decrease " Else Take = "The largest position decrease was "
+        Take = Take & Em(SV(Facts, SectionTitle, "Largest position decrease")) & " (" & _
+            HtmlEscape(FW(Facts, SectionTitle, "Largest position decrease")) & ")"
+    End If
+
+    If HasFact(Facts, SectionTitle, "Category gaining most") Then
+        If Take <> "" Then Take = Take & "; "
+        Take = Take & Em(FW(Facts, SectionTitle, "Category gaining most")) & " gained most, " & _
+            Em(ChangeText(Facts, SectionTitle, "Category gaining most"))
+    End If
+
+    If HasFact(Facts, SectionTitle, "Category losing most") Then
+        If Take <> "" Then Take = Take & ", "
+        Take = Take & Em(FW(Facts, SectionTitle, "Category losing most")) & " lost most, " & _
+            Em(ChangeText(Facts, SectionTitle, "Category losing most"))
+    End If
+
+    If Take <> "" Then Take = Take & "."
+
+    MovementPositionsSlide = _
+        SlideOpen(SectionTitle & ": positions and securities", SectionBasis(Facts, SectionTitle), Take) & _
+        "<div class='cols'>" & _
         FactColumn("In", FactRows(Facts, SectionTitle, Array( _
-            "New loans", "Largest new loan", "Biggest riser", "Largest position increase", _
-            "Biggest line increase", "Biggest drawdown", "Category gaining most", _
-            "Securities new to the book", "Largest newcomer", "New margin calls"), True), "", True) & _
+            "Largest position increase", "Category gaining most", "Securities new to the book", _
+            "Largest newcomer", "New margin calls"), True)) & _
         FactColumn("Out", FactRows(Facts, SectionTitle, Array( _
-            "Ended loans", "Largest ended loan", "Biggest faller", "Largest position decrease", _
-            "Biggest line cut", "Biggest repayment", "Category losing most", _
-            "Securities gone from the book", "Margin calls cleared", "Most active repositioner"), True), "", True) & _
+            "Largest position decrease", "Category losing most", "Securities gone from the book", _
+            "Margin calls cleared", "Most active repositioner"), True)) & _
         "</div>" & _
         SlideClose(EndDate)
 
@@ -4449,13 +4609,14 @@ Private Function HistorySlide( _
 
     If Not SectionHasFacts(Facts, H) Then Exit Function
 
-    Take = Em(FV(Facts, H, "Clients ever on the book")) & " clients have been on the book over the run; " & _
+    Take = Em(FV(Facts, H, "Clients ever on the book")) & _
+        " clients have been on the book over the run; " & _
         Em(FV(Facts, H, "Loans ended within the window")) & " loans ended and " & _
         Em(FV(Facts, H, "Loans that came back")) & " came back"
 
     If HasFact(Facts, H, "Record collateral (MTM in Accounts)") Then
         Take = Take & ". The record collateral was " & _
-            Em(FV(Facts, H, "Record collateral (MTM in Accounts)")) & " on " & _
+            Em(SV(Facts, H, "Record collateral (MTM in Accounts)")) & " on " & _
             Em(FW(Facts, H, "Record collateral (MTM in Accounts)"))
     End If
 
@@ -4469,14 +4630,16 @@ Private Function HistorySlide( _
         FactTile(Facts, H, "Clients ever in margin call", "detail") & _
         FactTile(Facts, H, "Clients ever in shortfall", "none") & _
         "</div>" & _
-        "<div class='cols'>" & _
+        "<div class='cols three'>" & _
         FactColumn("Records", FactRows(Facts, H, Array( _
             "Record collateral (MTM in Accounts)", "Lowest collateral (MTM in Accounts)", _
-            "Record drawn", "Lowest drawn", "Most loans at once", "Fewest loans at once", _
-            "Largest line ever approved")), "", True) & _
-        FactColumn("Lives and spells", FactRows(Facts, H, Array( _
-            "Oldest active loan", "Longest-lived ended loan", "Shortest-lived ended loan", _
-            "Most spells on the book", "Busiest snapshot for new loans", "Busiest snapshot for ended loans", _
+            "Record drawn", "Lowest drawn"))) & _
+        FactColumn("Loans and lines", FactRows(Facts, H, Array( _
+            "Most loans at once", "Fewest loans at once", "Largest line ever approved", _
+            "Oldest active loan"))) & _
+        FactColumn("Spells and calls", FactRows(Facts, H, Array( _
+            "Longest-lived ended loan", "Shortest-lived ended loan", "Most spells on the book", _
+            "Busiest snapshot for new loans", "Busiest snapshot for ended loans", _
             "Most snapshots in margin call", "Longest margin call spell")), "", True) & _
         "</div>" & _
         SlideClose(EndDate)
@@ -4588,9 +4751,10 @@ Private Function SlidesCss() As String
     Css = Css & ".tile{border-left:.35rem solid #943634;padding:.2rem 0 .2rem 1.2rem;min-width:0;}"
     Css = Css & ".tile .k{font-size:1.3rem;color:#777;text-transform:uppercase;letter-spacing:.05em;" & _
           "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
-    Css = Css & ".hero .tile .v{font-size:4.6rem;font-weight:700;line-height:1.1;}"
-    Css = Css & ".mid .tile .v,.strip .tile .v{font-size:2.9rem;font-weight:700;line-height:1.15;}"
-    Css = Css & ".mid.six .tile .v{font-size:2.2rem;}"
+    Css = Css & ".tile .v{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
+    Css = Css & ".hero .tile .v{font-size:4.2rem;font-weight:700;line-height:1.1;}"
+    Css = Css & ".mid .tile .v,.strip .tile .v{font-size:2.8rem;font-weight:700;line-height:1.15;}"
+    Css = Css & ".mid.six .tile .v{font-size:2.1rem;}"
     Css = Css & ".tile .s{font-size:1.3rem;color:#666;margin-top:.2rem;display:-webkit-box;" & _
           "-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}"
     Css = Css & ".v.neg,.n.neg{color:#b02a26;}.v.pos,.n.pos{color:#2e7d4f;}"
@@ -4602,12 +4766,18 @@ Private Function SlidesCss() As String
     Css = Css & ".col h3 span{color:#222;text-transform:none;letter-spacing:0;font-size:1.9rem;margin-left:.8rem;}"
     Css = Css & ".row{padding:.45rem 0;border-bottom:1px solid #f0ece7;}"
     Css = Css & ".rl{font-size:1.25rem;color:#777;text-transform:uppercase;letter-spacing:.05em;}"
-    Css = Css & ".rv{font-size:2.1rem;line-height:1.2;}"
+    Css = Css & ".rv{font-size:2.1rem;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
     Css = Css & ".rv .n{font-weight:700;}"
     Css = Css & ".rv .who{font-size:1.5rem;color:#333;}"
     Css = Css & ".rd{font-size:1.25rem;color:#666;margin-top:.1rem;display:-webkit-box;" & _
           "-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}"
     Css = Css & ".tight .row{padding:.3rem 0;}.tight .rv{font-size:1.85rem;}.tight .rd{-webkit-line-clamp:1;}"
+    Css = Css & ".tbl{width:100%;border-collapse:collapse;table-layout:fixed;font-size:1.5rem;}"
+    Css = Css & ".tbl td{padding:.4rem .4rem;border-bottom:1px solid #f0ece7;white-space:nowrap;" & _
+          "overflow:hidden;text-overflow:ellipsis;}"
+    Css = Css & ".tbl .tl{width:24%;color:#777;text-transform:uppercase;font-size:1.2rem;letter-spacing:.05em;}"
+    Css = Css & ".tbl .tv{width:22%;font-weight:700;text-align:right;padding-right:1.2rem;}"
+    Css = Css & ".tbl .tw{color:#333;}"
     Css = Css & ".note{font-size:1.8rem;color:#444;margin:.6rem 0;}"
     Css = Css & ".slide.title{justify-content:center;background:#943634;color:#fff;}"
     Css = Css & ".title h1{font-size:7rem;margin:0 0 1rem;font-weight:700;}"

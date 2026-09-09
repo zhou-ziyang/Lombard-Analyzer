@@ -308,11 +308,14 @@ As dialog puts it — opening on the workbook's folder, or on the source folder
 when the workbook lives on SharePoint — then opens it in the browser. The
 deck tells the sheet as a story: a cover with the headline figures, then one
 slide per theme — the book, how it is spread, the clients at its edges, what
-the collateral is made of, where the exposure sits, each window of movement,
-the whole run — each with a one-line takeaway composed from the facts it
-leads with, found by name, tiles for the figures that lead and columns of
-rows for the rest; the type scales to the window, arrow keys or a click turn
-the pages, and it prints one slide per landscape page.
+the collateral is made of, where the exposure sits, each window of movement
+over two slides (the loans, then the positions and securities), the whole
+run — each with a one-line takeaway composed from the facts it leads with,
+found by name, tiles for the figures that lead and columns of at most five
+or six rows for the rest, euro amounts shortened to €117.7m in tiles and
+takeaways so nothing spills into its neighbour; the type scales to the
+window, arrow keys or a click turn the pages, and it prints one slide per
+landscape page.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears
