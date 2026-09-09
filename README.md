@@ -17,6 +17,7 @@ configuration parameters (as defined names) and one button per entry point.
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `DeltaRevenue.BuildRevenueSummary` |
 | 03 Weekly Analysis | `WeeklyEndDate`, `WeeklyCompareDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
+| 05 Portfolio Facts | `FactsStartDate`, `FactsEndDate` | Portfolio Facts | `PortfolioFacts.GeneratePortfolioFacts` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
 `GenerateWeeklyAnalysis` draws onto the generated *Weekly Analysis* sheet,
@@ -24,7 +25,8 @@ configuration parameters (as defined names) and one button per entry point.
 button drawn onto *New Geo-Sec Lookup* when a company has changed its name, and
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
 buttons that `AddPositionAnalysisButtons` draws onto *NDG Journey* and the
-dashboard's history table.
+dashboard's history table, and `PortfolioFacts.ExportPortfolioFactsSlides`
+from the *Slides* button drawn onto *Portfolio Facts*.
 
 `EmailTo` and `EmailCc` hold the draft's recipients, semicolon-separated, and
 are read like any other Home parameter. A name that has not been created yet
@@ -62,7 +64,7 @@ not generated:
 | Certificate Underlyings | — | RIC → underlying name, ISIN, asset class, basket component RICs |
 
 Generated sheets (*Weekly Analysis*, *Asset Type
-Mapping*, *New Geo-Sec Lookup*, *Risk Exposure*, *NDG Journey*, *NDG Dashboard*, *Position Change
+Mapping*, *New Geo-Sec Lookup*, *Risk Exposure yyyymmdd* — one per staged date, *NDG Journey*, *NDG Dashboard*, *Position Change
 Analysis*, *Revenue Summary*, `Delta_<yyyymmdd>`, `Closed_<yyyymmdd>`) are
 rebuilt from source and are not committed here.
 
@@ -157,17 +159,21 @@ to reach across for (`ReadAllLines`, `FindHeaderIndex`, `FormatReportTable`,
 module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
 only Public procedures with no caller in the source are the zero-argument
-entry points a button names — the eight on Home, plus
-`InsertRenamedCompanies` behind a button the code itself draws. Two
+entry points a button names — the nine on Home, plus
+`InsertRenamedCompanies` and `ExportPortfolioFactsSlides` behind buttons the
+code itself draws. Two
 exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
-a button that would not be visible from the source.
+a button that would not be visible from the source. Three helpers are Public
+because `PortfolioFacts` calls them: the CSV field cleaner, the number parser and
+the category list, so the facts read the same files the same way and sum by
+the same categories.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 12,400 lines and 206 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 202 of those procedures are
+It is 13,900 lines and 233 procedures, and it does not get split, because in
+VBA splitting it would cost more than it buys. 226 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -180,7 +186,7 @@ to find things — the file order already gives, and the sections run in the
 order the report is built: source loading and CSV parsing, the report
 sections, risk reference data, certificate basket expansion, entity-name
 normalisation, the ranked formulas and the staging table they read, then the
-chart and the notes. `docs/weekly-analysis-generate.md` walks through them.
+pie, the loan-flow diagram and the notes. `docs/weekly-analysis-generate.md` walks through them.
 
 `archive/JourneyVisualization.bas` is commented out in full. Its charting
 procedures were revived inside `JourneyDashboardTable`, which now carries the
@@ -204,14 +210,23 @@ year-end, the compared date and the current date with their shares, then
 Month* and *Collateral Entered with New NDGs in the Past Month* each show the
 compared date's row (amounts and shares, for the entered table) over this
 report's, both over the past month, and close with a `% Change WoW` row
-between the two. Every ratio is a formula, blank on a zero base. The current
+between the two. Every ratio is a formula, blank on a base that is zero or
+under half a cent — the residue an allocation can leave. The current
 snapshot's rows in the overview and the breakdown are highlighted, dark red
 (#943634) under white. The overview and the two movement tables stack in the
 left column with the same five columns — loans, approved loan, drawn amount,
 collateral value — so the three read as one; the notes box sits under them at
 the same width, the breakdown column starts one spacer column to their right
-with the entered table and the pie under it, and the concentration block one
-spacer column after the breakdown.
+with the entered table, the pie and the loan-flow diagram under it, and the
+concentration block one spacer column after the breakdown. The loan-flow
+diagram is a Sankey drawn from shapes, since Excel has no chart of that
+kind: what the collateral lost over the month on the left — the loans
+ended, and the positions of the NDGs that stayed that fell — the collateral
+categories in the middle, what it gained on the right — the new loans, and
+the positions that rose — each band as wide as the collateral that movement
+carried out of or into its category, each category bar green, red or grey
+by the way its net move went, the pieces grouped as one shape so the email
+copies it as one picture.
 The concentration block is the bulk of the module: certificate baskets are
 expanded recursively into their underlyings, entity names are normalised and
 merged (diacritics, legal suffixes, share class suffixes, prefix matching,
@@ -219,13 +234,88 @@ manual variants), resolved against the reference sheets, and staged into the
 `RiskExposure` table with an account scope flag. The top-10 tables by name,
 geography and sector — full portfolio and excluding segregated accounts — are
 then worksheet formulas over that table, one per subtable, left live in the
-sheet. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
+sheet. Beside each rank, a move: where the name stood on the compared date,
+as a green or red arrow with the places moved, `=` for none, `new` for a
+name that date did not rank. The compared date's ranking is read from its
+staged exposure: staging sheets are one per date, *Risk Exposure yyyymmdd*,
+so the last run's is on file, and a date that was never staged is staged on
+the spot by the same pass the report date gets — alone and quietly: the
+reference sheets brought up to that snapshot but no issuer name corrected,
+no lookup rows, no notes — so the moves are always there and both dates
+resolve names the same way. The reuse question names
+the two dates the run needs and which are on file: the answer rebuilds or
+reuses those, a date not on file is staged either way, and no other date's
+table is ever taken in its place. The run's own table carries the
+`RiskExposure` name the formulas use; every other date's is suffixed with
+its date. The undated *Risk Exposure* sheet earlier builds wrote is adopted
+as a dated one on the first run. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
 loans, breakdown, new loans, loans ended, entered collateral, the pie, the
-concentration tables — and assembles the Outlook message, its intro naming
+loan-flow diagram, the concentration tables — and assembles the Outlook message, its intro naming
 the date compared to. `docs/weekly-analysis-generate.md` walks
 through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three
 separate asset classifications.
+
+**Portfolio Facts** — `GeneratePortfolioFacts` builds one sheet of figures and
+superlatives from its own button, for its own dates — `FactsEndDate`, and
+`FactsStartDate` for the first snapshot to read, blank for every one on file,
+as the dashboard's start date works; an end date with no snapshot is read as
+the last one on or before it — and goes into no email. Four sections read the
+end date's snapshots — the book (totals, utilisation, loan to value as the
+dashboard reads it — the approved lines over the MTM collateral Accounts
+carry — the haircut collateral value with its weighted Max LTV and its
+headroom over the lines, currencies, margin calls, the median client, the
+top-5 and top-10 shares and a Herfindahl index, untouched lines, and the
+clients holding every category outside DPM, whose DPM mandate spans equity,
+bonds and funds, or who hold both), the clients (largest and smallest by
+collateral, drawn and line; highest and lowest loan to value; closest to a
+margin call and deepest in one, both against the approved line; most
+positions, currencies and categories; most concentrated and most evenly
+spread; largest cash, non-eligible and above-limit holders), the positions
+(the largest position over the book and in each category with its holder,
+the most widely held and the largest security, the largest and most common
+issuer, foreign currency, cash, non-eligible and above-limit totals), and the
+exposure looked through — read from the end date's staged *Risk Exposure*
+table, the one the Weekly Analysis leaves behind, and never staged here,
+since resolving names can take a lookup by hand; each dimension runs over
+the classes the report's own tables show for it (`BuildRiskSubtableVisibility`
+is Public for that), so countries and sectors leave funds out as the report
+does: the largest member, the most widely held, the client most concentrated
+in one and the client spread over the most, members held by one client only;
+what is reached through certificates, the certificate with the most
+underlyings and the underlying in the most certificates, underlyings that
+could not be named, and the DPM share. Where several clients or securities
+tie for a superlative they are all listed. Every movement is read two ways,
+each against a snapshot on file — the first on or after one month back, the
+first on or after year-end, resolved the way the report resolves its dates —
+with the book's totals, new and ended loans and the largest of each, the
+biggest riser and faller, the largest position increase and decrease, the
+most active repositioner, line increases and cuts, drawdowns and repayments,
+the categories gaining and losing most, securities new to and gone from the
+book, and margin calls raised and cleared. The last section walks every
+Accounts snapshot from the start date to the end date (Accounts only;
+positions are read for the three dates above): the oldest active loan,
+clients ever on the book, loans ended within the window and loans that came
+back, the longest- and shortest-lived ended loans, the busiest snapshots for
+new and ended loans, record and lowest collateral, drawn and loan counts with
+their dates, the largest line ever approved, and margin calls over the run.
+The module reads the CSVs itself through the weekly module's field cleaner
+and number parser, keeps one row per NDG, and sums positions once per
+snapshot into dictionaries the sections share. The sheet carries a *Slides*
+button: `ExportPortfolioFactsSlides` reads it back through the row markers it
+keeps in a hidden column and writes one self-contained HTML deck where a Save
+As dialog puts it — opening on the workbook's folder, or on the source folder
+when the workbook lives on SharePoint — then opens it in the browser. The
+deck tells the sheet as a story: a cover with the headline figures, then one
+slide per theme — the book, how it is spread, the clients at its edges, what
+the collateral is made of, where the exposure sits, each window of movement
+over two slides (the loans, then the positions and securities), the whole
+run — each with a one-line takeaway composed from the facts it leads with,
+found by name, tiles for the figures that lead and columns of at most five
+or six rows for the rest, euro amounts shortened to €117.7m in tiles and
+takeaways so nothing spills into its neighbour; the type scales to the
+window, arrow keys or a click turn the pages, and it prints one slide per
+landscape page.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

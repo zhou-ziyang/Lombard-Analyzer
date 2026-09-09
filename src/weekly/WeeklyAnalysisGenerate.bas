@@ -138,6 +138,15 @@ Private Const RENAME_NOTE_LIMIT As Long = 10
 Private Const REPORT_DATE_FORMAT As String = "dd/mm/yyyy"
 
 '
+' A base an Excel ratio divides by counts as nothing below this: the sums
+' the sheet divides by are made of allocations that can leave a few
+' millionths of a euro behind where there is no exposure at all, and a
+' change against that reads in the billions of percent.  Half a cent is
+' under what any cell shows.
+'
+Private Const ZERO_BASE_TOLERANCE As String = "0.005"
+
+'
 ' The Home name holding the date the report is compared to.
 '
 Private Const COMPARE_DATE_NAME As String = "WeeklyCompareDate"
@@ -152,12 +161,40 @@ Private Const RISK_BIND_WIDTH As Long = 6
 '
 Private Const PIE_TOP_GAP_POINTS As Double = 30
 Private Const PIE_BOTTOM_GAP_POINTS As Double = 8
+'
+' The loan-flow diagram under the pie, in points: the name its shapes are
+' grouped under, the node bars' width, the air between the collateral
+' nodes, the least height a node is drawn with so a sliver of collateral
+' still shows, the width kept for the labels either side, and the title's.
+'
+Private Const FLOW_SHAPE_NAME As String = "LoanFlowSankey"
+Private Const FLOW_NODE_WIDTH As Double = 14
+Private Const FLOW_NODE_GAP As Double = 10
+Private Const FLOW_NODE_MIN_HEIGHT As Double = 4
+Private Const FLOW_LABEL_WIDTH As Double = 120
+Private Const FLOW_TITLE_HEIGHT As Double = 44
+Private Const FLOW_SIDE_GAP As Double = 24
+'
+' A position that moved by less than this over the month, in euro, has not
+' moved: the residue a valuation leaves.
+'
+Private Const FLOW_CHANGE_FLOOR As Double = 0.005
 Private Const POSITION_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Positions.csv"
 Private Const ACCOUNT_FILE_SUFFIX As String = _
     "_Lombard_Loans_ITA_Accounts.csv"
 Private Const RISK_STAGE_SHEET As String = "Risk Exposure"
 Private Const RISK_STAGE_TABLE As String = "RiskExposure"
+
+'
+' A staging sheet per snapshot, named for its date - "Risk Exposure
+' 20260907" - so the compared date's staged exposure is on file to rank
+' against and nothing is staged twice.  The run's own table carries the
+' name the report's formulas use, RiskExposure; every other date's is
+' suffixed with its date.  The undated sheet earlier builds wrote, and the
+' copy one of them kept beside it, are adopted on the first run.
+'
+Private Const RISK_STAGE_PRIOR_SHEET As String = "Risk Exposure Prior"
 Private Const LEGACY_RISK_STAGE_NON_DPM_SHEET As String = _
     "Risk Exposure - Non-DPM"
 Private Const LEGACY_RISK_STAGE_DPM_SHEET As String = _
@@ -225,6 +262,13 @@ Private WeeklyAccountCache As Object
 Private RiskStagePositionsScanned As Long
 Private RiskStageRowsDropped As Long
 
+'
+' Set while the compared date is being staged for the rank changes: the
+' notes that pass would write belong to a report for that date, not to
+' this one.
+'
+Private RiskStagingQuietly As Boolean
+
 Private Enum IssuerPlaceholderMode
 
     PlaceholderFromISIN = 1
@@ -249,7 +293,11 @@ Private Type ReportSnapshots
 
 End Type
 
-Private Function BuildRiskSubtableVisibility() As Object
+'
+' Public for PortfolioFacts, whose country and sector facts run over the
+' classes these tables show, so the two agree on what a country is.
+'
+Public Function BuildRiskSubtableVisibility() As Object
 
     Dim Visibility As Object
 
@@ -267,7 +315,7 @@ Private Function BuildRiskSubtableVisibility() As Object
     Visibility.Add "Issuer|Sovereign Bonds", True
     Visibility.Add "Issuer|Funds", True
     Visibility.Add "Issuer|Certificates", True
-    ' Visibility.Add "Issuer|Overall", True
+    Visibility.Add "Issuer|Overall", True
 
     Visibility.Add "Country|Equity", True
     Visibility.Add "Country|Corporate Bonds", True
@@ -416,7 +464,11 @@ Private Function WeeklySourceLines( _
 
 End Function
 
-Private Function CleanWeeklyCsvField( _
+'
+' The next two are Public for PortfolioFacts, which reads the same files and
+' must parse them the same way.
+'
+Public Function CleanWeeklyCsvField( _
     ByVal FieldValue As Variant) As String
 
     Dim Result As String
@@ -471,7 +523,7 @@ Private Function WeeklyCsvField( _
 
 End Function
 
-Private Function WeeklyCsvDouble( _
+Public Function WeeklyCsvDouble( _
     ByVal InputValue As Variant) As Double
 
     Dim NumberText As String
@@ -1035,8 +1087,7 @@ Public Sub GenerateWeeklyAnalysis()
     ' ThisWorkbook, not the active one.  This process opens the certificate
     ' reference workbook, and the same modules are dropped into the other
     ' Lombard workbooks, so whichever workbook happens to be active is not
-    ' reliably this one.  CurrentRiskStageAnalysisDate already reads it this
-    ' way, and the two dates have to agree.
+    ' reliably this one.
     '
     CurrentDate = _
         ThisWorkbook.Worksheets("Home").Range("WeeklyEndDate").Value
@@ -1076,6 +1127,7 @@ Public Sub GenerateWeeklyAnalysis()
 
     OldNoteHandler = NoteHandler
     NoteHandler = "WriteNoteWeekly"
+    RiskStagingQuietly = False
     Set ReportNotes = New Collection
     MissingFiles = ""
     ResetSheetOverwriteDecision
@@ -1121,7 +1173,13 @@ Public Sub GenerateWeeklyAnalysis()
 
     If WeeklyDataHasRows(ThisReport.Positions) Then
 
-        BuildRiskGranularitySection ws, ThisReport.Positions
+        BuildRiskGranularitySection _
+            ws, _
+            ThisReport.Positions, _
+            CurrentDate, _
+            PriorReport.Positions, _
+            CompareDate, _
+            False
 
     End If
 
@@ -1184,6 +1242,13 @@ Public Sub GenerateWeeklyAnalysis()
 
     End If
 
+    If WeeklyDataHasRows(ThisReport.Accounts) And _
+       WeeklyDataHasRows(ThisReport.MonthAccounts) Then
+
+        CreateLoanFlowDiagram ws, ThisReport, CurrentDate, UnknownAssets
+
+    End If
+
     CreateWeeklyEmailButton ws
 
     If MissingFiles <> "" Then
@@ -1197,6 +1262,7 @@ ExitRoutine:
     ClearWeeklySourceCache
 
     NoteHandler = OldNoteHandler
+    RiskStagingQuietly = False
 
     ResetExcel
 
@@ -1500,7 +1566,10 @@ End Sub
 ' column header. Every collateral table, total and pie slice is driven from
 ' this one list, so a category is added or renamed in a single place.
 '
-Private Function CollateralCategories() As Variant
+'
+' Public for PortfolioFacts, which sums by the same categories.
+'
+Public Function CollateralCategories() As Variant
 
     CollateralCategories = Array( _
         Array("Certificates", "Certificates"), _
@@ -1592,7 +1661,8 @@ End Sub
 '
 ' Each category's share of the amount row above, as a formula: Excel does
 ' the division and a reader can see what was divided by what.  A row that
-' sums to nothing shows blank rather than an error.
+' sums to nothing - or to a residue below ZERO_BASE_TOLERANCE - shows
+' blank rather than an error or a nonsense.
 '
 Private Sub WriteCollateralShares( _
     ByVal ws As Worksheet, _
@@ -1618,7 +1688,7 @@ Private Sub WriteCollateralShares( _
     ' reference across the categories while the total stays anchored.
     '
     ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
-        "=IF(" & TotalText & "=0,""""," & _
+        "=IF(ABS(" & TotalText & ")<" & ZERO_BASE_TOLERANCE & ",""""," & _
         ws.Cells(AmountRow, FirstCol).Address(False, False) & _
         "/" & TotalText & ")"
 
@@ -1662,8 +1732,9 @@ End Sub
 
 '
 ' The change from the base row to the current row, column by column, as one
-' relative formula over the row.  A column with no base amount shows blank:
-' there is no change to speak of from nothing.
+' relative formula over the row.  A column with no base amount - none, or
+' a residue below ZERO_BASE_TOLERANCE - shows blank: there is no change
+' to speak of from nothing.
 '
 Private Sub WriteChangeFormulas( _
     ByVal ws As Worksheet, _
@@ -1680,7 +1751,7 @@ Private Sub WriteChangeFormulas( _
     BaseText = ws.Cells(BaseRow, FirstCol).Address(False, False)
 
     ws.Range(ws.Cells(RowNo, FirstCol), ws.Cells(RowNo, LastCol)).Formula = _
-        "=IF(" & BaseText & "=0,""""," & _
+        "=IF(ABS(" & BaseText & ")<" & ZERO_BASE_TOLERANCE & ",""""," & _
         CurrentText & "/" & BaseText & "-1)"
 
 End Sub
@@ -2242,8 +2313,204 @@ Private Sub BuildEnteredCollateralSection( _
 End Sub
 
 '
+' The NDGs one snapshot has and another does not: new loans when the
+' subject is the later snapshot, loans ended when it is the earlier one.
+' Empty when either snapshot has no rows, so nothing counts as moved
+' against a snapshot that is not there.
+'
+Private Function MovedNdgSet( _
+    ByRef SubjectAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant) As Object
+
+    Set MovedNdgSet = _
+        AccountNdgSet(SubjectAccounts, ReferenceAccounts, False)
+
+End Function
+
+'
+' The NDGs both snapshots have: the loans that ran through the month.
+'
+Private Function ContinuingNdgSet( _
+    ByRef SubjectAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant) As Object
+
+    Set ContinuingNdgSet = _
+        AccountNdgSet(SubjectAccounts, ReferenceAccounts, True)
+
+End Function
+
+'
+' The subject snapshot's NDGs that the reference snapshot has, or that it
+' has not.  Empty when either snapshot has no rows.
+'
+Private Function AccountNdgSet( _
+    ByRef SubjectAccounts As Variant, _
+    ByRef ReferenceAccounts As Variant, _
+    ByVal InReference As Boolean) As Object
+
+    Dim ReferenceNDGs As Object
+    Dim NDGs As Object
+
+    Dim NDG As String
+
+    Dim r As Long
+
+    Set NDGs = NewNDGSet()
+    Set AccountNdgSet = NDGs
+
+    If Not WeeklyDataHasRows(SubjectAccounts) Then Exit Function
+    If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Function
+
+    Set ReferenceNDGs = GetAccountNDGDictionary(ReferenceAccounts)
+
+    For r = LBound(SubjectAccounts, 1) To UBound(SubjectAccounts, 1)
+
+        NDG = CleanWeeklyCsvField(SubjectAccounts(r, WeeklyAccountNDG))
+
+        If NDG <> "" Then
+            If ReferenceNDGs.Exists(NDG) = InReference Then NDGs(NDG) = True
+        End If
+
+    Next r
+
+End Function
+
+'
+' Where the collateral of the NDGs that ran through the month moved, by
+' category: each NDG's holding in each category now against a month
+' earlier, the rises summed into Risen and the falls into Fallen, so a
+' customer who sold equity for bonds shows on both sides.  Positions in a
+' category GetAssetClass cannot place are left out, as they are everywhere
+' else.
+'
+Private Sub ContinuingCollateralChanges( _
+    ByRef Snaps As ReportSnapshots, _
+    ByRef UnknownAssets As Object, _
+    ByRef Risen As Object, _
+    ByRef Fallen As Object)
+
+    Dim Continuing As Object
+    Dim NowHeld As Object
+    Dim ThenHeld As Object
+
+    Dim Key As Variant
+    Dim Delta As Double
+
+    Set Risen = NewCollateralDictionary()
+    Set Fallen = NewCollateralDictionary()
+
+    Set Continuing = ContinuingNdgSet(Snaps.Accounts, Snaps.MonthAccounts)
+
+    If Continuing.Count = 0 Then Exit Sub
+
+    Set NowHeld = _
+        CollateralByNdgAndClass(Snaps.Positions, Continuing, UnknownAssets)
+    Set ThenHeld = _
+        CollateralByNdgAndClass(Snaps.MonthPositions, Continuing, UnknownAssets)
+
+    For Each Key In NowHeld.Keys
+
+        Delta = NowHeld(Key)
+        If ThenHeld.Exists(Key) Then Delta = Delta - ThenHeld(Key)
+
+        RecordCollateralChange CStr(Key), Delta, Risen, Fallen
+
+    Next Key
+
+    For Each Key In ThenHeld.Keys
+
+        If Not NowHeld.Exists(Key) Then
+            RecordCollateralChange CStr(Key), -ThenHeld(Key), Risen, Fallen
+        End If
+
+    Next Key
+
+End Sub
+
+'
+' One NDG's move in one category onto the side it belongs to; a move under
+' the floor is no move.
+'
+Private Sub RecordCollateralChange( _
+    ByVal Key As String, _
+    ByVal Delta As Double, _
+    ByRef Risen As Object, _
+    ByRef Fallen As Object)
+
+    Dim Parts() As String
+
+    If Abs(Delta) < FLOW_CHANGE_FLOOR Then Exit Sub
+
+    Parts = Split(Key, vbTab)
+
+    If Delta > 0 Then
+        Risen(Parts(1)) = Risen(Parts(1)) + Delta
+    Else
+        Fallen(Parts(1)) = Fallen(Parts(1)) - Delta
+    End If
+
+End Sub
+
+'
+' A snapshot's collateral for the NDGs given, keyed by NDG and asset class
+' with a tab between.
+'
+Private Function CollateralByNdgAndClass( _
+    ByRef PositionData As Variant, _
+    ByRef NDGs As Object, _
+    ByRef UnknownAssets As Object) As Object
+
+    Dim Held As Object
+
+    Dim NDG As String
+    Dim AssetType As String
+    Dim AssetClass As String
+    Dim Key As String
+
+    Dim r As Long
+
+    Set Held = CreateObject("Scripting.Dictionary")
+    Held.CompareMode = vbTextCompare
+    Set CollateralByNdgAndClass = Held
+
+    If Not WeeklyDataHasRows(PositionData) Then Exit Function
+
+    For r = LBound(PositionData, 1) To UBound(PositionData, 1)
+
+        NDG = CleanWeeklyCsvField(PositionData(r, WeeklyPosNDG))
+
+        If NDGs.Exists(NDG) Then
+
+            AssetType = _
+                CleanWeeklyCsvField(PositionData(r, WeeklyPosAssetType))
+            AssetClass = GetAssetClass(AssetType)
+
+            If AssetClass = "UNKNOWN" Then
+
+                RegisterUnknownAsset AssetType, UnknownAssets
+
+            Else
+
+                Key = NDG & vbTab & AssetClass
+
+                If Not Held.Exists(Key) Then Held(Key) = 0
+
+                Held(Key) = Held(Key) + _
+                    CDbl(PositionData(r, WeeklyPosPositionValue))
+
+            End If
+
+        End If
+
+    Next r
+
+End Function
+
+'
 ' The collateral of the NDGs the current snapshot has and the reference one
-' did not, by asset class.  One window per call.
+' did not, by asset class, summed from the current snapshot's positions.
+' One window per call; with the snapshots the other way round and the
+' earlier positions, the collateral that left with the loans ended.
 '
 Private Function EnteredCollateralAmounts( _
     ByRef CurrentAccounts As Variant, _
@@ -2251,7 +2518,6 @@ Private Function EnteredCollateralAmounts( _
     ByRef CurrentPositions As Variant, _
     ByRef UnknownAssets As Object) As Object
 
-    Dim ReferenceNDGs As Object
     Dim NewNDGs As Object
     Dim Amounts As Object
 
@@ -2264,20 +2530,11 @@ Private Function EnteredCollateralAmounts( _
     Set Amounts = NewCollateralDictionary()
     Set EnteredCollateralAmounts = Amounts
 
-    If Not WeeklyDataHasRows(ReferenceAccounts) Then Exit Function
+    If Not WeeklyDataHasRows(CurrentPositions) Then Exit Function
 
-    Set ReferenceNDGs = GetAccountNDGDictionary(ReferenceAccounts)
-    Set NewNDGs = NewNDGSet()
+    Set NewNDGs = MovedNdgSet(CurrentAccounts, ReferenceAccounts)
 
-    For r = LBound(CurrentAccounts, 1) To UBound(CurrentAccounts, 1)
-
-        NDG = CleanWeeklyCsvField(CurrentAccounts(r, WeeklyAccountNDG))
-
-        If NDG <> "" Then
-            If Not ReferenceNDGs.Exists(NDG) Then NewNDGs(NDG) = True
-        End If
-
-    Next r
+    If NewNDGs.Count = 0 Then Exit Function
 
     For r = LBound(CurrentPositions, 1) To UBound(CurrentPositions, 1)
 
@@ -2980,7 +3237,8 @@ End Function
 Private Sub UpdateRiskReferenceDatabases( _
     ByRef PositionData As Variant, _
     ByRef RiskPositionData As Variant, _
-    ByVal PreferredWorkbook As Workbook)
+    ByVal PreferredWorkbook As Workbook, _
+    ByVal AllowIssuerNameUpdate As Boolean)
 
     Dim EquityCandidates As Object
     Dim BondCandidates As Object
@@ -3294,29 +3552,36 @@ Private Sub UpdateRiskReferenceDatabases( _
                 ' the only populated field intentionally allowed to update.
                 ' The name it replaces goes to Previous Names: it is what
                 ' lets the issuer be matched back to its row in Companies
-                ' once nothing else about it reads the same.
+                ' once nothing else about it reads the same.  Only the
+                ' report date's snapshot may correct a name: an earlier
+                ' snapshot, staged for the comparison, fills blanks and no
+                ' more, or it would put the old name back.
                 If CStr(Candidate("IssuerName")) <> "" Then
 
                     CurrentValue = _
                         SafeText( _
                             DataRow.Range.Cells(1, BondIssuerCol).Value)
 
-                    If CurrentValue <> "" And _
-                       NormalizeExactNameKey(CurrentValue) <> _
-                       NormalizeExactNameKey( _
-                            CStr(Candidate("IssuerName"))) Then
+                    If CurrentValue = "" Or AllowIssuerNameUpdate Then
 
-                        DataRow.Range.Cells(1, BondPrevCol).Value = _
-                            MergeDelimitedText( _
-                                SafeText( _
-                                    DataRow.Range.Cells( _
-                                        1, BondPrevCol).Value), _
-                                CurrentValue)
+                        If CurrentValue <> "" And _
+                           NormalizeExactNameKey(CurrentValue) <> _
+                           NormalizeExactNameKey( _
+                                CStr(Candidate("IssuerName"))) Then
+
+                            DataRow.Range.Cells(1, BondPrevCol).Value = _
+                                MergeDelimitedText( _
+                                    SafeText( _
+                                        DataRow.Range.Cells( _
+                                            1, BondPrevCol).Value), _
+                                    CurrentValue)
+
+                        End If
+
+                        DataRow.Range.Cells(1, BondIssuerCol).Value = _
+                            CStr(Candidate("IssuerName"))
 
                     End If
-
-                    DataRow.Range.Cells(1, BondIssuerCol).Value = _
-                        CStr(Candidate("IssuerName"))
 
                 End If
 
@@ -9171,7 +9436,8 @@ End Function
 '
 Private Function CertificateResultsMatch( _
     ByVal DimensionKey As String, _
-    ByVal Visibility As Object) As Boolean
+    ByVal Visibility As Object, _
+    ByVal StageSheetName As String) As Boolean
 
     Dim wsStage As Worksheet
     Dim FullCell As Range
@@ -9188,7 +9454,7 @@ Private Function CertificateResultsMatch( _
     End If
 
     On Error Resume Next
-    Set wsStage = ThisWorkbook.Worksheets(RISK_STAGE_SHEET)
+    Set wsStage = ThisWorkbook.Worksheets(StageSheetName)
     On Error GoTo 0
 
     If wsStage Is Nothing Then Exit Function
@@ -9779,7 +10045,7 @@ Private Function WriteSameAsLeftExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .Merge
         .Value = AssetClass
@@ -9788,7 +10054,7 @@ Private Function WriteSameAsLeftExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow + 1, LeftCol), _
-            ws.Cells(StartRow + 1, LeftCol + 4))
+            ws.Cells(StartRow + 1, LeftCol + 5))
 
         .Merge
         .Value = "Same as left"
@@ -9798,12 +10064,12 @@ Private Function WriteSameAsLeftExposureGroup( _
     FormatReportTable _
         ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow + 1, LeftCol + 4)), _
+            ws.Cells(StartRow + 1, LeftCol + 5)), _
         1
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .HorizontalAlignment = xlLeft
         .Font.Color = RGB(111, 38, 61)
@@ -9826,7 +10092,7 @@ Private Function WriteSameAsLeftExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow + 1, LeftCol), _
-            ws.Cells(StartRow + 1, LeftCol + 4))
+            ws.Cells(StartRow + 1, LeftCol + 5))
 
         .HorizontalAlignment = xlLeft
         .Font.Italic = True
@@ -9844,6 +10110,12 @@ End Function
 ' they share this - it used to be two copies, WriteRiskGranularityTable
 ' being the Issuer one.
 '
+' SubtableRows keeps the two tables of a pair level: the full-portfolio
+' table records the row each of its subtables ends on, and the Excl. DPM
+' table starts each of its own no higher than that - so a Certificates
+' subtable answered with Same as left, or one with fewer names, does not
+' pull the subtables under it out of line with the left-hand ones.
+'
 Private Function WriteRiskDimensionTable( _
     ByVal ws As Worksheet, _
     ByVal TopRow As Long, _
@@ -9853,7 +10125,9 @@ Private Function WriteRiskDimensionTable( _
     ByVal DimensionKey As String, _
     ByVal ExcludeDPM As Boolean, _
     ByVal Visibility As Object, _
-    Optional ByVal CertificateSameAsLeft As Boolean = False) As Long
+    ByRef PriorStageData As Variant, _
+    Optional ByVal CertificateSameAsLeft As Boolean = False, _
+    Optional ByVal SubtableRows As Object = Nothing) As Long
 
     Dim ClassKey As Variant
     Dim CurrentRow As Long
@@ -9862,14 +10136,18 @@ Private Function WriteRiskDimensionTable( _
         ws, _
         TopRow, _
         LeftCol, _
-        5, _
+        6, _
         SectionTitle
 
+    '
+    ' Six columns: the rank, the move since the compared date, the name,
+    ' and the three figures.
+    '
     ws.Cells(TopRow + 1, LeftCol).Value = "Rank"
-    ws.Cells(TopRow + 1, LeftCol + 1).Value = DimensionLabel
-    ws.Cells(TopRow + 1, LeftCol + 2).Value = "Collateral Value"
-    ws.Cells(TopRow + 1, LeftCol + 3).Value = "% of Category"
-    ws.Cells(TopRow + 1, LeftCol + 4).Value = "#NDG"
+    ws.Cells(TopRow + 1, LeftCol + 2).Value = DimensionLabel
+    ws.Cells(TopRow + 1, LeftCol + 3).Value = "Collateral Value"
+    ws.Cells(TopRow + 1, LeftCol + 4).Value = "% of Category"
+    ws.Cells(TopRow + 1, LeftCol + 5).Value = "#NDG"
 
     CurrentRow = TopRow + 2
 
@@ -9902,7 +10180,20 @@ Private Function WriteRiskDimensionTable( _
                         DimensionKey, _
                         CStr(ClassKey), _
                         ExcludeDPM, _
-                        Visibility)
+                        Visibility, _
+                        PriorStageData)
+
+            End If
+
+            If Not SubtableRows Is Nothing Then
+
+                If Not ExcludeDPM Then
+                    SubtableRows(CStr(ClassKey)) = CurrentRow
+                ElseIf SubtableRows.Exists(CStr(ClassKey)) Then
+                    If CLng(SubtableRows(CStr(ClassKey))) > CurrentRow Then
+                        CurrentRow = CLng(SubtableRows(CStr(ClassKey)))
+                    End If
+                End If
 
             End If
 
@@ -9915,18 +10206,18 @@ Private Function WriteRiskDimensionTable( _
         FormatReportTable _
             ws.Range( _
                 ws.Cells(TopRow + 1, LeftCol), _
-                ws.Cells(TopRow + 1, LeftCol + 4)), _
+                ws.Cells(TopRow + 1, LeftCol + 5)), _
             1, _
             ws.Range( _
                 ws.Cells(TopRow + 2, LeftCol), _
-                ws.Cells(CurrentRow - 1, LeftCol + 4))
+                ws.Cells(CurrentRow - 1, LeftCol + 5))
 
     Else
 
         FormatReportTable _
             ws.Range( _
                 ws.Cells(TopRow + 1, LeftCol), _
-                ws.Cells(TopRow + 1, LeftCol + 4)), _
+                ws.Cells(TopRow + 1, LeftCol + 5)), _
             1
 
     End If
@@ -10391,24 +10682,6 @@ Private Function RiskStageHeaders() As Variant
 
 End Function
 
-Private Function GetRiskStageTable( _
-    ByVal WorksheetName As String, _
-    ByVal TableName As String) As ListObject
-
-    Dim wsStage As Worksheet
-
-    Set wsStage = GetOptionalWorksheet(WorksheetName)
-
-    If wsStage Is Nothing Then Exit Function
-
-    On Error Resume Next
-
-    Set GetRiskStageTable = wsStage.ListObjects(TableName)
-
-    On Error GoTo 0
-
-End Function
-
 Private Function RiskStageTableSchemaIsValid( _
     ByVal StageTable As ListObject) As Boolean
 
@@ -10478,39 +10751,11 @@ Private Function RiskStageTableHasData( _
 
 End Function
 
-Private Function RiskStageTableCanBeReused() As Boolean
+Private Function RiskStageTableCanBeReused( _
+    ByVal SnapshotDate As Date) As Boolean
 
-    Dim StageTable As ListObject
-
-    Set StageTable = _
-        GetRiskStageTable( _
-            RISK_STAGE_SHEET, _
-            RISK_STAGE_TABLE)
-
-    If Not RiskStageTableSchemaIsValid(StageTable) Then Exit Function
-    If Not RiskStageTableHasData(StageTable) Then Exit Function
-
-    RiskStageTableCanBeReused = True
-
-End Function
-
-Private Function CurrentRiskStageAnalysisDate() As Date
-
-    Dim RawDate As Variant
-
-    On Error Resume Next
-
-    RawDate = _
-        ThisWorkbook.Worksheets("Home") _
-        .Range("WeeklyEndDate").Value
-
-    On Error GoTo 0
-
-    If IsDate(RawDate) Then
-
-        CurrentRiskStageAnalysisDate = CDate(RawDate)
-
-    End If
+    RiskStageTableCanBeReused = _
+        RiskStageTableHasData(RiskStageTableFor(SnapshotDate))
 
 End Function
 
@@ -10534,65 +10779,65 @@ Private Function StoredRiskStageDate( _
 
 End Function
 
+'
+' What the reuse question says is on file, of the two dates the run
+' needs: "risk detail tables for 07/09/2026 (the report date) and
+' 28/08/2026 (the compared date)".
+'
 Private Function RiskStageReuseDescription( _
-    ByVal AnalysisDate As Date) As String
+    ByVal AnalysisDate As Date, _
+    ByVal CompareDate As Date, _
+    ByVal HaveCurrent As Boolean, _
+    ByVal HavePrior As Boolean) As String
 
-    Dim StageDate As Date
+    Dim Found As String
 
-    StageDate = StoredRiskStageDate(RISK_STAGE_SHEET)
+    If HaveCurrent Then
+        Found = Format(AnalysisDate, "dd/mm/yyyy") & " (the report date)"
+    End If
 
-    If StageDate > 0 Then
+    If HavePrior Then
 
-        If AnalysisDate > 0 And _
-           StageDate <> AnalysisDate Then
+        If Found <> "" Then Found = Found & " and "
 
-            RiskStageReuseDescription = _
-                "risk detail table (existing as of " & _
-                Format(StageDate, "dd/mm/yyyy") & _
-                "; requested " & _
-                Format(AnalysisDate, "dd/mm/yyyy") & _
-                ")"
-
-        Else
-
-            RiskStageReuseDescription = _
-                "risk detail table (as of " & _
-                Format(StageDate, "dd/mm/yyyy") & _
-                ")"
-
-        End If
-
-    Else
-
-        RiskStageReuseDescription = _
-            "risk detail table (source date not recorded)"
+        Found = Found & _
+            Format(CompareDate, "dd/mm/yyyy") & " (the compared date)"
 
     End If
+
+    RiskStageReuseDescription = "risk detail tables for " & Found
 
 End Function
 
-Private Function ShouldRebuildRiskStageTables( _
-    ByVal AnalysisDate As Date) As Boolean
+'
+' The line under it, for the date that is not on file and is staged
+' whatever the answer; empty when both are on file.
+'
+Private Function RiskStageMissingLine( _
+    ByVal AnalysisDate As Date, _
+    ByVal CompareDate As Date, _
+    ByVal HaveCurrent As Boolean, _
+    ByVal HavePrior As Boolean) As String
 
-    If Not RiskStageTableCanBeReused() Then
+    If Not HaveCurrent Then
 
-        ShouldRebuildRiskStageTables = True
+        RiskStageMissingLine = _
+            Format(AnalysisDate, "dd/mm/yyyy") & _
+            " (the report date) is not on file and is staged either way."
 
-        Exit Function
+    ElseIf Not HavePrior Then
+
+        RiskStageMissingLine = _
+            Format(CompareDate, "dd/mm/yyyy") & _
+            " (the compared date) is not on file and is staged either way."
 
     End If
-
-    ShouldRebuildRiskStageTables = _
-        ShouldOverwriteExistingSheets( _
-            RiskStageReuseDescription(AnalysisDate))
 
 End Function
 
 Private Function LoadRiskStageTableData( _
-    ByVal WorksheetName As String, _
-    ByVal TableName As String) As Variant
+    ByVal StageTable As ListObject) As Variant
 
-    Dim StageTable As ListObject
     Dim Headers As Variant
     Dim RawData As Variant
     Dim StageData() As Variant
@@ -10604,18 +10849,12 @@ Private Function LoadRiskStageTableData( _
     Dim ValidRowCount As Long
     Dim HasRiskData As Boolean
 
-    Set StageTable = _
-        GetRiskStageTable( _
-            WorksheetName, _
-            TableName)
-
     If Not RiskStageTableSchemaIsValid(StageTable) Then
 
         Err.Raise _
             vbObjectError + 9180, _
             "LoadRiskStageTableData", _
-            "Risk staging table '" & TableName & _
-            "' is missing or has an invalid schema."
+            "The risk staging table is missing or has an invalid schema."
 
     End If
 
@@ -10933,10 +11172,15 @@ End Sub
 
 Private Sub BuildRiskGranularitySection( _
     ByVal ws As Worksheet, _
-    ByRef PositionData As Variant)
+    ByRef PositionData As Variant, _
+    ByVal AnalysisDate As Date, _
+    ByRef PriorPositions As Variant, _
+    ByVal CompareDate As Date, _
+    ByVal StageOnly As Boolean)
 
     Dim StageRows As Collection
     Dim StageData As Variant
+    Dim PriorStageData As Variant
     Dim RiskPositionData As Variant
 
     Dim CertificateMap As Object
@@ -10965,6 +11209,7 @@ Private Sub BuildRiskGranularitySection( _
     Dim FundMapReady As Boolean
     Dim CompaniesReady As Boolean
     Dim CertificateNameSameAsLeft As Boolean
+    Dim SubtableRows As Object
     Dim CertificateGeographySameAsLeft As Boolean
     Dim CertificateSectorSameAsLeft As Boolean
     Dim CertificateMappingIssue As String
@@ -10999,25 +11244,71 @@ Private Sub BuildRiskGranularitySection( _
     Dim GeographyExDPMNextRow As Long
     Dim SectorNextRow As Long
     Dim SectorExDPMNextRow As Long
-    Dim AnalysisDate As Date
     Dim RebuildRiskStage As Boolean
+    Dim RebuildPrior As Boolean
+    Dim HaveCurrent As Boolean
+    Dim HavePrior As Boolean
 
-    If ws Is Nothing Then Exit Sub
+    If ws Is Nothing And Not StageOnly Then Exit Sub
+
+    '
+    ' StageOnly is the staging pass alone, for the compared date: the same
+    ' pass the report date gets, without the report sheet, the issuer
+    ' name corrections, the lookup rows and the notes; the staged rows go
+    ' onto that date's own sheet under its dated table name, and the pass
+    ' ends where the tables would start.
+    '
+    If StageOnly Then
+
+        RebuildRiskStage = True
+
+    Else
+
+        '
+        ' The staging sheets are one per date.  The undated ones earlier
+        ' builds wrote are taken in first.  Then the one question: of the
+        ' two dates the run needs, those on file are rebuilt or reused as
+        ' answered, and a date not on file is staged whatever the answer -
+        ' never another date's table in its place.  Then the run's own date
+        ' takes the table name the report's formulas use.
+        '
+        AdoptUndatedRiskStageWorksheets
+
+        HaveCurrent = RiskStageTableCanBeReused(AnalysisDate)
+        HavePrior = RiskStageTableCanBeReused(CompareDate)
+
+        If HaveCurrent Or HavePrior Then
+
+            RebuildRiskStage = _
+                ShouldOverwriteExistingSheets( _
+                    RiskStageReuseDescription( _
+                        AnalysisDate, CompareDate, HaveCurrent, HavePrior), _
+                    RiskStageMissingLine( _
+                        AnalysisDate, CompareDate, HaveCurrent, HavePrior))
+
+        Else
+
+            RebuildRiskStage = True
+
+        End If
+
+        RebuildPrior = RebuildRiskStage Or Not HavePrior
+        RebuildRiskStage = RebuildRiskStage Or Not HaveCurrent
+
+        ClaimRiskStageTableName AnalysisDate
+
+    End If
 
     Set RiskSubtableVisibility = _
         BuildRiskSubtableVisibility()
 
-    AnalysisDate = CurrentRiskStageAnalysisDate()
-    RebuildRiskStage = _
-        ShouldRebuildRiskStageTables(AnalysisDate)
-
     If Not RebuildRiskStage Then
 
         StageData = _
-            LoadRiskStageTableData( _
-                RISK_STAGE_SHEET, _
-                RISK_STAGE_TABLE)
+            LoadRiskStageTableData(RiskStageTableFor(AnalysisDate))
 
+        PriorStageData = _
+            EnsureRiskStageData(PriorPositions, CompareDate, RebuildPrior)
 
         GoTo StageDataReadyLabel
 
@@ -11037,11 +11328,26 @@ Private Sub BuildRiskGranularitySection( _
 
 
     ' The maintained reference tables are append-only. Their formulas are
-    ' calculated before the maps below are loaded for this same run.
+    ' calculated before the maps below are loaded for this same run.  Only
+    ' the report date's snapshot may correct an issuer name.
     UpdateRiskReferenceDatabases _
         PositionData, _
         RiskPositionData, _
-        ThisWorkbook
+        ThisWorkbook, _
+        Not StageOnly
+
+    '
+    ' The compared date's staged exposure, once the reference sheets are
+    ' up to this snapshot, so that a name Sophis has since corrected reads
+    ' the same on both dates; its own pass brings them up to its snapshot
+    ' in turn, and the maps below are loaded after both.
+    '
+    If Not StageOnly Then
+
+        PriorStageData = _
+            EnsureRiskStageData(PriorPositions, CompareDate, RebuildPrior)
+
+    End If
 
 
     Set CertificateMap = _
@@ -11385,9 +11691,13 @@ Private Sub BuildRiskGranularitySection( _
         BuildCanonicalEntityNameMap(GeographyEntries)
 
 
-    UpdateNameVariantsWorksheet _
-        GeographyEntries, _
-        CanonicalNameMap
+    If Not StageOnly Then
+
+        UpdateNameVariantsWorksheet _
+            GeographyEntries, _
+            CanonicalNameMap
+
+    End If
 
 
     Set GeographyEntries = _
@@ -11426,7 +11736,7 @@ Private Sub BuildRiskGranularitySection( _
     Set StageFinalizationCache = NewExactNameMap()
 
 
-    AddRiskStagingNote StageRows
+    If Not StageOnly Then AddRiskStagingNote StageRows
 
     StageData = _
         FinalizeRiskStageData( _
@@ -11442,16 +11752,18 @@ Private Sub BuildRiskGranularitySection( _
     ' tables below. Each certificate component is already allocated to its
     ' final weight; Account Scope separates Non-DPM and DPM rows.
     WriteRiskStageWorksheet _
-        RISK_STAGE_SHEET, _
-        RISK_STAGE_TABLE, _
+        RiskStageSheetName(AnalysisDate), _
+        IIf(StageOnly, RiskStageTableName(AnalysisDate), RISK_STAGE_TABLE), _
         StageData, _
         AnalysisDate
 
 
-    DeleteLegacyRiskStageWorksheets
+    If Not StageOnly Then DeleteLegacyRiskStageWorksheets
 
 
 StageDataReadyLabel:
+
+    If StageOnly Then Exit Sub
 
     '
     ' Reported whether the staging table was rebuilt or reused, because the
@@ -11466,14 +11778,19 @@ StageDataReadyLabel:
     ' WriteSameAsLeftExposureGroup answers with a single row.
     '
     CertificateNameSameAsLeft = _
-        CertificateResultsMatch("Issuer", RiskSubtableVisibility)
+        CertificateResultsMatch( _
+            "Issuer", RiskSubtableVisibility, RiskStageSheetName(AnalysisDate))
 
     CertificateGeographySameAsLeft = _
-        CertificateResultsMatch("Country", RiskSubtableVisibility)
+        CertificateResultsMatch( _
+            "Country", RiskSubtableVisibility, RiskStageSheetName(AnalysisDate))
 
     CertificateSectorSameAsLeft = _
-        CertificateResultsMatch("Sector", RiskSubtableVisibility)
+        CertificateResultsMatch( _
+            "Sector", RiskSubtableVisibility, RiskStageSheetName(AnalysisDate))
 
+
+    Set SubtableRows = CreateObject("Scripting.Dictionary")
 
     RiskNextRow = _
         WriteRiskDimensionTable( _
@@ -11484,7 +11801,9 @@ StageDataReadyLabel:
             "Name", _
             "Issuer", _
             False, _
-            RiskSubtableVisibility)
+            RiskSubtableVisibility, _
+            PriorStageData, _
+            SubtableRows:=SubtableRows)
 
     RiskExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11497,13 +11816,17 @@ StageDataReadyLabel:
             "Issuer", _
             True, _
             RiskSubtableVisibility, _
-            CertificateNameSameAsLeft)
+            PriorStageData, _
+            CertificateNameSameAsLeft, _
+            SubtableRows)
 
     Layout.CountryRiskRow = _
         NextRiskSectionRow( _
             RiskNextRow, _
             RiskExDPMNextRow)
     Layout.CountryRiskExSegRow = Layout.CountryRiskRow
+
+    Set SubtableRows = CreateObject("Scripting.Dictionary")
 
     GeographyNextRow = _
         WriteRiskDimensionTable( _
@@ -11514,7 +11837,9 @@ StageDataReadyLabel:
             "Geography", _
             "Country", _
             False, _
-            RiskSubtableVisibility)
+            RiskSubtableVisibility, _
+            PriorStageData, _
+            SubtableRows:=SubtableRows)
 
     GeographyExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11527,13 +11852,17 @@ StageDataReadyLabel:
             "Country", _
             True, _
             RiskSubtableVisibility, _
-            CertificateGeographySameAsLeft)
+            PriorStageData, _
+            CertificateGeographySameAsLeft, _
+            SubtableRows)
 
     Layout.SectorRiskRow = _
         NextRiskSectionRow( _
             GeographyNextRow, _
             GeographyExDPMNextRow)
     Layout.SectorRiskExSegRow = Layout.SectorRiskRow
+
+    Set SubtableRows = CreateObject("Scripting.Dictionary")
 
     SectorNextRow = _
         WriteRiskDimensionTable( _
@@ -11544,7 +11873,9 @@ StageDataReadyLabel:
             "Sector", _
             "Sector", _
             False, _
-            RiskSubtableVisibility)
+            RiskSubtableVisibility, _
+            PriorStageData, _
+            SubtableRows:=SubtableRows)
 
     SectorExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11557,7 +11888,9 @@ StageDataReadyLabel:
             "Sector", _
             True, _
             RiskSubtableVisibility, _
-            CertificateSectorSameAsLeft)
+            PriorStageData, _
+            CertificateSectorSameAsLeft, _
+            SubtableRows)
 
 
     If RebuildRiskStage Then
@@ -11769,9 +12102,11 @@ Private Function WriteTopExposureGroup( _
     ByVal DimensionKey As String, _
     ByVal AssetClassKey As String, _
     ByVal ExcludeDPM As Boolean, _
-    ByVal Visibility As Object) As Long
+    ByVal Visibility As Object, _
+    ByRef PriorStageData As Variant) As Long
 
     Dim AnchorCell As Range
+    Dim PriorRanks As Object
 
     Dim OutputCount As Long
     Dim FirstDataRow As Long
@@ -11780,7 +12115,7 @@ Private Function WriteTopExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .Merge
         .Value = DisplayName
@@ -11792,10 +12127,11 @@ Private Function WriteTopExposureGroup( _
     '
     ' One formula produces the whole ranked table - name, value, share and
     ' distinct NDG count - and spills it across the four columns beside the
-    ' rank.  Its height is however many names the class has, up to ten, so
-    ' it is calculated here to find out where the total row goes.
+    ' rank and the move.  Its height is however many names the class has,
+    ' up to ten, so it is calculated here to find out where the total row
+    ' goes.
     '
-    Set AnchorCell = ws.Cells(FirstDataRow, LeftCol + 1)
+    Set AnchorCell = ws.Cells(FirstDataRow, LeftCol + 2)
 
     AnchorCell.Formula2 = _
         RiskRankedFormula( _
@@ -11813,14 +12149,37 @@ Private Function WriteTopExposureGroup( _
         AnchorCell.ClearContents
 
         OutputCount = 1
-        ws.Cells(FirstDataRow, LeftCol + 1).Value = "None"
-        ws.Cells(FirstDataRow, LeftCol + 4).Value = 0
+        ws.Cells(FirstDataRow, LeftCol + 2).Value = "None"
+        ws.Cells(FirstDataRow, LeftCol + 5).Value = 0
 
     Else
+
+        '
+        ' The rank, and beside it where the name stood on the compared
+        ' date - read from the spilled name, so it is whatever the formula
+        ' ranked.
+        '
+        Set PriorRanks = _
+            PriorRankIndex( _
+                PriorStageData, _
+                DimensionKey, _
+                AssetClassKey, _
+                ExcludeDPM, _
+                Visibility)
 
         For i = 1 To OutputCount
 
             ws.Cells(FirstDataRow + i - 1, LeftCol).Value = i
+
+            If Not PriorRanks Is Nothing Then
+
+                WriteRankChange _
+                    ws.Cells(FirstDataRow + i - 1, LeftCol + 1), _
+                    i, _
+                    SafeText(ws.Cells(FirstDataRow + i - 1, LeftCol + 2).Value), _
+                    PriorRanks
+
+            End If
 
         Next i
 
@@ -11828,30 +12187,30 @@ Private Function WriteTopExposureGroup( _
 
     TotalRow = FirstDataRow + OutputCount
 
-    ws.Cells(TotalRow, LeftCol + 2).Formula2 = _
+    ws.Cells(TotalRow, LeftCol + 3).Formula2 = _
         "=SUM(" & _
         ws.Range( _
-            ws.Cells(FirstDataRow, LeftCol + 2), _
-            ws.Cells(TotalRow - 1, LeftCol + 2)).Address(True, True) & ")"
+            ws.Cells(FirstDataRow, LeftCol + 3), _
+            ws.Cells(TotalRow - 1, LeftCol + 3)).Address(True, True) & ")"
 
-    ws.Cells(TotalRow, LeftCol + 4).Formula2 = _
+    ws.Cells(TotalRow, LeftCol + 5).Formula2 = _
         RiskUnionNdgFormula( _
             DimensionKey, _
             AssetClassKey, _
             ExcludeDPM, _
             Visibility, _
             ws.Range( _
-                ws.Cells(FirstDataRow, LeftCol + 1), _
-                ws.Cells(TotalRow - 1, LeftCol + 1)).Address(True, True))
+                ws.Cells(FirstDataRow, LeftCol + 2), _
+                ws.Cells(TotalRow - 1, LeftCol + 2)).Address(True, True))
 
     '
     ' The share the report has always shown: the top ten against the whole
     ' category.  IFERROR keeps an empty category at nought rather than
     ' #DIV/0!, which is what the division used to be guarded for.
     '
-    ws.Cells(TotalRow, LeftCol + 3).Formula2 = _
+    ws.Cells(TotalRow, LeftCol + 4).Formula2 = _
         "=IFERROR(" & _
-        ws.Cells(TotalRow, LeftCol + 2).Address(True, True) & " / " & _
+        ws.Cells(TotalRow, LeftCol + 3).Address(True, True) & " / " & _
         RiskCategoryTotalFormula( _
             DimensionKey, _
             AssetClassKey, _
@@ -11861,12 +12220,12 @@ Private Function WriteTopExposureGroup( _
     FormatReportTable _
         ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(TotalRow, LeftCol + 4)), _
+            ws.Cells(TotalRow, LeftCol + 5)), _
         1
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4))
+            ws.Cells(StartRow, LeftCol + 5))
 
         .HorizontalAlignment = xlLeft
         .Font.Color = RGB(111, 38, 61)
@@ -11875,7 +12234,7 @@ Private Function WriteTopExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4)) _
+            ws.Cells(StartRow, LeftCol + 5)) _
             .Borders(xlEdgeBottom)
 
         .LineStyle = xlNone
@@ -11884,7 +12243,7 @@ Private Function WriteTopExposureGroup( _
 
     With ws.Range( _
             ws.Cells(StartRow, LeftCol), _
-            ws.Cells(StartRow, LeftCol + 4)) _
+            ws.Cells(StartRow, LeftCol + 5)) _
             .Borders(xlEdgeTop)
 
         .LineStyle = xlContinuous
@@ -11894,13 +12253,18 @@ Private Function WriteTopExposureGroup( _
     End With
 
     ws.Range( _
-        ws.Cells(FirstDataRow, LeftCol + 1), _
-        ws.Cells(TotalRow, LeftCol + 1)).HorizontalAlignment = _
+        ws.Cells(FirstDataRow, LeftCol + 2), _
+        ws.Cells(TotalRow, LeftCol + 2)).HorizontalAlignment = _
         xlLeft
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, LeftCol + 1), _
+        ws.Cells(TotalRow - 1, LeftCol + 1)).HorizontalAlignment = _
+        xlCenter
 
     With ws.Range( _
             ws.Cells(TotalRow, LeftCol), _
-            ws.Cells(TotalRow, LeftCol + 4))
+            ws.Cells(TotalRow, LeftCol + 5))
 
         .Interior.Color = RGB(255, 255, 255)
 
@@ -11909,25 +12273,439 @@ Private Function WriteTopExposureGroup( _
     FormatTotalRow _
         ws, _
         LeftCol, _
-        LeftCol + 4, _
+        LeftCol + 5, _
         TotalRow
-
-    ws.Range( _
-        ws.Cells(FirstDataRow, LeftCol + 2), _
-        ws.Cells(TotalRow, LeftCol + 2)).NumberFormat = _
-        EuroNumberFormat()
 
     ws.Range( _
         ws.Cells(FirstDataRow, LeftCol + 3), _
         ws.Cells(TotalRow, LeftCol + 3)).NumberFormat = _
-        "0.00%"
+        EuroNumberFormat()
 
     ws.Range( _
         ws.Cells(FirstDataRow, LeftCol + 4), _
         ws.Cells(TotalRow, LeftCol + 4)).NumberFormat = _
+        "0.00%"
+
+    ws.Range( _
+        ws.Cells(FirstDataRow, LeftCol + 5), _
+        ws.Cells(TotalRow, LeftCol + 5)).NumberFormat = _
         "0"
 
     WriteTopExposureGroup = TotalRow + 1
+
+End Function
+
+'
+' Where a name stood on the compared date, beside its rank now: an arrow
+' with the places moved, green up and red down, "=" for no move, "new"
+' for a name the compared date did not rank at all.
+'
+Private Sub WriteRankChange( _
+    ByVal Target As Range, _
+    ByVal CurrentRank As Long, _
+    ByVal Name As String, _
+    ByVal PriorRanks As Object)
+
+    Dim PriorRank As Long
+
+    If Name = "" Then Exit Sub
+
+    If Not PriorRanks.Exists(Name) Then
+
+        Target.Value = "new"
+        Target.Font.Color = RGB(0, 90, 160)
+
+    Else
+
+        PriorRank = CLng(PriorRanks(Name))
+
+        If PriorRank > CurrentRank Then
+
+            Target.Value = ChrW(&H25B2) & CStr(PriorRank - CurrentRank)
+            Target.Font.Color = RGB(0, 128, 0)
+
+        ElseIf PriorRank < CurrentRank Then
+
+            Target.Value = ChrW(&H25BC) & CStr(CurrentRank - PriorRank)
+            Target.Font.Color = RGB(192, 0, 0)
+
+        Else
+
+            Target.Value = "="
+            Target.Font.Color = RGB(128, 128, 128)
+
+        End If
+
+    End If
+
+    Target.Font.Bold = True
+
+End Sub
+
+'
+' The staging sheet for a snapshot: one per date, named for it.
+'
+Private Function RiskStageSheetName( _
+    ByVal SnapshotDate As Date) As String
+
+    RiskStageSheetName = RISK_STAGE_SHEET & " " & GetDateCode(SnapshotDate)
+
+End Function
+
+'
+' The name a date's staging table carries when it is not the run's own:
+' the report's formulas name the run's table, RiskExposure, and nothing
+' else may carry that name.
+'
+Private Function RiskStageTableName( _
+    ByVal SnapshotDate As Date) As String
+
+    RiskStageTableName = RISK_STAGE_TABLE & "_" & GetDateCode(SnapshotDate)
+
+End Function
+
+'
+' A date's staging table, whatever it is named; Nothing when the date was
+' never staged.
+'
+Private Function RiskStageTableFor( _
+    ByVal SnapshotDate As Date) As ListObject
+
+    Dim wsStage As Worksheet
+
+    Set wsStage = GetOptionalWorksheet(RiskStageSheetName(SnapshotDate))
+
+    If wsStage Is Nothing Then Exit Function
+    If wsStage.ListObjects.Count = 0 Then Exit Function
+
+    Set RiskStageTableFor = wsStage.ListObjects(1)
+
+End Function
+
+'
+' Whether a worksheet is one of the dated staging sheets.
+'
+Private Function IsRiskStageWorksheet( _
+    ByVal SheetName As String) As Boolean
+
+    Dim Suffix As String
+
+    If Left(SheetName, Len(RISK_STAGE_SHEET) + 1) <> _
+       RISK_STAGE_SHEET & " " Then Exit Function
+
+    Suffix = Mid(SheetName, Len(RISK_STAGE_SHEET) + 2)
+
+    IsRiskStageWorksheet = (Len(Suffix) = 8 And IsNumeric(Suffix))
+
+End Function
+
+'
+' The run's date takes the table name the report's formulas use,
+' RiskExposure.  Any other date's table still carrying it - the last
+' run's, normally - takes its dated name first.
+'
+Private Sub ClaimRiskStageTableName( _
+    ByVal AnalysisDate As Date)
+
+    Dim wsSheet As Worksheet
+    Dim OwnSheetName As String
+
+    OwnSheetName = RiskStageSheetName(AnalysisDate)
+
+    For Each wsSheet In ThisWorkbook.Worksheets
+
+        If IsRiskStageWorksheet(wsSheet.name) Then
+
+            If StrComp(wsSheet.name, OwnSheetName, vbTextCompare) <> 0 Then
+
+                If wsSheet.ListObjects.Count > 0 Then
+
+                    If StrComp( _
+                           wsSheet.ListObjects(1).name, _
+                           RISK_STAGE_TABLE, vbTextCompare) = 0 Then
+
+                        wsSheet.ListObjects(1).name = _
+                            RISK_STAGE_TABLE & "_" & _
+                            Mid(wsSheet.name, Len(RISK_STAGE_SHEET) + 2)
+
+                    End If
+
+                End If
+
+            End If
+
+        End If
+
+    Next wsSheet
+
+    Set wsSheet = GetOptionalWorksheet(OwnSheetName)
+
+    If wsSheet Is Nothing Then Exit Sub
+    If wsSheet.ListObjects.Count = 0 Then Exit Sub
+
+    wsSheet.ListObjects(1).name = RISK_STAGE_TABLE
+
+End Sub
+
+'
+' The staging sheets earlier builds wrote without a date - "Risk Exposure"
+' and the copy "Risk Exposure Prior" - become dated sheets on the first
+' run that finds them, so what they hold serves as it is.  One whose date
+' is already staged under its own name, or that records no date, goes.
+'
+Private Sub AdoptUndatedRiskStageWorksheets()
+
+    Dim SheetName As Variant
+    Dim wsOld As Worksheet
+    Dim StageDate As Date
+    Dim PreviousDisplayAlerts As Boolean
+
+    PreviousDisplayAlerts = Application.DisplayAlerts
+
+    For Each SheetName In Array(RISK_STAGE_SHEET, RISK_STAGE_PRIOR_SHEET)
+
+        Set wsOld = GetOptionalWorksheet(CStr(SheetName))
+
+        If Not wsOld Is Nothing Then
+
+            StageDate = StoredRiskStageDate(CStr(SheetName))
+
+            If StageDate > 0 And _
+               GetOptionalWorksheet(RiskStageSheetName(StageDate)) Is Nothing Then
+
+                wsOld.name = RiskStageSheetName(StageDate)
+
+            Else
+
+                Application.DisplayAlerts = False
+                wsOld.Delete
+                Application.DisplayAlerts = PreviousDisplayAlerts
+
+            End If
+
+        End If
+
+    Next SheetName
+
+End Sub
+
+'
+' A date's staged exposure, staged now when the run's answer to the reuse
+' question says so or when it never was: the same staging pass the report
+' date gets, alone and quietly - the reference sheets brought up to that
+' snapshot but no issuer name corrected, no lookup rows, no notes - onto
+' that date's own sheet, where the next run finds it.
+'
+Private Function EnsureRiskStageData( _
+    ByRef PositionData As Variant, _
+    ByVal SnapshotDate As Date, _
+    ByVal Rebuild As Boolean) As Variant
+
+    Dim StageTable As ListObject
+    Dim ScannedBefore As Long
+    Dim DroppedBefore As Long
+
+    If SnapshotDate = 0 Then Exit Function
+
+    Set StageTable = RiskStageTableFor(SnapshotDate)
+
+    If Rebuild Or Not RiskStageTableHasData(StageTable) Then
+
+        If Not WeeklyDataHasRows(PositionData) Then Exit Function
+
+        '
+        ' The pass counts positions into the module's two counters as the
+        ' report's own does; the report's count is what its note reports.
+        '
+        ScannedBefore = RiskStagePositionsScanned
+        DroppedBefore = RiskStageRowsDropped
+        RiskStagingQuietly = True
+
+        BuildRiskGranularitySection _
+            Nothing, PositionData, SnapshotDate, Empty, 0, True
+
+        RiskStagingQuietly = False
+        RiskStagePositionsScanned = ScannedBefore
+        RiskStageRowsDropped = DroppedBefore
+
+        Set StageTable = RiskStageTableFor(SnapshotDate)
+
+    End If
+
+    If RiskStageTableHasData(StageTable) Then
+
+        EnsureRiskStageData = LoadRiskStageTableData(StageTable)
+
+    End If
+
+End Function
+
+'
+' The compared date's ranking for one subtable, from its staged rows: the
+' rows the ranked formula keeps - the class, the scope, and only resolved
+' names - grouped by the dimension, summed, and sorted the same way,
+' value down then name up.  Every name gets a rank, not only ten, so a
+' name that climbed into the table can say from where.  Nothing when
+' there is no staged exposure to rank.
+'
+Private Function PriorRankIndex( _
+    ByRef StageData As Variant, _
+    ByVal DimensionKey As String, _
+    ByVal AssetClassKey As String, _
+    ByVal ExcludeDPM As Boolean, _
+    ByVal Visibility As Object) As Object
+
+    Dim Classes As Object
+    Dim Totals As Object
+    Dim Ranks As Object
+
+    Dim ClassKey As Variant
+    Dim StagingValue As Variant
+    Dim Names() As String
+    Dim Values() As Double
+
+    Dim RowNo As Long
+    Dim Name As String
+    Dim Amount As Double
+    Dim Key As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim n As Long
+    Dim SwapName As String
+    Dim SwapValue As Double
+
+    If RiskStageRowCount(StageData) = 0 Then Exit Function
+
+    '
+    ' The staging classes the subtable answers to, as RiskClassTest lists
+    ' them for the formula.
+    '
+    Set Classes = NewExactNameMap()
+
+    If StrComp(AssetClassKey, "Overall", vbTextCompare) = 0 Then
+
+        For Each ClassKey In RiskRankedClasses()
+
+            If RiskSubtableIsVisible(Visibility, DimensionKey, CStr(ClassKey)) Then
+
+                For Each StagingValue In RiskClassStagingValues(CStr(ClassKey))
+                    Classes(NormalizeExactNameKey(CStr(StagingValue))) = True
+                Next StagingValue
+
+            End If
+
+        Next ClassKey
+
+    Else
+
+        For Each StagingValue In RiskClassStagingValues(AssetClassKey)
+            Classes(NormalizeExactNameKey(CStr(StagingValue))) = True
+        Next StagingValue
+
+    End If
+
+    Set Totals = NewExactNameMap()
+
+    For RowNo = 1 To UBound(StageData, 1)
+
+        If Classes.Exists( _
+               NormalizeExactNameKey( _
+                   SafeText(StageData(RowNo, RiskStageAssetClass)))) Then
+
+            Name = SafeText(StageData(RowNo, RiskStageExposureName))
+
+            If StrComp( _
+                   SafeText(StageData(RowNo, RiskStageExposureType)), _
+                   UNKNOWN_UNDERLYING_TYPE, vbTextCompare) <> 0 And _
+               StrComp( _
+                   Left(Name, Len(UNKNOWN_UNDERLYING_PREFIX)), _
+                   UNKNOWN_UNDERLYING_PREFIX, vbTextCompare) <> 0 Then
+
+                If Not ExcludeDPM Or _
+                   StrComp( _
+                       SafeText(StageData(RowNo, RiskStageAccountScope)), _
+                       NON_DPM_SCOPE, vbTextCompare) = 0 Then
+
+                    Select Case DimensionKey
+
+                        Case "Country"
+                            Name = SafeText(StageData(RowNo, RiskStageGeography))
+                        Case "Sector"
+                            Name = SafeText(StageData(RowNo, RiskStageSector))
+
+                    End Select
+
+                    If Name = "" Then Name = OTHER_RISK_DIMENSION
+
+                    If IsNumeric(StageData(RowNo, RiskStageAllocatedValue)) Then
+                        Amount = CDbl(StageData(RowNo, RiskStageAllocatedValue))
+                    Else
+                        Amount = 0
+                    End If
+
+                    If Totals.Exists(Name) Then
+                        Totals(Name) = CDbl(Totals(Name)) + Amount
+                    Else
+                        Totals.Add Name, Amount
+                    End If
+
+                End If
+
+            End If
+
+        End If
+
+    Next RowNo
+
+    Set Ranks = NewExactNameMap()
+    Set PriorRankIndex = Ranks
+
+    n = Totals.Count
+
+    If n = 0 Then Exit Function
+
+    ReDim Names(1 To n)
+    ReDim Values(1 To n)
+
+    i = 0
+
+    For Each Key In Totals.Keys
+        i = i + 1
+        Names(i) = CStr(Key)
+        Values(i) = CDbl(Totals(Key))
+    Next Key
+
+    '
+    ' Value down, then name up - SORTBY's order in the formula.  A few
+    ' hundred names at most, so a plain insertion sort.
+    '
+    For i = 2 To n
+
+        SwapName = Names(i)
+        SwapValue = Values(i)
+        j = i - 1
+
+        Do While j >= 1
+
+            If Values(j) > SwapValue Then Exit Do
+            If Values(j) = SwapValue Then
+                If StrComp(Names(j), SwapName, vbTextCompare) <= 0 Then Exit Do
+            End If
+
+            Names(j + 1) = Names(j)
+            Values(j + 1) = Values(j)
+            j = j - 1
+
+        Loop
+
+        Names(j + 1) = SwapName
+        Values(j + 1) = SwapValue
+
+    Next i
+
+    For i = 1 To n
+        Ranks(Names(i)) = i
+    Next i
 
 End Function
 
@@ -12208,6 +12986,806 @@ Private Sub CreateCollateralPieChart( _
 End Sub
 
 '
+' The loan-flow diagram under the pie: a Sankey drawn from shapes, since
+' Excel has no chart of that kind.  What the portfolio's collateral lost
+' over the past month stands on the left - the loans ended, and under
+' them the positions of the NDGs that stayed that fell - the collateral
+' categories in the middle, and what it gained on the right - the new
+' loans, and under them the positions that rose.  A band is one of those
+' four movements in one category, as wide as it is worth, all on one
+' scale; a category node is as tall as the larger of its two sides and
+' coloured by the way its net move went: green up, red down, grey none.
+' The pieces are grouped under one name so the email copies the diagram
+' as one picture, like the pie.
+'
+Private Sub CreateLoanFlowDiagram( _
+    ByVal ws As Worksheet, _
+    ByRef Snaps As ReportSnapshots, _
+    ByVal ReportDate As Date, _
+    ByRef UnknownAssets As Object)
+
+    Dim Frame As Range
+
+    Dim Ended As Object
+    Dim Fallen As Object
+    Dim Entered As Object
+    Dim Risen As Object
+
+    Dim EndedCount As Long
+    Dim NewCount As Long
+
+    Dim EndedTotal As Double
+    Dim FallenTotal As Double
+    Dim EnteredTotal As Double
+    Dim RisenTotal As Double
+
+    Dim Categories As Variant
+    Dim Key As String
+
+    Dim Members As Collection
+
+    Dim BackLeft As Double
+    Dim BackTop As Double
+    Dim BackWidth As Double
+    Dim BackHeight As Double
+
+    Dim DiagramTop As Double
+    Dim DiagramBottom As Double
+    Dim ColumnBottom As Double
+
+    Dim LeftNodeX As Double
+    Dim MidNodeX As Double
+    Dim RightNodeX As Double
+
+    Dim Larger As Double
+    Dim LargerTotal As Double
+    Dim MovingCount As Long
+
+    Dim Available As Double
+    Dim PointsPerEuro As Double
+    Dim SmallCount As Long
+    Dim LargeSum As Double
+
+    Dim NodeTops() As Double
+    Dim NodeHeights() As Double
+
+    Dim EndedTop As Double
+    Dim FallenTop As Double
+    Dim NewTop As Double
+    Dim RisenTop As Double
+
+    Dim EndedOffset As Double
+    Dim FallenOffset As Double
+    Dim NewOffset As Double
+    Dim RisenOffset As Double
+
+    Dim LabelTop As Double
+
+    Dim i As Long
+
+    On Error Resume Next
+    ws.Shapes(FLOW_SHAPE_NAME).Delete
+    On Error GoTo 0
+
+    '
+    ' The frame: the same columns as the pie's, bordered the same way.
+    '
+
+    Set Frame = _
+        ws.Range( _
+            ws.Cells(Layout.FlowRow, Layout.FlowCol), _
+            ws.Cells( _
+                Layout.FlowRow + Layout.FlowHeightRows - 1, _
+                Layout.EnteredCol + CollateralCategoryCount()))
+
+    Frame.BorderAround _
+        LineStyle:=xlContinuous, _
+        Weight:=xlMedium, _
+        Color:=RGB(60, 60, 60)
+
+    '
+    ' The four movements.  What went out with the ended NDGs, from the
+    ' month-earlier positions; what came in with the new ones, from this
+    ' snapshot's - the sets the two movement tables count - and where the
+    ' NDGs that stayed moved between the two.
+    '
+
+    Set Ended = _
+        EnteredCollateralAmounts( _
+            Snaps.MonthAccounts, Snaps.Accounts, Snaps.MonthPositions, _
+            UnknownAssets)
+
+    Set Entered = _
+        EnteredCollateralAmounts( _
+            Snaps.Accounts, Snaps.MonthAccounts, Snaps.Positions, _
+            UnknownAssets)
+
+    EndedCount = MovedNdgSet(Snaps.MonthAccounts, Snaps.Accounts).Count
+    NewCount = MovedNdgSet(Snaps.Accounts, Snaps.MonthAccounts).Count
+
+    ContinuingCollateralChanges Snaps, UnknownAssets, Risen, Fallen
+
+    Categories = CollateralCategories()
+
+    ReDim NodeTops(0 To UBound(Categories))
+    ReDim NodeHeights(0 To UBound(Categories))
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+
+        EndedTotal = EndedTotal + Ended(Key)
+        FallenTotal = FallenTotal + Fallen(Key)
+        EnteredTotal = EnteredTotal + Entered(Key)
+        RisenTotal = RisenTotal + Risen(Key)
+
+        Larger = _
+            LargerOf(Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key))
+
+        If Larger > 0 Then
+
+            MovingCount = MovingCount + 1
+            LargerTotal = LargerTotal + Larger
+
+        End If
+
+    Next i
+
+    '
+    ' A white backdrop the size of the frame's inside, so the picture the
+    ' email takes has a ground of its own, and the title on it.
+    '
+
+    BackLeft = Frame.Left + 2
+    BackTop = Frame.Top + 2
+    BackWidth = Frame.Width - 4
+    BackHeight = Frame.Height - 4
+
+    Set Members = New Collection
+
+    Members.Add _
+        DrawFlowNode( _
+            ws, BackLeft, BackTop, BackWidth, BackHeight, _
+            RGB(255, 255, 255)).name
+
+    Members.Add _
+        AddFlowLabel( _
+            ws, BackLeft, BackTop + 6, BackWidth, FLOW_TITLE_HEIGHT, _
+            "Collateral Flows in the Past Month" & vbCr & _
+                "As of " & Format(ReportDate, "dd/mm/yyyy"), _
+            msoAlignCenter, 14, True).name
+
+    If MovingCount = 0 Then
+
+        Members.Add _
+            AddFlowLabel( _
+                ws, BackLeft, BackTop + BackHeight / 2 - 8, BackWidth, 16, _
+                "No collateral moved in the past month.", _
+                msoAlignCenter, 10, False).name
+
+        GroupFlowShapes ws, Members
+
+        Exit Sub
+
+    End If
+
+    Members.Add _
+        AddFlowLabel( _
+            ws, BackLeft + 10, BackTop + BackHeight - 13, BackWidth - 20, 10, _
+            "Category bars: green rose over the month, red fell, " & _
+                "grey unchanged.", _
+            msoAlignLeft, 8, False).name
+
+    '
+    ' The three columns: the side nodes inside the room kept for their
+    ' labels, the collateral nodes half way between.
+    '
+
+    DiagramTop = BackTop + FLOW_TITLE_HEIGHT + 14
+    DiagramBottom = BackTop + BackHeight - 14
+
+    LeftNodeX = BackLeft + 10 + FLOW_LABEL_WIDTH + 6
+    RightNodeX = _
+        BackLeft + BackWidth - 10 - FLOW_LABEL_WIDTH - 6 - FLOW_NODE_WIDTH
+    MidNodeX = (LeftNodeX + RightNodeX) / 2
+
+    '
+    ' One scale for every band: the collateral column, gaps aside, fills
+    ' the height.  A node too thin to see is drawn at the least height and
+    ' the scale set again over the rest, so the column still fits.
+    '
+
+    Available = DiagramBottom - DiagramTop - FLOW_NODE_GAP * (MovingCount - 1)
+    PointsPerEuro = Available / LargerTotal
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+        Larger = _
+            LargerOf(Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key))
+
+        If Larger > 0 Then
+
+            If Larger * PointsPerEuro < FLOW_NODE_MIN_HEIGHT Then
+                SmallCount = SmallCount + 1
+            Else
+                LargeSum = LargeSum + Larger
+            End If
+
+        End If
+
+    Next i
+
+    If LargeSum > 0 Then
+        PointsPerEuro = _
+            (Available - SmallCount * FLOW_NODE_MIN_HEIGHT) / LargeSum
+    End If
+
+    ColumnBottom = DiagramTop
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+        Larger = _
+            LargerOf(Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key))
+
+        If Larger > 0 Then
+
+            NodeTops(i) = ColumnBottom
+
+            NodeHeights(i) = Larger * PointsPerEuro
+            If NodeHeights(i) < FLOW_NODE_MIN_HEIGHT Then
+                NodeHeights(i) = FLOW_NODE_MIN_HEIGHT
+            End If
+
+            ColumnBottom = ColumnBottom + NodeHeights(i) + FLOW_NODE_GAP
+
+        End If
+
+    Next i
+
+    ColumnBottom = ColumnBottom - FLOW_NODE_GAP
+
+    '
+    ' Each side is two nodes, the loans over the positions with a gap
+    ' between, the pair centred against the collateral column.
+    '
+
+    EndedTop = _
+        FlowSideTop( _
+            DiagramTop, ColumnBottom, _
+            (EndedTotal + FallenTotal) * PointsPerEuro)
+    FallenTop = EndedTop + EndedTotal * PointsPerEuro + FLOW_SIDE_GAP
+
+    NewTop = _
+        FlowSideTop( _
+            DiagramTop, ColumnBottom, _
+            (EnteredTotal + RisenTotal) * PointsPerEuro)
+    RisenTop = NewTop + EnteredTotal * PointsPerEuro + FLOW_SIDE_GAP
+
+    '
+    ' The bands, in category order from every node so none cross but
+    ' where two nodes feed one side of a category; at a category the
+    ' loans' band lies over the positions' on either side.
+    '
+
+    EndedOffset = EndedTop
+    FallenOffset = FallenTop
+    NewOffset = NewTop
+    RisenOffset = RisenTop
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+
+        EndedOffset = EndedOffset + _
+            AddFlowBand( _
+                ws, Members, Ended(Key), PointsPerEuro, _
+                LeftNodeX + FLOW_NODE_WIDTH, EndedOffset, _
+                MidNodeX, NodeTops(i), _
+                RGB(226, 186, 184))
+
+        FallenOffset = FallenOffset + _
+            AddFlowBand( _
+                ws, Members, Fallen(Key), PointsPerEuro, _
+                LeftNodeX + FLOW_NODE_WIDTH, FallenOffset, _
+                MidNodeX, NodeTops(i) + Ended(Key) * PointsPerEuro, _
+                RGB(238, 210, 180))
+
+        NewOffset = NewOffset + _
+            AddFlowBand( _
+                ws, Members, Entered(Key), PointsPerEuro, _
+                MidNodeX + FLOW_NODE_WIDTH, NodeTops(i), _
+                RightNodeX, NewOffset, _
+                RGB(178, 214, 190))
+
+        RisenOffset = RisenOffset + _
+            AddFlowBand( _
+                ws, Members, Risen(Key), PointsPerEuro, _
+                MidNodeX + FLOW_NODE_WIDTH, _
+                NodeTops(i) + Entered(Key) * PointsPerEuro, _
+                RightNodeX, RisenOffset, _
+                RGB(184, 206, 226))
+
+    Next i
+
+    '
+    ' Nodes over the bands, labels over everything.  A category's labels
+    ' sit either side of its node, over the pale bands: what it lost on
+    ' the left, where those bands arrive, its name and what it gained on
+    ' the right, where those leave.
+    '
+
+    For i = 0 To UBound(Categories)
+
+        Key = Categories(i)(0)
+
+        If NodeHeights(i) > 0 Then
+
+            Members.Add _
+                DrawFlowNode( _
+                    ws, MidNodeX, NodeTops(i), _
+                    FLOW_NODE_WIDTH, NodeHeights(i), _
+                    FlowNetColor( _
+                        Entered(Key) + Risen(Key) - Ended(Key) - Fallen(Key))).name
+
+            AddFlowCategoryLabels _
+                ws, Members, MidNodeX, NodeTops(i), NodeHeights(i), _
+                Categories(i)(1), _
+                Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key)
+
+        End If
+
+    Next i
+
+    '
+    ' The side nodes and their labels: a label is centred on its node, and
+    ' the lower one pushed down when the two would overlap.
+    '
+
+    AddFlowSideNode _
+        ws, Members, LeftNodeX, EndedTop, EndedTotal * PointsPerEuro, _
+        RGB(148, 54, 52)
+
+    AddFlowSideNode _
+        ws, Members, LeftNodeX, FallenTop, FallenTotal * PointsPerEuro, _
+        RGB(200, 130, 60)
+
+    AddFlowSideNode _
+        ws, Members, RightNodeX, NewTop, EnteredTotal * PointsPerEuro, _
+        RGB(60, 130, 90)
+
+    AddFlowSideNode _
+        ws, Members, RightNodeX, RisenTop, RisenTotal * PointsPerEuro, _
+        RGB(70, 120, 165)
+
+    LabelTop = EndedTop + EndedTotal * PointsPerEuro / 2 - 21
+
+    Members.Add _
+        FlowSideLabel( _
+            ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelTop, msoAlignRight, _
+            "Lombard Loans Ended", _
+            NdgCountText(EndedCount), _
+            CompactEuro(EndedTotal) & " out").name
+
+    LabelTop = _
+        LargerOf( _
+            FallenTop + FallenTotal * PointsPerEuro / 2 - 21, _
+            LabelTop + 44)
+
+    Members.Add _
+        FlowSideLabel( _
+            ws, LeftNodeX - 6 - FLOW_LABEL_WIDTH, LabelTop, msoAlignRight, _
+            "Positions Decreased", _
+            "", _
+            CompactEuro(FallenTotal) & " out").name
+
+    LabelTop = NewTop + EnteredTotal * PointsPerEuro / 2 - 21
+
+    Members.Add _
+        FlowSideLabel( _
+            ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelTop, msoAlignLeft, _
+            "New Lombard Loans", _
+            NdgCountText(NewCount), _
+            CompactEuro(EnteredTotal) & " in").name
+
+    LabelTop = _
+        LargerOf( _
+            RisenTop + RisenTotal * PointsPerEuro / 2 - 21, _
+            LabelTop + 44)
+
+    Members.Add _
+        FlowSideLabel( _
+            ws, RightNodeX + FLOW_NODE_WIDTH + 6, LabelTop, msoAlignLeft, _
+            "Positions Increased", _
+            "", _
+            CompactEuro(RisenTotal) & " in").name
+
+    GroupFlowShapes ws, Members
+
+End Sub
+
+'
+' Where a side's pair of nodes starts: centred against the collateral
+' column, but never above its top.
+'
+Private Function FlowSideTop( _
+    ByVal ColumnTop As Double, _
+    ByVal ColumnBottom As Double, _
+    ByVal NodesHeight As Double) As Double
+
+    FlowSideTop = _
+        ColumnTop + _
+        (ColumnBottom - ColumnTop - FLOW_SIDE_GAP - NodesHeight) / 2
+
+    If FlowSideTop < ColumnTop Then FlowSideTop = ColumnTop
+
+End Function
+
+'
+' One movement's band, when there is one: drawn, added to the group, and
+' its height handed back so the caller can move down its node.
+'
+Private Function AddFlowBand( _
+    ByVal ws As Worksheet, _
+    ByVal Members As Collection, _
+    ByVal Amount As Double, _
+    ByVal PointsPerEuro As Double, _
+    ByVal FromX As Double, _
+    ByVal FromTop As Double, _
+    ByVal ToX As Double, _
+    ByVal ToTop As Double, _
+    ByVal FillColor As Long) As Double
+
+    Dim BandHeight As Double
+
+    If Amount <= 0 Then Exit Function
+
+    BandHeight = Amount * PointsPerEuro
+
+    Members.Add _
+        DrawFlowBand( _
+            ws, _
+            FromX, FromTop, FromTop + BandHeight, _
+            ToX, ToTop, ToTop + BandHeight, _
+            FillColor).name
+
+    AddFlowBand = BandHeight
+
+End Function
+
+'
+' A side node, when there is anything to draw it for.
+'
+Private Sub AddFlowSideNode( _
+    ByVal ws As Worksheet, _
+    ByVal Members As Collection, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal NodeHeight As Double, _
+    ByVal FillColor As Long)
+
+    If NodeHeight <= 0 Then Exit Sub
+
+    Members.Add _
+        DrawFlowNode(ws, X, Y, FLOW_NODE_WIDTH, NodeHeight, FillColor).name
+
+End Sub
+
+'
+' "3 NDGs", "1 NDG".
+'
+Private Function NdgCountText( _
+    ByVal Count As Long) As String
+
+    NdgCountText = Count & IIf(Count = 1, " NDG", " NDGs")
+
+End Function
+
+Private Function LargerOf( _
+    ByVal First As Double, _
+    ByVal Second As Double) As Double
+
+    If First > Second Then
+        LargerOf = First
+    Else
+        LargerOf = Second
+    End If
+
+End Function
+
+'
+' A band between two node edges: the left edge's span curves into the
+' right edge's, the two curves joined by the edges themselves, and the
+' path closed back on its start so the shape fills.
+'
+Private Function DrawFlowBand( _
+    ByVal ws As Worksheet, _
+    ByVal FromX As Double, _
+    ByVal FromTop As Double, _
+    ByVal FromBottom As Double, _
+    ByVal ToX As Double, _
+    ByVal ToTop As Double, _
+    ByVal ToBottom As Double, _
+    ByVal FillColor As Long) As Shape
+
+    Dim Builder As FreeformBuilder
+    Dim Band As Shape
+    Dim MiddleX As Double
+
+    MiddleX = (FromX + ToX) / 2
+
+    Set Builder = ws.Shapes.BuildFreeform(msoEditingCorner, FromX, FromTop)
+
+    Builder.AddNodes _
+        msoSegmentCurve, msoEditingCorner, _
+        MiddleX, FromTop, MiddleX, ToTop, ToX, ToTop
+
+    Builder.AddNodes msoSegmentLine, msoEditingAuto, ToX, ToBottom
+
+    Builder.AddNodes _
+        msoSegmentCurve, msoEditingCorner, _
+        MiddleX, ToBottom, MiddleX, FromBottom, FromX, FromBottom
+
+    Builder.AddNodes msoSegmentLine, msoEditingAuto, FromX, FromTop
+
+    Set Band = Builder.ConvertToShape
+
+    With Band
+
+        .Fill.Visible = msoTrue
+        .Fill.Solid
+        .Fill.ForeColor.RGB = FillColor
+        .Line.Visible = msoFalse
+        .Shadow.Visible = msoFalse
+
+    End With
+
+    Set DrawFlowBand = Band
+
+End Function
+
+Private Function DrawFlowNode( _
+    ByVal ws As Worksheet, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal BoxWidth As Double, _
+    ByVal BoxHeight As Double, _
+    ByVal FillColor As Long) As Shape
+
+    Dim Node As Shape
+
+    Set Node = _
+        ws.Shapes.AddShape(msoShapeRectangle, X, Y, BoxWidth, BoxHeight)
+
+    With Node
+
+        .Fill.Visible = msoTrue
+        .Fill.Solid
+        .Fill.ForeColor.RGB = FillColor
+        .Line.Visible = msoFalse
+        .Shadow.Visible = msoFalse
+
+    End With
+
+    Set DrawFlowNode = Node
+
+End Function
+
+'
+' A borderless text box with no margins, one paragraph per line, in the
+' report's face at the size given.
+'
+Private Function AddFlowLabel( _
+    ByVal ws As Worksheet, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal BoxWidth As Double, _
+    ByVal BoxHeight As Double, _
+    ByVal Text As String, _
+    ByVal Alignment As MsoParagraphAlignment, _
+    ByVal FontSize As Double, _
+    ByVal Bold As Boolean) As Shape
+
+    Dim Label As Shape
+
+    Set Label = _
+        ws.Shapes.AddTextbox( _
+            msoTextOrientationHorizontal, X, Y, BoxWidth, BoxHeight)
+
+    With Label
+
+        .Fill.Visible = msoFalse
+        .Line.Visible = msoFalse
+        .Shadow.Visible = msoFalse
+
+        With .TextFrame2
+
+            .AutoSize = msoAutoSizeNone
+            .WordWrap = msoFalse
+            .MarginLeft = 0
+            .MarginRight = 0
+            .MarginTop = 0
+            .MarginBottom = 0
+            .VerticalAnchor = msoAnchorMiddle
+
+            .TextRange.Text = Text
+            .TextRange.ParagraphFormat.Alignment = Alignment
+
+            With .TextRange.Font
+
+                .name = "Aptos Display"
+                .Size = FontSize
+                .Fill.ForeColor.RGB = RGB(40, 40, 40)
+
+                If Bold Then
+                    .Bold = msoTrue
+                Else
+                    .Bold = msoFalse
+                End If
+
+            End With
+
+        End With
+
+    End With
+
+    Set AddFlowLabel = Label
+
+End Function
+
+'
+' A category's labels either side of its node: what it lost on the left,
+' where the bands that took it arrive (red, with a minus); its name in
+' bold and what it gained (green, with a plus) on the right, where the
+' bands that brought it leave.  Either amount only when there was any.
+'
+Private Sub AddFlowCategoryLabels( _
+    ByVal ws As Worksheet, _
+    ByVal Members As Collection, _
+    ByVal NodeX As Double, _
+    ByVal NodeTop As Double, _
+    ByVal NodeHeight As Double, _
+    ByVal CategoryLabel As String, _
+    ByVal OutValue As Double, _
+    ByVal InValue As Double)
+
+    Dim Label As Shape
+    Dim Text As String
+    Dim LabelTop As Double
+
+    LabelTop = NodeTop + NodeHeight / 2 - 6
+
+    If OutValue > 0 Then
+
+        Set Label = _
+            AddFlowLabel( _
+                ws, NodeX - 5 - 80, LabelTop, 80, 12, _
+                ChrW(&H2212) & CompactEuro(OutValue), _
+                msoAlignRight, 9, False)
+
+        Label.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = RGB(192, 0, 0)
+
+        Members.Add Label.name
+
+    End If
+
+    Text = CategoryLabel
+    If InValue > 0 Then Text = Text & "  +" & CompactEuro(InValue)
+
+    Set Label = _
+        AddFlowLabel( _
+            ws, NodeX + FLOW_NODE_WIDTH + 5, LabelTop, 240, 12, Text, _
+            msoAlignLeft, 9, False)
+
+    With Label.TextFrame2.TextRange
+
+        .Characters(1, Len(CategoryLabel)).Font.Bold = msoTrue
+
+        If InValue > 0 Then
+            .Characters( _
+                Len(CategoryLabel) + 3, _
+                Len(Text) - Len(CategoryLabel) - 2).Font.Fill.ForeColor.RGB = _
+                    RGB(0, 128, 0)
+        End If
+
+    End With
+
+    Members.Add Label.name
+
+End Sub
+
+'
+' The colour of a category's net move: green up, red down, grey for none.
+'
+Private Function FlowNetColor( _
+    ByVal Net As Double) As Long
+
+    If Abs(Net) < FLOW_CHANGE_FLOOR Then
+        FlowNetColor = RGB(160, 160, 160)
+    ElseIf Net > 0 Then
+        FlowNetColor = RGB(60, 130, 90)
+    Else
+        FlowNetColor = RGB(148, 54, 52)
+    End If
+
+End Function
+
+'
+' A side node's label: the title in bold, the NDGs behind it when they
+' mean something - a loan is an NDG, a moved position is not - and the
+' collateral and which way it went.
+'
+Private Function FlowSideLabel( _
+    ByVal ws As Worksheet, _
+    ByVal X As Double, _
+    ByVal Y As Double, _
+    ByVal Alignment As MsoParagraphAlignment, _
+    ByVal Title As String, _
+    ByVal CountText As String, _
+    ByVal AmountText As String) As Shape
+
+    Dim Label As Shape
+
+    Set Label = _
+        AddFlowLabel( _
+            ws, X, Y, FLOW_LABEL_WIDTH, 42, _
+            Title & vbCr & IIf(CountText = "", "", CountText & vbCr) & AmountText, _
+            Alignment, 9, False)
+
+    Label.TextFrame2.TextRange.Paragraphs(1).Font.Bold = msoTrue
+
+    Set FlowSideLabel = Label
+
+End Function
+
+'
+' The pieces become one shape under the diagram's name, in the order they
+' were drawn.
+'
+Private Sub GroupFlowShapes( _
+    ByVal ws As Worksheet, _
+    ByVal Members As Collection)
+
+    Dim MemberNames() As Variant
+    Dim i As Long
+
+    ReDim MemberNames(0 To Members.Count - 1)
+
+    For i = 1 To Members.Count
+        MemberNames(i - 1) = Members(i)
+    Next i
+
+    ws.Shapes.Range(MemberNames).Group.name = FLOW_SHAPE_NAME
+
+End Sub
+
+'
+' An amount short enough for a label: "12.3m", "456k", "1.23bn", with the
+' euro sign in front.
+'
+Private Function CompactEuro( _
+    ByVal Amount As Double) As String
+
+    Dim Magnitude As Double
+
+    Magnitude = Abs(Amount)
+
+    If Magnitude >= 1000000000 Then
+        CompactEuro = Format(Amount / 1000000000, "0.00") & "bn"
+    ElseIf Magnitude >= 1000000 Then
+        CompactEuro = Format(Amount / 1000000, "0.0") & "m"
+    ElseIf Magnitude >= 1000 Then
+        CompactEuro = Format(Amount / 1000, "0") & "k"
+    Else
+        CompactEuro = Format(Amount, "0")
+    End If
+
+    CompactEuro = ChrW(&H20AC) & CompactEuro
+
+End Function
+
+'
 ' Public because nothing calls it by name: GenerateWeeklyAnalysis puts
 ' "WriteNoteWeekly" into the NoteHandler global and Note reaches it
 ' through Application.Run, which cannot see a Private procedure.
@@ -12221,6 +13799,7 @@ Public Sub WriteNoteWeekly( _
 
     End If
 
+    If RiskStagingQuietly Then Exit Sub
     If Trim(Message) = "" Then Exit Sub
 
     ReportNotes.Add Message
@@ -12242,8 +13821,8 @@ Private Sub BuildNotes( _
     Dim i As Long
 
     FirstRow = Layout.CommentRow + 1
-    LastRow = Layout.PieRow + _
-              Layout.PieHeightRows - 1
+    LastRow = Layout.FlowRow + _
+              Layout.FlowHeightRows - 1
     FirstCol = Layout.CommentCol
     LastCol = Layout.CommentCol + 4
 
@@ -12324,8 +13903,8 @@ Private Sub FormatNotesBox( _
 
     FirstRow = Layout.CommentRow + 1
 
-    LastRow = Layout.PieRow + _
-              Layout.PieHeightRows - 1
+    LastRow = Layout.FlowRow + _
+              Layout.FlowHeightRows - 1
 
     FirstCol = Layout.CommentCol
     LastCol = Layout.CommentCol + 4
@@ -12365,12 +13944,20 @@ Private Sub CreateWeeklyEmailButton(ByVal ws As Worksheet)
     ws.Buttons("btnWeeklyRerun").Delete
     On Error GoTo 0
 
-    Set btn = ws.Buttons.Add(345, 16, 100, 26)
+    '
+    ' Both sit inside the title row, whatever height AutoFit gave it.
+    '
+    With ws.Rows(Layout.HeaderRow)
+
+        Set btn = ws.Buttons.Add(345, .Top + 1, 100, .Height - 2)
+        Set Btn2 = ws.Buttons.Add(455, .Top + 1, 50, .Height - 2)
+
+    End With
+
     btn.name = "btnWeeklyEmail"
     btn.Characters.Text = "Generate Email"
     btn.OnAction = "CreateWeeklyEmail"
 
-    Set Btn2 = ws.Buttons.Add(455, 16, 50, 26)
     Btn2.name = "btnWeeklyRerun"
     Btn2.Characters.Text = "Rerun"
     Btn2.OnAction = "GenerateWeeklyAnalysis"
