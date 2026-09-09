@@ -927,8 +927,8 @@ Private Function BuildPositionAggregates( _
     Dim NDG As String
     Dim ISIN As String
     Dim Name As String
-    Dim Class As String
-    Dim Currency As String
+    Dim AssetClass As String
+    Dim Ccy As String
     Dim Issuer As String
     Dim Value As Double
     Dim SecKey As String
@@ -993,8 +993,8 @@ Private Function BuildPositionAggregates( _
 
             ISIN = CStr(Positions(r, FactPosISIN))
             Name = CStr(Positions(r, FactPosName))
-            Class = CStr(Positions(r, FactPosClass))
-            Currency = UCase$(CStr(Positions(r, FactPosCurrency)))
+            AssetClass = CStr(Positions(r, FactPosClass))
+            Ccy = UCase$(CStr(Positions(r, FactPosCurrency)))
             Issuer = CStr(Positions(r, FactPosIssuer))
             Value = CDbl(Positions(r, FactPosValue))
 
@@ -1014,12 +1014,12 @@ Private Function BuildPositionAggregates( _
             AddAmount NdgAboveLimit, NDG, CDbl(Positions(r, FactPosAboveLimit))
 
             If Not NdgIsinClass.Exists(PosKey) Then
-                NdgIsinClass(PosKey) = Class
+                NdgIsinClass(PosKey) = AssetClass
                 NdgIsinName(PosKey) = Name
             End If
 
-            AddAmount InnerDictionary(NdgClass, NDG), Class, Value
-            AddAmount InnerDictionary(NdgCurrency, NDG), Currency, Value
+            AddAmount InnerDictionary(NdgClass, NDG), AssetClass, Value
+            AddAmount InnerDictionary(NdgCurrency, NDG), Ccy, Value
             MarkInner NdgSecurities, NDG, SecKey
 
             AddAmount Security, SecKey, Value
@@ -1027,7 +1027,7 @@ Private Function BuildPositionAggregates( _
 
             If Not SecurityName.Exists(SecKey) Then
                 SecurityName(SecKey) = Name
-                SecurityClass(SecKey) = Class
+                SecurityClass(SecKey) = AssetClass
             End If
 
             If Issuer <> "" Then
@@ -1035,8 +1035,8 @@ Private Function BuildPositionAggregates( _
                 MarkInner IssuerHolders, Issuer, NDG
             End If
 
-            AddAmount Currencies, Currency, Value
-            AddAmount Classes, Class, Value
+            AddAmount Currencies, Ccy, Value
+            AddAmount Classes, AssetClass, Value
 
         End If
 
@@ -1308,18 +1308,18 @@ Private Function PosKeySecurity( _
 End Function
 
 Private Function CategoryLabel( _
-    ByVal Class As String) As String
+    ByVal ClassKey As String) As String
 
     Dim Category As Variant
 
     For Each Category In CollateralCategories()
-        If StrComp(Category(0), Class, vbTextCompare) = 0 Then
+        If StrComp(Category(0), ClassKey, vbTextCompare) = 0 Then
             CategoryLabel = Category(1)
             Exit Function
         End If
     Next Category
 
-    CategoryLabel = Class
+    CategoryLabel = ClassKey
 
 End Function
 
@@ -2011,7 +2011,7 @@ Private Sub WritePositionSection( _
     Dim Category As Variant
     Dim PosKey As String
     Dim SecKey As String
-    Dim Class As String
+    Dim AssetClass As String
     Dim Total As Double
     Dim Value As Double
     Dim LongestName As String
@@ -2039,15 +2039,15 @@ Private Sub WritePositionSection( _
 
     For Each Key In Agg("NdgIsin").Keys
 
-        Class = CStr(Agg("NdgIsinClass")(Key))
+        AssetClass = CStr(Agg("NdgIsinClass")(Key))
         Value = CDbl(Agg("NdgIsin")(Key))
 
-        If Not ClassBestValue.Exists(Class) Then
-            ClassBestValue(Class) = Value
-            ClassBest(Class) = Key
-        ElseIf Value > CDbl(ClassBestValue(Class)) Then
-            ClassBestValue(Class) = Value
-            ClassBest(Class) = Key
+        If Not ClassBestValue.Exists(AssetClass) Then
+            ClassBestValue(AssetClass) = Value
+            ClassBest(AssetClass) = Key
+        ElseIf Value > CDbl(ClassBestValue(AssetClass)) Then
+            ClassBestValue(AssetClass) = Value
+            ClassBest(AssetClass) = Key
         End If
 
     Next Key
