@@ -460,7 +460,11 @@ Private Function WeeklySourceLines( _
 
 End Function
 
-Private Function CleanWeeklyCsvField( _
+'
+' The next two are Public for WeeklyFacts, which reads the same files and
+' must parse them the same way.
+'
+Public Function CleanWeeklyCsvField( _
     ByVal FieldValue As Variant) As String
 
     Dim Result As String
@@ -515,7 +519,7 @@ Private Function WeeklyCsvField( _
 
 End Function
 
-Private Function WeeklyCsvDouble( _
+Public Function WeeklyCsvDouble( _
     ByVal InputValue As Variant) As Double
 
     Dim NumberText As String
@@ -1558,7 +1562,10 @@ End Sub
 ' column header. Every collateral table, total and pie slice is driven from
 ' this one list, so a category is added or renamed in a single place.
 '
-Private Function CollateralCategories() As Variant
+'
+' Public for WeeklyFacts, which sums by the same categories.
+'
+Public Function CollateralCategories() As Variant
 
     CollateralCategories = Array( _
         Array("Certificates", "Certificates"), _

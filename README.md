@@ -16,6 +16,7 @@ configuration parameters (as defined names) and one button per entry point.
 | 02 Date Range Analysis | `AnalysisStartDate`, `AnalysisEndDate` | Calculate Delta | `DeltaCalculation.BuildPositionMovements` |
 | 02 Date Range Analysis | `AnalysisEndDate` | Revenue Estimate | `DeltaRevenue.BuildRevenueSummary` |
 | 03 Weekly Analysis | `WeeklyEndDate`, `WeeklyCompareDate`, `EmailTo`, `EmailCc` | Weekly Analysis | `WeeklyAnalysisGenerate.GenerateWeeklyAnalysis` |
+| 03 Weekly Analysis | `FactsEndDate` (or `WeeklyEndDate` when that name does not exist) | Weekly Facts | `WeeklyFacts.GenerateWeeklyFacts` |
 | 04 Client Dashboard | `JourneyNDG`, `journey_start` | Launch Dashboard | `Journey.ExtractNDGHistory` |
 
 `WeeklyAnalysisEmail.CreateWeeklyEmail` is reached from a button that
@@ -157,17 +158,20 @@ to reach across for (`ReadAllLines`, `FindHeaderIndex`, `FormatReportTable`,
 module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
 only Public procedures with no caller in the source are the zero-argument
-entry points a button names — the eight on Home, plus
+entry points a button names — the nine on Home, plus
 `InsertRenamedCompanies` behind a button the code itself draws. Two
 exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
-a button that would not be visible from the source.
+a button that would not be visible from the source. Three helpers are Public
+because `WeeklyFacts` calls them: the CSV field cleaner, the number parser and
+the category list, so the facts read the same files the same way and sum by
+the same categories.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
 It is 13,900 lines and 233 procedures, and it does not get split, because in
-VBA splitting it would cost more than it buys. 229 of those procedures are
+VBA splitting it would cost more than it buys. 226 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
 `Private` means "private to this module", not "private to this concern". Cut
@@ -249,6 +253,39 @@ the date compared to. `docs/weekly-analysis-generate.md` walks
 through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three
 separate asset classifications.
+
+**Weekly Facts** — `GenerateWeeklyFacts` builds one sheet of figures and
+superlatives from its own button, for its own date (`FactsEndDate`, or the
+report's date when that name does not exist; a date with no snapshot is read
+as the last one on or before it), and goes into no email. Four sections read
+the end date's snapshots — the book (totals, utilisation, loan to value,
+cover, currencies, margin calls, the median client, the top-5 and top-10
+shares and a Herfindahl index, untouched lines), the clients (largest and
+smallest by collateral, drawn and line; highest and lowest utilisation;
+thinnest and thickest cover; closest to a margin call and deepest in one;
+most positions, securities, currencies and categories; most concentrated and
+most evenly spread; largest cash, non-eligible and above-limit holders) and
+the positions (the largest position over the book and in each category with
+its holder, the most widely held and the largest security, the largest and
+most common issuer, foreign currency, cash, non-eligible and above-limit
+totals, the longest and shortest security names). Every movement is read
+three ways, each against a snapshot on file — the previous snapshot, the
+first on or after one month back, the first on or after year-end, resolved
+the way the report resolves its dates — with the book's totals, new and
+ended loans and the largest of each, the biggest riser and faller, the
+largest position increase and decrease, the most active repositioner, line
+increases and cuts, drawdowns and repayments, the categories gaining and
+losing most, securities new to and gone from the book, and margin calls
+raised and cleared. The last section walks every Accounts snapshot on file
+up to the end date (Accounts only; positions are read for the four dates
+above): the oldest and youngest active loans and their average age, clients
+ever on the book, loans ended and loans that came back, the longest- and
+shortest-lived ended loans, the busiest snapshots for new and ended loans
+and the days since the last of each, record and lowest collateral, drawn and
+loan counts with their dates, the largest line ever approved, and margin
+calls over the run. The module reads the CSVs itself through the weekly
+module's field cleaner and number parser, keeps one row per NDG, and sums
+positions once per snapshot into dictionaries the sections share.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears
