@@ -3423,8 +3423,9 @@ Public Sub ExportPortfolioFactsSlides()
 
     Dim ws As Worksheet
     Dim EndDate As Date
-    Dim FolderPath As String
     Dim FilePath As String
+    Dim SelectedPath As Variant
+    Dim SuggestedFileName As String
 
     If Not SheetExists(FACTS_SHEET) Then
         MsgBox _
@@ -3447,12 +3448,27 @@ Public Sub ExportPortfolioFactsSlides()
 
     EndDate = CDate(ws.Cells(2, MARKER_COL).Value)
 
-    FolderPath = ThisWorkbook.Path
-    If FolderPath = "" Then FolderPath = PathSelection()
-    If Right$(FolderPath, 1) <> "\" Then FolderPath = FolderPath & "\"
-
-    FilePath = FolderPath & "Portfolio Facts " & GetDateCode(EndDate) & ".html"
-
+    SuggestedFileName = _
+        "Portfolio Facts " & GetDateCode(EndDate) & ".html"
+    
+    SelectedPath = Application.GetSaveAsFilename( _
+        InitialFileName:=SuggestedFileName, _
+        FileFilter:="HTML Files (*.html),*.html", _
+        FilterIndex:=1, _
+        Title:="Save Portfolio Facts Slides")
+    
+    ' User clicked Cancel
+    If VarType(SelectedPath) = vbBoolean Then
+        If SelectedPath = False Then Exit Sub
+    End If
+    
+    FilePath = CStr(SelectedPath)
+    
+    ' Ensure the HTML extension is present
+    If LCase$(Right$(FilePath, 5)) <> ".html" Then
+        FilePath = FilePath & ".html"
+    End If
+    
     SaveUtf8Text FilePath, BuildSlidesHtml(ws, EndDate)
 
     On Error Resume Next
@@ -3479,6 +3495,7 @@ ErrorHandler:
     MsgBox Err.Description, vbCritical, "Portfolio Facts"
 
 End Sub
+
 
 '
 ' The whole page: head and styles, the title slide, the sections' slides,
