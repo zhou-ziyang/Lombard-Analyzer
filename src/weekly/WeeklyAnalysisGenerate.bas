@@ -12977,7 +12977,6 @@ Private Sub CreateLoanFlowDiagram( _
     Dim RisenTotal As Double
 
     Dim Categories As Variant
-    Dim Opening As Object
     Dim Key As String
 
     Dim Members As Collection
@@ -13062,14 +13061,6 @@ Private Sub CreateLoanFlowDiagram( _
     NewCount = MovedNdgSet(Snaps.Accounts, Snaps.MonthAccounts).Count
 
     ContinuingCollateralChanges Snaps, UnknownAssets, Risen, Fallen
-
-    '
-    ' What each category held a month earlier, the base its net move is
-    ' read against.
-    '
-
-    Set Opening = BuildCollateralDictionary(Snaps.MonthPositions, UnknownAssets)
-    If Opening Is Nothing Then Set Opening = NewCollateralDictionary()
 
     Categories = CollateralCategories()
 
@@ -13276,8 +13267,10 @@ Private Sub CreateLoanFlowDiagram( _
     Next i
 
     '
-    ' Nodes over the bands, labels over everything.  A category's label
-    ' sits to the right of its node, over the pale bands leaving it.
+    ' Nodes over the bands, labels over everything.  A category's labels
+    ' sit either side of its node, over the pale bands: what it lost on
+    ' the left, where those bands arrive, its name and what it gained on
+    ' the right, where those leave.
     '
 
     For i = 0 To UBound(Categories)
@@ -13293,14 +13286,10 @@ Private Sub CreateLoanFlowDiagram( _
                     FlowNetColor( _
                         Entered(Key) + Risen(Key) - Ended(Key) - Fallen(Key))).name
 
-            Members.Add _
-                FlowCategoryLabel( _
-                    ws, _
-                    MidNodeX + FLOW_NODE_WIDTH + 5, _
-                    NodeTops(i) + NodeHeights(i) / 2 - 6, _
-                    Categories(i)(1), _
-                    Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key), _
-                    Opening(Key)).name
+            AddFlowCategoryLabels _
+                ws, Members, MidNodeX, NodeTops(i), NodeHeights(i), _
+                Categories(i)(1), _
+                Ended(Key) + Fallen(Key), Entered(Key) + Risen(Key)
 
         End If
 
@@ -13603,88 +13592,65 @@ Private Function AddFlowLabel( _
 End Function
 
 '
-' A category's label: its name in bold, then what it lost (red, with a
-' minus) and what it gained (green, with a plus), in the order the sides
-' read and each only when there was any, then the net move as a share of
-' the month-earlier holding, in the node's colour.
+' A category's labels either side of its node: what it lost on the left,
+' where the bands that took it arrive (red, with a minus); its name in
+' bold and what it gained (green, with a plus) on the right, where the
+' bands that brought it leave.  Either amount only when there was any.
 '
-Private Function FlowCategoryLabel( _
+Private Sub AddFlowCategoryLabels( _
     ByVal ws As Worksheet, _
-    ByVal X As Double, _
-    ByVal Y As Double, _
+    ByVal Members As Collection, _
+    ByVal NodeX As Double, _
+    ByVal NodeTop As Double, _
+    ByVal NodeHeight As Double, _
     ByVal CategoryLabel As String, _
     ByVal OutValue As Double, _
-    ByVal InValue As Double, _
-    ByVal OpeningValue As Double) As Shape
+    ByVal InValue As Double)
 
     Dim Label As Shape
-
     Dim Text As String
-    Dim PlusText As String
-    Dim MinusText As String
-    Dim NetText As String
-    Dim PlusStart As Long
-    Dim MinusStart As Long
-    Dim NetStart As Long
-    Dim Net As Double
+    Dim LabelTop As Double
 
-    Text = CategoryLabel
+    LabelTop = NodeTop + NodeHeight / 2 - 6
 
     If OutValue > 0 Then
 
-        MinusText = ChrW(&H2212) & CompactEuro(OutValue)
-        MinusStart = Len(Text) + 3
-        Text = Text & "  " & MinusText
+        Set Label = _
+            AddFlowLabel( _
+                ws, NodeX - 5 - 80, LabelTop, 80, 12, _
+                ChrW(&H2212) & CompactEuro(OutValue), _
+                msoAlignRight, 9, False)
+
+        Label.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = RGB(192, 0, 0)
+
+        Members.Add Label.name
 
     End If
 
-    If InValue > 0 Then
-
-        PlusText = "+" & CompactEuro(InValue)
-        PlusStart = Len(Text) + 3
-        Text = Text & "  " & PlusText
-
-    End If
-
-    Net = InValue - OutValue
-
-    If OpeningValue > 0 And Abs(Net) >= FLOW_CHANGE_FLOOR Then
-
-        NetText = _
-            IIf(Net > 0, "+", ChrW(&H2212)) & _
-            Format(Abs(Net) / OpeningValue, "0.0%")
-        NetStart = Len(Text) + 3
-        Text = Text & "  " & NetText
-
-    End If
+    Text = CategoryLabel
+    If InValue > 0 Then Text = Text & "  +" & CompactEuro(InValue)
 
     Set Label = _
-        AddFlowLabel(ws, X, Y, 240, 12, Text, msoAlignLeft, 9, False)
+        AddFlowLabel( _
+            ws, NodeX + FLOW_NODE_WIDTH + 5, LabelTop, 240, 12, Text, _
+            msoAlignLeft, 9, False)
 
     With Label.TextFrame2.TextRange
 
         .Characters(1, Len(CategoryLabel)).Font.Bold = msoTrue
 
-        If PlusStart > 0 Then
-            .Characters(PlusStart, Len(PlusText)).Font.Fill.ForeColor.RGB = _
-                RGB(0, 128, 0)
-        End If
-
-        If MinusStart > 0 Then
-            .Characters(MinusStart, Len(MinusText)).Font.Fill.ForeColor.RGB = _
-                RGB(192, 0, 0)
-        End If
-
-        If NetStart > 0 Then
-            .Characters(NetStart, Len(NetText)).Font.Fill.ForeColor.RGB = _
-                FlowNetColor(Net)
+        If InValue > 0 Then
+            .Characters( _
+                Len(CategoryLabel) + 3, _
+                Len(Text) - Len(CategoryLabel) - 2).Font.Fill.ForeColor.RGB = _
+                    RGB(0, 128, 0)
         End If
 
     End With
 
-    Set FlowCategoryLabel = Label
+    Members.Add Label.name
 
-End Function
+End Sub
 
 '
 ' The colour of a category's net move: green up, red down, grey for none.

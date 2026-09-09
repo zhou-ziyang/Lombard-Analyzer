@@ -166,7 +166,7 @@ a button that would not be visible from the source.
 
 ### Why WeeklyAnalysisGenerate stays one module
 
-It is 14,000 lines and 233 procedures, and it does not get split, because in
+It is 13,900 lines and 233 procedures, and it does not get split, because in
 VBA splitting it would cost more than it buys. 229 of those procedures are
 Private, along with five Enums and forty-odd Consts. The module is the only
 encapsulation boundary the language has — there are no namespaces, and
