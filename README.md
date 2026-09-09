@@ -25,7 +25,8 @@ configuration parameters (as defined names) and one button per entry point.
 button drawn onto *New Geo-Sec Lookup* when a company has changed its name, and
 `JourneyPositionAnalysis.AnalyzePositionChanges` from the per-row *Analyze*
 buttons that `AddPositionAnalysisButtons` draws onto *NDG Journey* and the
-dashboard's history table.
+dashboard's history table, and `PortfolioFacts.ExportPortfolioFactsSlides`
+from the *Slides* button drawn onto *Portfolio Facts*.
 
 `EmailTo` and `EmailCc` hold the draft's recipients, semicolon-separated, and
 are read like any other Home parameter. A name that has not been created yet
@@ -159,7 +160,8 @@ module is callable from every other, and two of the same name stop the project
 compiling. So Public means "something outside this module calls this", and the
 only Public procedures with no caller in the source are the zero-argument
 entry points a button names — the nine on Home, plus
-`InsertRenamedCompanies` behind a button the code itself draws. Two
+`InsertRenamedCompanies` and `ExportPortfolioFactsSlides` behind buttons the
+code itself draws. Two
 exceptions carry a comment saying
 why they must stay Public: `WriteNoteWeekly`, which `Application.Run` reaches
 by name, and `WriteAssetTypeMapping`, whose zero arguments make it bindable to
@@ -294,7 +296,12 @@ the days since the last of each, record and lowest collateral, drawn and loan
 counts with their dates, the largest line ever approved, and margin calls
 over the run. The module reads the CSVs itself through the weekly module's
 field cleaner and number parser, keeps one row per NDG, and sums positions
-once per snapshot into dictionaries the sections share.
+once per snapshot into dictionaries the sections share. The sheet carries a
+*Slides* button: `ExportPortfolioFactsSlides` reads it back through the row
+markers it keeps in a hidden column and writes one self-contained HTML deck
+next to the workbook — a title slide, then every section eight facts to a
+slide as cards, arrow keys or a click to turn the pages, printable to a
+landscape PDF — and opens it in the browser.
 
 **Journey** — `ExtractNDGHistory` walks every Accounts snapshot for one NDG,
 synthesises `Loan Ended` / `Loan Restarted` rows when the account disappears

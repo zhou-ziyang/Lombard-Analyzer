@@ -22,6 +22,9 @@ Option Explicit
 ' resolving names can take a lookup by hand, so the look-through is read
 ' for the end date alone and never for the history.
 '
+' The sheet carries a Slides button: ExportPortfolioFactsSlides turns it
+' into one HTML file of slides next to the workbook and opens it.
+'
 ' Reads the snapshots itself, through the weekly module's field cleaner
 ' and number parser, so its figures agree with the report's.
 '
@@ -46,6 +49,16 @@ Private Const POSITION_FILE_SUFFIX As String = "_Lombard_Loans_ITA_Positions.csv
 Private Const FACT_DATE_FORMAT As String = "dd/mm/yyyy"
 Private Const FACT_TOLERANCE As Double = 0.005
 Private Const FIRST_COL As Long = 2
+
+'
+' A hidden column says what each row is - section, fact or note - so the
+' slides can read the sheet back without guessing from its formats; the
+' end date sits in it too, on the title row.  The deck takes this many
+' facts to a slide.
+'
+Private Const MARKER_COL As Long = FIRST_COL + 6
+Private Const FACTS_PER_SLIDE As Long = 8
+Private Const SLIDES_BUTTON As String = "btnFactsSlides"
 
 '
 ' One Accounts row.  The two flags come in as numbers, one for set.
@@ -1367,6 +1380,9 @@ Private Sub WriteFactsHeader( _
             IIf(HasStart, ", the start date given", ", the first snapshot on file")
         .Cells(3, FIRST_COL).Font.Size = 11
 
+        .Cells(2, MARKER_COL).Value = EndDate
+        .Cells(2, MARKER_COL).NumberFormat = FACT_DATE_FORMAT
+
         .Cells(5, FIRST_COL).Value = "Fact"
         .Cells(5, FIRST_COL + 1).Value = "Value"
         .Cells(5, FIRST_COL + 2).Value = "Who / What"
@@ -1399,6 +1415,8 @@ Private Sub StartSection( _
         .Font.Bold = True
         .Font.Size = 12
     End With
+
+    FactsSheet.Cells(FactsRow, MARKER_COL).Value = "section"
 
     If Basis <> "" Then
         With FactsSheet.Cells(FactsRow, FIRST_COL + 2)
@@ -1436,6 +1454,7 @@ Private Sub WriteFact( _
         .Cells(FactsRow, FIRST_COL + 1).Value = Value
         .Cells(FactsRow, FIRST_COL + 2).Value = Who
         .Cells(FactsRow, FIRST_COL + 3).Value = Detail
+        .Cells(FactsRow, MARKER_COL).Value = "fact"
 
         With .Cells(FactsRow, FIRST_COL + 1)
 
@@ -1474,6 +1493,8 @@ Private Sub WriteNoFact( _
         .Font.Color = RGB(90, 90, 90)
     End With
 
+    FactsSheet.Cells(FactsRow, MARKER_COL).Value = "note"
+
     FactsRow = FactsRow + 1
 
 End Sub
@@ -1507,6 +1528,8 @@ Private Sub FinishFactsSheet()
         .Range(.Cells(6, FIRST_COL + 2), .Cells(FactsRow, FIRST_COL + 3)).WrapText = False
         .Range(.Cells(6, FIRST_COL + 1), .Cells(FactsRow, FIRST_COL + 1)).HorizontalAlignment = xlRight
 
+        .Columns(MARKER_COL).Hidden = True
+
         .Activate
         .Range("A1").Select
         ActiveWindow.FreezePanes = False
@@ -1516,6 +1539,31 @@ Private Sub FinishFactsSheet()
         ActiveWindow.FreezePanes = True
 
     End With
+
+    AddSlidesButton
+
+End Sub
+
+'
+' The Slides button, in the title row beside the sheet's name.
+'
+Private Sub AddSlidesButton()
+
+    Dim Btn As Button
+
+    On Error Resume Next
+    FactsSheet.Buttons(SLIDES_BUTTON).Delete
+    On Error GoTo 0
+
+    With FactsSheet.Rows(2)
+        Set Btn = _
+            FactsSheet.Buttons.Add( _
+                FactsSheet.Columns(FIRST_COL + 2).Left, .Top + 1, 80, .Height - 2)
+    End With
+
+    Btn.name = SLIDES_BUTTON
+    Btn.Characters.Text = "Slides"
+    Btn.OnAction = "ExportPortfolioFactsSlides"
 
 End Sub
 
@@ -3356,5 +3404,391 @@ Private Function SpellsText( _
     If DictAmount(Spells, NDG) > 1 Then
         SpellsText = " over " & Plural(CLng(DictAmount(Spells, NDG)), "spell", "spells")
     End If
+
+End Function
+
+'====================================================================
+' Slides
+'====================================================================
+
+'
+' The facts sheet as a deck of HTML slides: one file next to the workbook
+' - a title slide, then every section eight facts to a slide - opened in
+' the browser once written.  Public and argument-free for the Slides
+' button the sheet carries, and for a Home button if one is wanted.
+' Nothing is recomputed: the deck says what the sheet says, read row by
+' row through the markers in the hidden column.
+'
+Public Sub ExportPortfolioFactsSlides()
+
+    Dim ws As Worksheet
+    Dim EndDate As Date
+    Dim FolderPath As String
+    Dim FilePath As String
+
+    If Not SheetExists(FACTS_SHEET) Then
+        MsgBox _
+            "There is no " & FACTS_SHEET & " sheet: run Portfolio Facts first.", _
+            vbExclamation, "Portfolio Facts"
+        Exit Sub
+    End If
+
+    Set ws = ThisWorkbook.Worksheets(FACTS_SHEET)
+
+    If Not IsDate(ws.Cells(2, MARKER_COL).Value) Then
+        MsgBox _
+            "The " & FACTS_SHEET & " sheet is from an earlier build: " & _
+            "run Portfolio Facts again first.", _
+            vbExclamation, "Portfolio Facts"
+        Exit Sub
+    End If
+
+    On Error GoTo ErrorHandler
+
+    EndDate = CDate(ws.Cells(2, MARKER_COL).Value)
+
+    FolderPath = ThisWorkbook.Path
+    If FolderPath = "" Then FolderPath = PathSelection()
+    If Right$(FolderPath, 1) <> "\" Then FolderPath = FolderPath & "\"
+
+    FilePath = FolderPath & "Portfolio Facts " & GetDateCode(EndDate) & ".html"
+
+    SaveUtf8Text FilePath, BuildSlidesHtml(ws, EndDate)
+
+    On Error Resume Next
+    ThisWorkbook.FollowHyperlink FilePath
+
+    If Err.Number <> 0 Then
+
+        Err.Clear
+        CreateObject("WScript.Shell").Run """" & FilePath & """", 1, False
+
+        If Err.Number <> 0 Then
+            Err.Clear
+            MsgBox "Slides written to" & vbCrLf & FilePath, vbInformation, "Portfolio Facts"
+        End If
+
+    End If
+
+    On Error GoTo 0
+
+    Exit Sub
+
+ErrorHandler:
+
+    MsgBox Err.Description, vbCritical, "Portfolio Facts"
+
+End Sub
+
+'
+' The whole page: head and styles, the title slide, the sections' slides,
+' the page counter and the script that turns the pages.
+'
+Private Function BuildSlidesHtml( _
+    ByVal ws As Worksheet, _
+    ByVal EndDate As Date) As String
+
+    Dim Parts As Collection
+    Dim Cards As Collection
+    Dim Notes As Collection
+
+    Dim SectionTitle As String
+    Dim SectionBasis As String
+    Dim Marker As String
+    Dim LastRow As Long
+    Dim r As Long
+
+    Set Parts = New Collection
+    Set Cards = New Collection
+    Set Notes = New Collection
+
+    LastRow = ws.Cells(ws.Rows.Count, FIRST_COL).End(xlUp).Row
+
+    Parts.Add _
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>" & _
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>" & _
+        "<title>" & HtmlEscape("Portfolio Facts " & DateText(EndDate)) & "</title>" & _
+        "<style>" & SlidesCss() & "</style></head><body>"
+
+    Parts.Add _
+        "<section class='slide title'>" & _
+        "<div class='eyebrow'>Lombard Loans</div>" & _
+        "<h1>Portfolio Facts</h1>" & _
+        "<p class='sub'>" & HtmlEscape(CStr(ws.Cells(3, FIRST_COL).Value)) & "</p>" & _
+        "<p class='meta'>" & HtmlEscape("Generated " & Format(Now, "dd/mm/yyyy hh:nn")) & "</p>" & _
+        "</section>"
+
+    For r = 6 To LastRow
+
+        Marker = CStr(ws.Cells(r, MARKER_COL).Value)
+
+        Select Case Marker
+
+            Case "section"
+
+                AddSectionSlides Parts, SectionTitle, SectionBasis, Cards, Notes, EndDate
+                SectionTitle = CStr(ws.Cells(r, FIRST_COL).Value)
+                SectionBasis = CStr(ws.Cells(r, FIRST_COL + 2).Value)
+
+            Case "fact"
+
+                Cards.Add FactCardHtml(ws, r)
+
+            Case "note"
+
+                Notes.Add HtmlEscape(CStr(ws.Cells(r, FIRST_COL).Value))
+
+        End Select
+
+    Next r
+
+    AddSectionSlides Parts, SectionTitle, SectionBasis, Cards, Notes, EndDate
+
+    Parts.Add _
+        "<div id='pg' class='pager'></div>" & _
+        "<script>" & SlidesScript() & "</script></body></html>"
+
+    BuildSlidesHtml = JoinParts(Parts, vbLf)
+
+End Function
+
+'
+' One section's slides: its cards in groups, the group number in the
+' title when there is more than one, its notes under the last group - or
+' alone, for a section with no facts.  The collections are emptied for
+' the next section.
+'
+Private Sub AddSectionSlides( _
+    ByVal Parts As Collection, _
+    ByVal SectionTitle As String, _
+    ByVal SectionBasis As String, _
+    ByRef Cards As Collection, _
+    ByRef Notes As Collection, _
+    ByVal EndDate As Date)
+
+    Dim SlideCount As Long
+    Dim Slide As Long
+    Dim First As Long
+    Dim Last As Long
+    Dim i As Long
+    Dim Body As String
+    Dim Heading As String
+
+    If SectionTitle = "" Then Exit Sub
+
+    SlideCount = (Cards.Count + FACTS_PER_SLIDE - 1) \ FACTS_PER_SLIDE
+    If SlideCount < 1 Then SlideCount = 1
+
+    For Slide = 1 To SlideCount
+
+        Heading = HtmlEscape(SectionTitle)
+        If SlideCount > 1 Then Heading = Heading & " <span class='part'>" & Slide & " / " & SlideCount & "</span>"
+
+        Body = "<section class='slide'><h2>" & Heading & "</h2>" & _
+               "<div class='basis'>" & HtmlEscape(SectionBasis) & "</div>"
+
+        First = (Slide - 1) * FACTS_PER_SLIDE + 1
+        Last = Slide * FACTS_PER_SLIDE
+        If Last > Cards.Count Then Last = Cards.Count
+
+        If Last >= First Then
+            Body = Body & "<div class='cards'>"
+            For i = First To Last
+                Body = Body & Cards(i)
+            Next i
+            Body = Body & "</div>"
+        End If
+
+        If Slide = SlideCount Then
+            For i = 1 To Notes.Count
+                Body = Body & "<p class='note'>" & Notes(i) & "</p>"
+            Next i
+        End If
+
+        Body = Body & _
+            "<div class='foot'>Portfolio Facts &middot; As of " & _
+            HtmlEscape(DateText(EndDate)) & "</div></section>"
+
+        Parts.Add Body
+
+    Next Slide
+
+    Set Cards = New Collection
+    Set Notes = New Collection
+
+End Sub
+
+'
+' One fact as a card: its label, the value as the sheet shows it, who or
+' what it is about, the detail.  A negative number reads in red.
+'
+Private Function FactCardHtml( _
+    ByVal ws As Worksheet, _
+    ByVal r As Long) As String
+
+    Dim ValueCell As Range
+    Dim ValueClass As String
+    Dim Who As String
+    Dim Detail As String
+
+    Set ValueCell = ws.Cells(r, FIRST_COL + 1)
+
+    ValueClass = "value"
+    If IsNumeric(ValueCell.Value) And Not IsDate(ValueCell.Value) Then
+        If ValueCell.Value < 0 Then ValueClass = "value neg"
+    End If
+
+    Who = CStr(ws.Cells(r, FIRST_COL + 2).Value)
+    Detail = CStr(ws.Cells(r, FIRST_COL + 3).Value)
+
+    FactCardHtml = _
+        "<div class='card'>" & _
+        "<div class='label'>" & HtmlEscape(CStr(ws.Cells(r, FIRST_COL).Value)) & "</div>" & _
+        "<div class='" & ValueClass & "'>" & HtmlEscape(CellDisplayText(ValueCell)) & "</div>"
+
+    If Who <> "" Then
+        FactCardHtml = FactCardHtml & "<div class='who'>" & HtmlEscape(Who) & "</div>"
+    End If
+
+    If Detail <> "" Then
+        FactCardHtml = FactCardHtml & "<div class='detail'>" & HtmlEscape(Detail) & "</div>"
+    End If
+
+    FactCardHtml = FactCardHtml & "</div>"
+
+End Function
+
+'
+' A cell as Excel shows it; formatted afresh when the column was too
+' narrow to show it at all.
+'
+Private Function CellDisplayText( _
+    ByVal Cell As Range) As String
+
+    CellDisplayText = Cell.Text
+
+    If Left$(CellDisplayText, 1) = "#" And IsNumeric(Cell.Value) Then
+        CellDisplayText = Format(Cell.Value, Cell.NumberFormat)
+    End If
+
+End Function
+
+Private Function HtmlEscape( _
+    ByVal Text As String) As String
+
+    Text = Replace(Text, "&", "&amp;")
+    Text = Replace(Text, "<", "&lt;")
+    Text = Replace(Text, ">", "&gt;")
+    Text = Replace(Text, """", "&quot;")
+
+    HtmlEscape = Text
+
+End Function
+
+Private Function JoinParts( _
+    ByVal Parts As Collection, _
+    ByVal Separator As String) As String
+
+    Dim Items() As String
+    Dim i As Long
+
+    If Parts.Count = 0 Then Exit Function
+
+    ReDim Items(1 To Parts.Count)
+
+    For i = 1 To Parts.Count
+        Items(i) = Parts(i)
+    Next i
+
+    JoinParts = Join(Items, Separator)
+
+End Function
+
+'
+' Written through ADODB as UTF-8, since the sheet's text carries the euro
+' sign and the minus that a plain Print would mangle.
+'
+Private Sub SaveUtf8Text( _
+    ByVal FilePath As String, _
+    ByVal Text As String)
+
+    Dim Stream As Object
+
+    Set Stream = CreateObject("ADODB.Stream")
+
+    Stream.Type = 2
+    Stream.Charset = "utf-8"
+    Stream.Open
+    Stream.WriteText Text
+    Stream.SaveToFile FilePath, 2
+    Stream.Close
+
+End Sub
+
+'
+' The deck's look: white 16:9 slides on a warm grey ground, the report's
+' dark red for titles and the cards' edge, two columns of cards, a print
+' rule that lays one slide per landscape page.
+'
+Private Function SlidesCss() As String
+
+    Dim Css As String
+
+    Css = "html,body{margin:0;height:100%;background:#efece7;color:#222;" & _
+          "font-family:Aptos Display,Aptos,Segoe UI,Calibri,sans-serif;}"
+    Css = Css & ".slide{display:none;position:relative;box-sizing:border-box;width:100vw;height:100vh;" & _
+          "padding:44px 64px 56px;background:#fff;flex-direction:column;}"
+    Css = Css & ".slide.on{display:flex;}"
+    Css = Css & ".slide.title{justify-content:center;background:#943634;color:#fff;}"
+    Css = Css & ".title h1{font-size:64px;margin:0 0 12px;font-weight:700;}"
+    Css = Css & ".title .eyebrow{font-size:18px;letter-spacing:.2em;text-transform:uppercase;opacity:.8;}"
+    Css = Css & ".title .sub{font-size:22px;margin:0 0 8px;opacity:.95;}"
+    Css = Css & ".title .meta{font-size:14px;opacity:.7;}"
+    Css = Css & "h2{font-size:30px;margin:0;color:#943634;}"
+    Css = Css & ".part{font-size:16px;color:#999;font-weight:400;margin-left:10px;}"
+    Css = Css & ".basis{font-size:15px;color:#666;margin:4px 0 22px;}"
+    Css = Css & ".cards{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;" & _
+          "gap:14px 40px;flex:1;min-height:0;}"
+    Css = Css & ".card{border-left:3px solid #943634;padding:2px 0 2px 16px;min-width:0;overflow:hidden;}"
+    Css = Css & ".label{font-size:12.5px;color:#777;text-transform:uppercase;letter-spacing:.05em;}"
+    Css = Css & ".value{font-size:30px;font-weight:700;line-height:1.15;margin:2px 0;}"
+    Css = Css & ".value.neg{color:#b02a26;}"
+    Css = Css & ".who{font-size:15px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}"
+    Css = Css & ".detail{font-size:12.5px;color:#666;margin-top:2px;display:-webkit-box;" & _
+          "-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}"
+    Css = Css & ".note{font-size:16px;color:#444;margin:6px 0;}"
+    Css = Css & ".pager{position:fixed;right:24px;bottom:16px;font-size:13px;color:#888;}"
+    Css = Css & ".foot{position:absolute;left:64px;bottom:20px;font-size:12px;color:#999;}"
+    Css = Css & "@media print{html,body{background:#fff;}" & _
+          ".slide{display:flex!important;page-break-after:always;height:100vh;}" & _
+          ".pager{display:none;}@page{size:landscape;margin:0;}}"
+
+    SlidesCss = Css
+
+End Function
+
+'
+' Turning the pages: the arrow keys, space and page keys, a click on the
+' left third for back and elsewhere for forward, Home and End, and the
+' page kept in the address so a slide can be linked to.
+'
+Private Function SlidesScript() As String
+
+    Dim Js As String
+
+    Js = "var s=document.querySelectorAll('.slide'),i=0;"
+    Js = Js & "function show(n){i=Math.max(0,Math.min(s.length-1,n));" & _
+         "for(var k=0;k<s.length;k++){s[k].classList.toggle('on',k===i);}" & _
+         "document.getElementById('pg').textContent=(i+1)+' / '+s.length;" & _
+         "history.replaceState(null,'','#'+(i+1));}"
+    Js = Js & "document.addEventListener('keydown',function(e){" & _
+         "if(e.key==='ArrowRight'||e.key==='ArrowDown'||e.key===' '||e.key==='PageDown'){show(i+1);e.preventDefault();}" & _
+         "else if(e.key==='ArrowLeft'||e.key==='ArrowUp'||e.key==='PageUp'){show(i-1);e.preventDefault();}" & _
+         "else if(e.key==='Home'){show(0);}else if(e.key==='End'){show(s.length-1);}});"
+    Js = Js & "document.addEventListener('click',function(e){" & _
+         "show(e.clientX<window.innerWidth/3?i-1:i+1);});"
+    Js = Js & "show((parseInt(location.hash.slice(1),10)||1)-1);"
+
+    SlidesScript = Js
 
 End Function
