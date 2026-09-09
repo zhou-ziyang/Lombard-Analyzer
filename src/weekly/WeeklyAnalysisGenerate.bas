@@ -10106,6 +10106,12 @@ End Function
 ' they share this - it used to be two copies, WriteRiskGranularityTable
 ' being the Issuer one.
 '
+' SubtableRows keeps the two tables of a pair level: the full-portfolio
+' table records the row each of its subtables ends on, and the Excl. DPM
+' table starts each of its own no higher than that - so a Certificates
+' subtable answered with Same as left, or one with fewer names, does not
+' pull the subtables under it out of line with the left-hand ones.
+'
 Private Function WriteRiskDimensionTable( _
     ByVal ws As Worksheet, _
     ByVal TopRow As Long, _
@@ -10116,7 +10122,8 @@ Private Function WriteRiskDimensionTable( _
     ByVal ExcludeDPM As Boolean, _
     ByVal Visibility As Object, _
     ByRef PriorStageData As Variant, _
-    Optional ByVal CertificateSameAsLeft As Boolean = False) As Long
+    Optional ByVal CertificateSameAsLeft As Boolean = False, _
+    Optional ByVal SubtableRows As Object = Nothing) As Long
 
     Dim ClassKey As Variant
     Dim CurrentRow As Long
@@ -10171,6 +10178,18 @@ Private Function WriteRiskDimensionTable( _
                         ExcludeDPM, _
                         Visibility, _
                         PriorStageData)
+
+            End If
+
+            If Not SubtableRows Is Nothing Then
+
+                If Not ExcludeDPM Then
+                    SubtableRows(CStr(ClassKey)) = CurrentRow
+                ElseIf SubtableRows.Exists(CStr(ClassKey)) Then
+                    If CLng(SubtableRows(CStr(ClassKey))) > CurrentRow Then
+                        CurrentRow = CLng(SubtableRows(CStr(ClassKey)))
+                    End If
+                End If
 
             End If
 
@@ -11186,6 +11205,7 @@ Private Sub BuildRiskGranularitySection( _
     Dim FundMapReady As Boolean
     Dim CompaniesReady As Boolean
     Dim CertificateNameSameAsLeft As Boolean
+    Dim SubtableRows As Object
     Dim CertificateGeographySameAsLeft As Boolean
     Dim CertificateSectorSameAsLeft As Boolean
     Dim CertificateMappingIssue As String
@@ -11766,6 +11786,8 @@ StageDataReadyLabel:
             "Sector", RiskSubtableVisibility, RiskStageSheetName(AnalysisDate))
 
 
+    Set SubtableRows = CreateObject("Scripting.Dictionary")
+
     RiskNextRow = _
         WriteRiskDimensionTable( _
             ws, _
@@ -11776,7 +11798,8 @@ StageDataReadyLabel:
             "Issuer", _
             False, _
             RiskSubtableVisibility, _
-            PriorStageData)
+            PriorStageData, _
+            SubtableRows:=SubtableRows)
 
     RiskExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11790,13 +11813,16 @@ StageDataReadyLabel:
             True, _
             RiskSubtableVisibility, _
             PriorStageData, _
-            CertificateNameSameAsLeft)
+            CertificateNameSameAsLeft, _
+            SubtableRows)
 
     Layout.CountryRiskRow = _
         NextRiskSectionRow( _
             RiskNextRow, _
             RiskExDPMNextRow)
     Layout.CountryRiskExSegRow = Layout.CountryRiskRow
+
+    Set SubtableRows = CreateObject("Scripting.Dictionary")
 
     GeographyNextRow = _
         WriteRiskDimensionTable( _
@@ -11808,7 +11834,8 @@ StageDataReadyLabel:
             "Country", _
             False, _
             RiskSubtableVisibility, _
-            PriorStageData)
+            PriorStageData, _
+            SubtableRows:=SubtableRows)
 
     GeographyExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11822,13 +11849,16 @@ StageDataReadyLabel:
             True, _
             RiskSubtableVisibility, _
             PriorStageData, _
-            CertificateGeographySameAsLeft)
+            CertificateGeographySameAsLeft, _
+            SubtableRows)
 
     Layout.SectorRiskRow = _
         NextRiskSectionRow( _
             GeographyNextRow, _
             GeographyExDPMNextRow)
     Layout.SectorRiskExSegRow = Layout.SectorRiskRow
+
+    Set SubtableRows = CreateObject("Scripting.Dictionary")
 
     SectorNextRow = _
         WriteRiskDimensionTable( _
@@ -11840,7 +11870,8 @@ StageDataReadyLabel:
             "Sector", _
             False, _
             RiskSubtableVisibility, _
-            PriorStageData)
+            PriorStageData, _
+            SubtableRows:=SubtableRows)
 
     SectorExDPMNextRow = _
         WriteRiskDimensionTable( _
@@ -11854,7 +11885,8 @@ StageDataReadyLabel:
             True, _
             RiskSubtableVisibility, _
             PriorStageData, _
-            CertificateSectorSameAsLeft)
+            CertificateSectorSameAsLeft, _
+            SubtableRows)
 
 
     If RebuildRiskStage Then
