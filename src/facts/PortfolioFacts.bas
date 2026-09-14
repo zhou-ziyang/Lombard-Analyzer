@@ -52,10 +52,20 @@ Private Const FACT_TOLERANCE As Double = 0.005
 Private Const FIRST_COL As Long = 2
 
 '
-' A hidden column says what each row is - section, fact or note - so the
-' slides can read the sheet back without guessing from its formats; the
-' end date sits in it too, on the title row.  The deck takes this many
-' facts to a slide.
+' Clients or securities that tie for a superlative each get a row of
+' their own, with their own detail, up to this many; the rest are counted
+' on a closing row.  Two values tie when they differ by less than this
+' share of the larger (of one, below one), which is rounding, not a
+' difference.
+'
+Private Const TIE_ROWS As Long = 5
+Private Const TIE_TOLERANCE As Double = 0.000000001
+
+'
+' A hidden column says what each row is - section, fact, tie (a fact's
+' row for another client tied at the same value) or note - so the slides
+' can read the sheet back without guessing from its formats; the end date
+' sits in it too, on the title row.
 '
 Private Const MARKER_COL As Long = FIRST_COL + 6
 Private Const SLIDES_BUTTON As String = "btnFactsSlides"
@@ -904,11 +914,57 @@ Private Function TiedKeys( _
 
     For Each K In Dict.Keys
         If CStr(K) <> Key Then
-            If Abs(CDbl(Dict(K)) - Best) < FACT_TOLERANCE Then Result.Add CStr(K)
+            If Abs(CDbl(Dict(K)) - Best) <= TIE_TOLERANCE * IIf(Abs(Best) > 1, Abs(Best), 1) Then
+                Result.Add CStr(K)
+            End If
         End If
     Next K
 
 End Function
+
+'
+' The keys that tie for a superlative, for a row each: the best key
+' first, then the others holding the same amount, the first TIE_ROWS of
+' them; More says how many are left over for the closing row.
+'
+Private Function TiedRows( _
+    ByVal Dict As Object, _
+    ByVal Key As String, _
+    ByRef More As Long) As Collection
+
+    Dim Keys As Collection
+    Dim i As Long
+
+    Set Keys = TiedKeys(Dict, Key)
+    Set TiedRows = New Collection
+
+    For i = 1 To Keys.Count
+        If i > TIE_ROWS Then Exit For
+        TiedRows.Add Keys(i)
+    Next i
+
+    More = Keys.Count - TiedRows.Count
+
+End Function
+
+'
+' The row that closes a tie wider than TIE_ROWS: how many more hold the
+' same value, as a count and nothing else, so that no one's detail stands
+' for the rest.  Nothing when every tied key had its row.
+'
+Private Sub WriteMoreTied( _
+    ByVal Label As String, _
+    ByVal Value As Variant, _
+    ByVal Kind As String, _
+    ByVal More As Long, _
+    Optional ByVal Noun As String = "client", _
+    Optional ByVal NounPlural As String = "clients")
+
+    If More <= 0 Then Exit Sub
+
+    WriteFact Label, Value, Kind, "and " & Plural(More, "more " & Noun, "more " & NounPlural)
+
+End Sub
 
 '
 ' A list of tied keys as text, each behind the prefix, the first MaxShown
@@ -935,6 +991,11 @@ Private Function JoinTied( _
 
 End Function
 
+'
+' The tied clients on one row, for a fact whose detail is about the value
+' and not about any one of them ("of 8").  A fact whose detail is about
+' the client gets a row per tied client instead, through TiedRows.
+'
 Private Function TiedNdgText( _
     ByVal Dict As Object, _
     ByVal NDG As String) As String
@@ -943,36 +1004,9 @@ Private Function TiedNdgText( _
 
 End Function
 
-Private Function TiedKeyText( _
-    ByVal Dict As Object, _
-    ByVal Key As String) As String
-
-    TiedKeyText = JoinTied(TiedKeys(Dict, Key), "", 4)
-
-End Function
-
-Private Function TiedSecurityText( _
-    ByVal Dict As Object, _
-    ByVal SecKey As String, _
-    ByVal Agg As Object) As String
-
-    Dim Keys As Collection
-    Dim Names As Collection
-    Dim i As Long
-
-    Set Keys = TiedKeys(Dict, SecKey)
-    Set Names = New Collection
-
-    For i = 1 To Keys.Count
-        Names.Add SecurityText(Agg, CStr(Keys(i)))
-    Next i
-
-    TiedSecurityText = JoinTied(Names, "", 3)
-
-End Function
-
 '
-' The keys whose inner dictionaries hold as many members as the key's.
+' The keys whose inner dictionaries hold as many members as the key's,
+' on one row, for a fact whose detail is about the value alone.
 '
 Private Function TiedInnerText( _
     ByVal Outer As Object, _
@@ -1587,7 +1621,9 @@ End Sub
 '
 ' One fact on one row: what it is, its value in the format its kind asks
 ' for - eur, pct, int, x (a ratio), date, or text - who or what it is
-' about, and anything worth adding.
+' about, and anything worth adding.  A fact written right under one with
+' the same label continues it - another client tied at the same value,
+' with its own detail - and is marked as a tie, its label greyed.
 '
 Private Sub WriteFact( _
     ByVal Label As String, _
@@ -1596,13 +1632,22 @@ Private Sub WriteFact( _
     Optional ByVal Who As String = "", _
     Optional ByVal Detail As String = "")
 
+    Dim Continued As Boolean
+
     With FactsSheet
+
+        Select Case CStr(.Cells(FactsRow - 1, MARKER_COL).Value)
+            Case "fact", "tie"
+                Continued = (CStr(.Cells(FactsRow - 1, FIRST_COL).Value) = Label)
+        End Select
 
         .Cells(FactsRow, FIRST_COL).Value = Label
         .Cells(FactsRow, FIRST_COL + 1).Value = Value
         .Cells(FactsRow, FIRST_COL + 2).Value = Who
         .Cells(FactsRow, FIRST_COL + 3).Value = Detail
-        .Cells(FactsRow, MARKER_COL).Value = "fact"
+        .Cells(FactsRow, MARKER_COL).Value = IIf(Continued, "tie", "fact")
+
+        If Continued Then .Cells(FactsRow, FIRST_COL).Font.Color = RGB(150, 150, 150)
 
         With .Cells(FactsRow, FIRST_COL + 1)
 
@@ -1936,9 +1981,11 @@ Private Sub WriteClientSection( _
 
     Dim Key As Variant
     Dim Category As Variant
+    Dim Tied As Variant
     Dim NDG As String
     Dim Total As Double
     Dim Held As Long
+    Dim More As Long
     Dim r As Long
 
     Set Agg = Snap.Aggregates
@@ -1963,38 +2010,58 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(Collateral, True)
     If NDG <> "" Then
-        WriteFact "Largest client by collateral", Collateral(NDG), "eur", TiedNdgText(Collateral, NDG), _
-            PctText(SafeShare(Collateral(NDG), Total)) & " of the book; drawn " & _
-            EuroText(DictAmount(DrawnBy, NDG)) & "; " & _
-            Plural(CLng(DictAmount(Agg("PosCount"), NDG)), "position", "positions")
+        For Each Tied In TiedRows(Collateral, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Largest client by collateral", Collateral(NDG), "eur", NdgText(NDG), _
+                PctText(SafeShare(Collateral(NDG), Total)) & " of the book; drawn " & _
+                EuroText(DictAmount(DrawnBy, NDG)) & "; " & _
+                Plural(CLng(DictAmount(Agg("PosCount"), NDG)), "position", "positions")
+        Next Tied
+        WriteMoreTied "Largest client by collateral", Collateral(NDG), "eur", More
     End If
 
     NDG = BestKey(Collateral, False, True)
     If NDG <> "" Then
-        WriteFact "Smallest client by collateral", Collateral(NDG), "eur", TiedNdgText(Collateral, NDG), _
-            "drawn " & EuroText(DictAmount(DrawnBy, NDG)) & "; approved " & _
-            EuroText(DictAmount(ApprovedBy, NDG))
+        For Each Tied In TiedRows(Collateral, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Smallest client by collateral", Collateral(NDG), "eur", NdgText(NDG), _
+                "drawn " & EuroText(DictAmount(DrawnBy, NDG)) & "; approved " & _
+                EuroText(DictAmount(ApprovedBy, NDG))
+        Next Tied
+        WriteMoreTied "Smallest client by collateral", Collateral(NDG), "eur", More
     End If
 
     NDG = BestKey(DrawnBy, True)
     If NDG <> "" Then
-        WriteFact "Largest client by drawn amount", DrawnBy(NDG), "eur", TiedNdgText(DrawnBy, NDG), _
-            PctText(SafeShare(DrawnBy(NDG), DictAmount(ApprovedBy, NDG))) & _
-            " of a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line; collateral " & _
-            EuroText(DictAmount(Collateral, NDG))
+        For Each Tied In TiedRows(DrawnBy, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Largest client by drawn amount", DrawnBy(NDG), "eur", NdgText(NDG), _
+                PctText(SafeShare(DrawnBy(NDG), DictAmount(ApprovedBy, NDG))) & _
+                " of a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line; collateral " & _
+                EuroText(DictAmount(Collateral, NDG))
+        Next Tied
+        WriteMoreTied "Largest client by drawn amount", DrawnBy(NDG), "eur", More
     End If
 
     NDG = BestKey(ApprovedBy, True)
     If NDG <> "" Then
-        WriteFact "Largest approved line", ApprovedBy(NDG), "eur", TiedNdgText(ApprovedBy, NDG), _
-            "drawn " & EuroText(DictAmount(DrawnBy, NDG)) & " (" & _
-            PctText(SafeShare(DictAmount(DrawnBy, NDG), ApprovedBy(NDG))) & ")"
+        For Each Tied In TiedRows(ApprovedBy, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Largest approved line", ApprovedBy(NDG), "eur", NdgText(NDG), _
+                "drawn " & EuroText(DictAmount(DrawnBy, NDG)) & " (" & _
+                PctText(SafeShare(DictAmount(DrawnBy, NDG), ApprovedBy(NDG))) & ")"
+        Next Tied
+        WriteMoreTied "Largest approved line", ApprovedBy(NDG), "eur", More
     End If
 
     NDG = BestKey(ApprovedBy, False, True)
     If NDG <> "" Then
-        WriteFact "Smallest approved line", ApprovedBy(NDG), "eur", TiedNdgText(ApprovedBy, NDG), _
-            "drawn " & EuroText(DictAmount(DrawnBy, NDG))
+        For Each Tied In TiedRows(ApprovedBy, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Smallest approved line", ApprovedBy(NDG), "eur", NdgText(NDG), _
+                "drawn " & EuroText(DictAmount(DrawnBy, NDG))
+        Next Tied
+        WriteMoreTied "Smallest approved line", ApprovedBy(NDG), "eur", More
     End If
 
     '
@@ -2042,31 +2109,47 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(Ltv, True)
     If NDG <> "" Then
-        WriteFact "Highest loan to value", Ltv(NDG), "pct", TiedNdgText(Ltv, NDG), _
-            "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line over " & _
-            EuroText(DictAmount(ApprovedBy, NDG) / Ltv(NDG)) & " of collateral"
+        For Each Tied In TiedRows(Ltv, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Highest loan to value", Ltv(NDG), "pct", NdgText(NDG), _
+                "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line over " & _
+                EuroText(DictAmount(ApprovedBy, NDG) / Ltv(NDG)) & " of collateral"
+        Next Tied
+        WriteMoreTied "Highest loan to value", Ltv(NDG), "pct", More
     End If
 
     NDG = BestKey(Ltv, False, True)
     If NDG <> "" Then
-        WriteFact "Lowest loan to value", Ltv(NDG), "pct", TiedNdgText(Ltv, NDG), _
-            "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line over " & _
-            EuroText(DictAmount(ApprovedBy, NDG) / Ltv(NDG)) & " of collateral"
+        For Each Tied In TiedRows(Ltv, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Lowest loan to value", Ltv(NDG), "pct", NdgText(NDG), _
+                "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line over " & _
+                EuroText(DictAmount(ApprovedBy, NDG) / Ltv(NDG)) & " of collateral"
+        Next Tied
+        WriteMoreTied "Lowest loan to value", Ltv(NDG), "pct", More
     End If
 
     NDG = BestKey(Headroom, False)
     If NDG <> "" Then
-        WriteFact "Closest to a margin call", Headroom(NDG), "eur", TiedNdgText(Headroom, NDG), _
-            "haircut collateral value " & EuroText(DictAmount(HcvBy, NDG)) & _
-            " over a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line; " & _
-            PctText(SafeShare(Headroom(NDG), DictAmount(ApprovedBy, NDG))) & " of headroom"
+        For Each Tied In TiedRows(Headroom, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Closest to a margin call", Headroom(NDG), "eur", NdgText(NDG), _
+                "haircut collateral value " & EuroText(DictAmount(HcvBy, NDG)) & _
+                " over a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line; " & _
+                PctText(SafeShare(Headroom(NDG), DictAmount(ApprovedBy, NDG))) & " of headroom"
+        Next Tied
+        WriteMoreTied "Closest to a margin call", Headroom(NDG), "eur", More
     End If
 
     NDG = BestKey(Depth, True)
     If NDG <> "" Then
-        WriteFact "Deepest margin call", Depth(NDG), "eur", TiedNdgText(Depth, NDG), _
-            "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line against " & _
-            EuroText(DictAmount(HcvBy, NDG)) & " of haircut collateral value"
+        For Each Tied In TiedRows(Depth, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Deepest margin call", Depth(NDG), "eur", NdgText(NDG), _
+                "a " & EuroText(DictAmount(ApprovedBy, NDG)) & " line against " & _
+                EuroText(DictAmount(HcvBy, NDG)) & " of haircut collateral value"
+        Next Tied
+        WriteMoreTied "Deepest margin call", Depth(NDG), "eur", More
     End If
 
     '
@@ -2125,16 +2208,24 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(Agg("PosCount"), True)
     If NDG <> "" Then
-        WriteFact "Most positions", Agg("PosCount")(NDG), "int", TiedNdgText(Agg("PosCount"), NDG), _
-            Plural(CLng(DictAmount(SecurityCount, NDG)), "security", "securities") & _
-            " worth " & EuroText(DictAmount(Collateral, NDG))
+        For Each Tied In TiedRows(Agg("PosCount"), NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Most positions", Agg("PosCount")(NDG), "int", NdgText(NDG), _
+                Plural(CLng(DictAmount(SecurityCount, NDG)), "security", "securities") & _
+                " worth " & EuroText(DictAmount(Collateral, NDG))
+        Next Tied
+        WriteMoreTied "Most positions", Agg("PosCount")(NDG), "int", More
     End If
 
     NDG = BestKey(CurrencyCount, True)
     If NDG <> "" Then
         If CDbl(CurrencyCount(NDG)) > 1 Then
-            WriteFact "Most currencies", CurrencyCount(NDG), "int", TiedNdgText(CurrencyCount, NDG), _
-                Join(Agg("NdgCurrency")(NDG).Keys, ", ")
+            For Each Tied In TiedRows(CurrencyCount, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Most currencies", CurrencyCount(NDG), "int", NdgText(NDG), _
+                    Join(Agg("NdgCurrency")(NDG).Keys, ", ")
+            Next Tied
+            WriteMoreTied "Most currencies", CurrencyCount(NDG), "int", More
         End If
     End If
 
@@ -2146,40 +2237,60 @@ Private Sub WriteClientSection( _
 
     NDG = BestKey(TopShare, True)
     If NDG <> "" Then
-        WriteFact "Most concentrated client", TopShare(NDG), "pct", TiedNdgText(TopShare, NDG), _
-            "of its " & EuroText(DictAmount(Collateral, NDG)) & " in " & _
-            SecurityText(Agg, PosKeySecurity(CStr(TopKey(NDG)))) & _
-            "; among clients with more than one security"
+        For Each Tied In TiedRows(TopShare, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Most concentrated client", TopShare(NDG), "pct", NdgText(NDG), _
+                "of its " & EuroText(DictAmount(Collateral, NDG)) & " in " & _
+                SecurityText(Agg, PosKeySecurity(CStr(TopKey(NDG)))) & _
+                "; among clients with more than one security"
+        Next Tied
+        WriteMoreTied "Most concentrated client", TopShare(NDG), "pct", More
     End If
 
     NDG = BestKey(TopShare, False)
     If NDG <> "" Then
-        WriteFact "Most evenly spread client", TopShare(NDG), "pct", TiedNdgText(TopShare, NDG), _
-            "its largest holding, " & _
-            SecurityText(Agg, PosKeySecurity(CStr(TopKey(NDG)))) & _
-            ", out of " & Plural(CLng(DictAmount(SecurityCount, NDG)), "security", "securities")
+        For Each Tied In TiedRows(TopShare, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Most evenly spread client", TopShare(NDG), "pct", NdgText(NDG), _
+                "its largest holding, " & _
+                SecurityText(Agg, PosKeySecurity(CStr(TopKey(NDG)))) & _
+                ", out of " & Plural(CLng(DictAmount(SecurityCount, NDG)), "security", "securities")
+        Next Tied
+        WriteMoreTied "Most evenly spread client", TopShare(NDG), "pct", More
     End If
 
     NDG = BestKey(CashBy, True, True)
     If NDG <> "" Then
-        WriteFact "Largest cash holder", CashBy(NDG), "eur", TiedNdgText(CashBy, NDG), _
-            PctText(SafeShare(CashBy(NDG), DictAmount(Collateral, NDG))) & _
-            " of its collateral"
+        For Each Tied In TiedRows(CashBy, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Largest cash holder", CashBy(NDG), "eur", NdgText(NDG), _
+                PctText(SafeShare(CashBy(NDG), DictAmount(Collateral, NDG))) & _
+                " of its collateral"
+        Next Tied
+        WriteMoreTied "Largest cash holder", CashBy(NDG), "eur", More
     End If
 
     NDG = BestKey(NonEligibleBy, True, True)
     If NDG <> "" Then
-        WriteFact "Most non-eligible collateral", NonEligibleBy(NDG), "eur", TiedNdgText(NonEligibleBy, NDG), _
-            PctText(SafeShare(NonEligibleBy(NDG), DictAmount(Collateral, NDG))) & _
-            " of its collateral"
+        For Each Tied In TiedRows(NonEligibleBy, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Most non-eligible collateral", NonEligibleBy(NDG), "eur", NdgText(NDG), _
+                PctText(SafeShare(NonEligibleBy(NDG), DictAmount(Collateral, NDG))) & _
+                " of its collateral"
+        Next Tied
+        WriteMoreTied "Most non-eligible collateral", NonEligibleBy(NDG), "eur", More
     End If
 
     NDG = BestKey(Agg("NdgAboveLimit"), True, True)
     If NDG <> "" Then
-        WriteFact "Most collateral above a concentration limit", _
-            Agg("NdgAboveLimit")(NDG), "eur", TiedNdgText(Agg("NdgAboveLimit"), NDG), _
-            PctText(SafeShare(Agg("NdgAboveLimit")(NDG), DictAmount(Collateral, NDG))) & _
-            " of its collateral counts for nothing"
+        For Each Tied In TiedRows(Agg("NdgAboveLimit"), NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Most collateral above a concentration limit", _
+                Agg("NdgAboveLimit")(NDG), "eur", NdgText(NDG), _
+                PctText(SafeShare(Agg("NdgAboveLimit")(NDG), DictAmount(Collateral, NDG))) & _
+                " of its collateral counts for nothing"
+        Next Tied
+        WriteMoreTied "Most collateral above a concentration limit", Agg("NdgAboveLimit")(NDG), "eur", More
     End If
 
 End Sub
@@ -2201,6 +2312,7 @@ Private Sub WritePositionSection( _
 
     Dim Key As Variant
     Dim Category As Variant
+    Dim Tied As Variant
     Dim PosKey As String
     Dim SecKey As String
     Dim AssetClass As String
@@ -2208,6 +2320,7 @@ Private Sub WritePositionSection( _
     Dim Value As Double
     Dim Singletons As Long
     Dim SingletonValue As Double
+    Dim More As Long
 
     Set Agg = Snap.Aggregates
     Total = CDbl(Agg("Total"))
@@ -2283,9 +2396,13 @@ Private Sub WritePositionSection( _
 
     SecKey = BestKey(HolderCount, True)
     If SecKey <> "" Then
-        WriteFact "Most widely held security", HolderCount(SecKey), "int", _
-            TiedSecurityText(HolderCount, SecKey, Agg), _
-            "clients hold it; " & EuroText(DictAmount(NonCash, SecKey)) & " across the book"
+        For Each Tied In TiedRows(HolderCount, SecKey, More)
+            SecKey = CStr(Tied)
+            WriteFact "Most widely held security", HolderCount(SecKey), "int", _
+                SecurityText(Agg, SecKey), _
+                "clients hold it; " & EuroText(DictAmount(NonCash, SecKey)) & " across the book"
+        Next Tied
+        WriteMoreTied "Most widely held security", HolderCount(SecKey), "int", More, "security", "securities"
     End If
 
     SecKey = BestKey(NonCash, True)
@@ -2314,10 +2431,13 @@ Private Sub WritePositionSection( _
 
     SecKey = BestKey(IssuerHolderCount, True)
     If SecKey <> "" Then
-        WriteFact "Most common issuer", IssuerHolderCount(SecKey), "int", _
-            TiedKeyText(IssuerHolderCount, SecKey), _
-            "clients hold its paper; " & EuroText(DictAmount(Agg("Issuer"), SecKey)) & _
-            " across the book"
+        For Each Tied In TiedRows(IssuerHolderCount, SecKey, More)
+            SecKey = CStr(Tied)
+            WriteFact "Most common issuer", IssuerHolderCount(SecKey), "int", SecKey, _
+                "clients hold its paper; " & EuroText(DictAmount(Agg("Issuer"), SecKey)) & _
+                " across the book"
+        Next Tied
+        WriteMoreTied "Most common issuer", IssuerHolderCount(SecKey), "int", More, "issuer", "issuers"
     End If
 
     '
@@ -2699,6 +2819,8 @@ Private Sub WriteDimensionFacts( _
 
     Dim Key As Variant
     Dim NDG As Variant
+    Dim Tied As Variant
+    Dim HolderCount As Object
     Dim TopShare As Object
     Dim TopMember As Object
     Dim Inner As Object
@@ -2706,6 +2828,7 @@ Private Sub WriteDimensionFacts( _
     Dim Members As Long
     Dim MemberCount As Object
     Dim Lonely As Long
+    Dim More As Long
 
     Key = BestKey(ByMember, True)
     If CStr(Key) <> "" Then
@@ -2714,11 +2837,21 @@ Private Sub WriteDimensionFacts( _
             Plural(Holders(Key).Count, "client's collateral", "clients' collateral")
     End If
 
-    Key = BestInnerCount(Holders)
+    Set HolderCount = NewTextDictionary()
+
+    For Each Key In Holders.Keys
+        HolderCount(Key) = Holders(Key).Count
+    Next Key
+
+    Key = BestKey(HolderCount, True)
     If CStr(Key) <> "" Then
-        WriteFact "Most widely held " & Dimension, Holders(Key).Count, "int", _
-            TiedInnerText(Holders, CStr(Key)), _
-            "clients are exposed to it; " & EuroText(DictAmount(ByMember, CStr(Key))) & " in all"
+        For Each Tied In TiedRows(HolderCount, CStr(Key), More)
+            Key = CStr(Tied)
+            WriteFact "Most widely held " & Dimension, HolderCount(Key), "int", CStr(Key), _
+                "clients are exposed to it; " & EuroText(DictAmount(ByMember, CStr(Key))) & " in all"
+        Next Tied
+        WriteMoreTied "Most widely held " & Dimension, HolderCount(Key), "int", More, _
+            Dimension, DimensionPlural
     End If
 
     Set TopShare = NewTextDictionary()
@@ -2743,9 +2876,13 @@ Private Sub WriteDimensionFacts( _
 
     NDG = BestKey(TopShare, True)
     If CStr(NDG) <> "" Then
-        WriteFact "Client most concentrated in one " & Dimension, TopShare(NDG), "pct", _
-            TiedNdgText(TopShare, CStr(NDG)), "of its collateral in " & CStr(TopMember(NDG)) & _
-            "; among clients exposed to more than one " & Dimension
+        For Each Tied In TiedRows(TopShare, CStr(NDG), More)
+            NDG = CStr(Tied)
+            WriteFact "Client most concentrated in one " & Dimension, TopShare(NDG), "pct", _
+                NdgText(CStr(NDG)), "of its collateral in " & CStr(TopMember(NDG)) & _
+                "; among clients exposed to more than one " & Dimension
+        Next Tied
+        WriteMoreTied "Client most concentrated in one " & Dimension, TopShare(NDG), "pct", More
     End If
 
     NDG = BestKey(MemberCount, True)
@@ -2906,8 +3043,10 @@ Private Sub WriteMovementFacts( _
 
     Dim Key As Variant
     Dim Category As Variant
+    Dim Tied As Variant
     Dim NDG As String
     Dim SecKey As String
+    Dim More As Long
     Dim EndTotal As Double
     Dim BaseTotal As Double
     Dim Change As Double
@@ -2986,9 +3125,13 @@ Private Sub WriteMovementFacts( _
 
     NDG = BestKey(NewCollateral, True)
     If NDG <> "" Then
-        WriteFact "Largest new loan", NewCollateral(NDG), "eur", TiedNdgText(NewCollateral, NDG), _
-            "collateral; line " & EuroText(DictAmount(EndApproved, NDG)) & ", drawn " & _
-            EuroText(DictAmount(EndDrawn, NDG))
+        For Each Tied In TiedRows(NewCollateral, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Largest new loan", NewCollateral(NDG), "eur", NdgText(NDG), _
+                "collateral; line " & EuroText(DictAmount(EndApproved, NDG)) & ", drawn " & _
+                EuroText(DictAmount(EndDrawn, NDG))
+        Next Tied
+        WriteMoreTied "Largest new loan", NewCollateral(NDG), "eur", More
     End If
 
     WriteFact "Ended loans", EndedCollateral.Count, "int", "", _
@@ -2997,9 +3140,13 @@ Private Sub WriteMovementFacts( _
 
     NDG = BestKey(EndedCollateral, True)
     If NDG <> "" Then
-        WriteFact "Largest ended loan", EndedCollateral(NDG), "eur", TiedNdgText(EndedCollateral, NDG), _
-            "collateral as it last stood; line " & EuroText(DictAmount(BaseApproved, NDG)) & _
-            ", drawn " & EuroText(DictAmount(BaseDrawn, NDG))
+        For Each Tied In TiedRows(EndedCollateral, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Largest ended loan", EndedCollateral(NDG), "eur", NdgText(NDG), _
+                "collateral as it last stood; line " & EuroText(DictAmount(BaseApproved, NDG)) & _
+                ", drawn " & EuroText(DictAmount(BaseDrawn, NDG))
+        Next Tied
+        WriteMoreTied "Largest ended loan", EndedCollateral(NDG), "eur", More
     End If
 
     '
@@ -3029,16 +3176,24 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(Delta, True)
     If NDG <> "" Then
         If Delta(NDG) > 0 Then
-            WriteFact "Biggest riser", Delta(NDG), "eur", TiedNdgText(Delta, NDG), _
-                RangeDetail(DictAmount(BaseAgg("Collateral"), NDG), DictAmount(EndAgg("Collateral"), NDG))
+            For Each Tied In TiedRows(Delta, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Biggest riser", Delta(NDG), "eur", NdgText(NDG), _
+                    RangeDetail(DictAmount(BaseAgg("Collateral"), NDG), DictAmount(EndAgg("Collateral"), NDG))
+            Next Tied
+            WriteMoreTied "Biggest riser", Delta(NDG), "eur", More
         End If
     End If
 
     NDG = BestKey(Delta, False)
     If NDG <> "" Then
         If Delta(NDG) < 0 Then
-            WriteFact "Biggest faller", Delta(NDG), "eur", TiedNdgText(Delta, NDG), _
-                RangeDetail(DictAmount(BaseAgg("Collateral"), NDG), DictAmount(EndAgg("Collateral"), NDG))
+            For Each Tied In TiedRows(Delta, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Biggest faller", Delta(NDG), "eur", NdgText(NDG), _
+                    RangeDetail(DictAmount(BaseAgg("Collateral"), NDG), DictAmount(EndAgg("Collateral"), NDG))
+            Next Tied
+            WriteMoreTied "Biggest faller", Delta(NDG), "eur", More
         End If
     End If
 
@@ -3087,10 +3242,14 @@ Private Sub WriteMovementFacts( _
 
     NDG = BestKey(Turnover, True, True)
     If NDG <> "" Then
-        WriteFact "Most active repositioner", Turnover(NDG), "eur", TiedNdgText(Turnover, NDG), _
-            "moved across its positions, " & _
-            PctText(SafeShare(Turnover(NDG), DictAmount(BaseAgg("Collateral"), NDG))) & _
-            " of the collateral it started with"
+        For Each Tied In TiedRows(Turnover, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Most active repositioner", Turnover(NDG), "eur", NdgText(NDG), _
+                "moved across its positions, " & _
+                PctText(SafeShare(Turnover(NDG), DictAmount(BaseAgg("Collateral"), NDG))) & _
+                " of the collateral it started with"
+        Next Tied
+        WriteMoreTied "Most active repositioner", Turnover(NDG), "eur", More
     End If
 
     '
@@ -3100,32 +3259,48 @@ Private Sub WriteMovementFacts( _
     NDG = BestKey(DeltaApproved, True)
     If NDG <> "" Then
         If DeltaApproved(NDG) > 0 Then
-            WriteFact "Biggest line increase", DeltaApproved(NDG), "eur", TiedNdgText(DeltaApproved, NDG), _
-                RangeDetail(DictAmount(BaseApproved, NDG), DictAmount(EndApproved, NDG))
+            For Each Tied In TiedRows(DeltaApproved, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Biggest line increase", DeltaApproved(NDG), "eur", NdgText(NDG), _
+                    RangeDetail(DictAmount(BaseApproved, NDG), DictAmount(EndApproved, NDG))
+            Next Tied
+            WriteMoreTied "Biggest line increase", DeltaApproved(NDG), "eur", More
         End If
     End If
 
     NDG = BestKey(DeltaApproved, False)
     If NDG <> "" Then
         If DeltaApproved(NDG) < 0 Then
-            WriteFact "Biggest line cut", DeltaApproved(NDG), "eur", TiedNdgText(DeltaApproved, NDG), _
-                RangeDetail(DictAmount(BaseApproved, NDG), DictAmount(EndApproved, NDG))
+            For Each Tied In TiedRows(DeltaApproved, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Biggest line cut", DeltaApproved(NDG), "eur", NdgText(NDG), _
+                    RangeDetail(DictAmount(BaseApproved, NDG), DictAmount(EndApproved, NDG))
+            Next Tied
+            WriteMoreTied "Biggest line cut", DeltaApproved(NDG), "eur", More
         End If
     End If
 
     NDG = BestKey(DeltaDrawn, True)
     If NDG <> "" Then
         If DeltaDrawn(NDG) > 0 Then
-            WriteFact "Biggest drawdown", DeltaDrawn(NDG), "eur", TiedNdgText(DeltaDrawn, NDG), _
-                RangeDetail(DictAmount(BaseDrawn, NDG), DictAmount(EndDrawn, NDG))
+            For Each Tied In TiedRows(DeltaDrawn, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Biggest drawdown", DeltaDrawn(NDG), "eur", NdgText(NDG), _
+                    RangeDetail(DictAmount(BaseDrawn, NDG), DictAmount(EndDrawn, NDG))
+            Next Tied
+            WriteMoreTied "Biggest drawdown", DeltaDrawn(NDG), "eur", More
         End If
     End If
 
     NDG = BestKey(DeltaDrawn, False)
     If NDG <> "" Then
         If DeltaDrawn(NDG) < 0 Then
-            WriteFact "Biggest repayment", DeltaDrawn(NDG), "eur", TiedNdgText(DeltaDrawn, NDG), _
-                RangeDetail(DictAmount(BaseDrawn, NDG), DictAmount(EndDrawn, NDG))
+            For Each Tied In TiedRows(DeltaDrawn, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Biggest repayment", DeltaDrawn(NDG), "eur", NdgText(NDG), _
+                    RangeDetail(DictAmount(BaseDrawn, NDG), DictAmount(EndDrawn, NDG))
+            Next Tied
+            WriteMoreTied "Biggest repayment", DeltaDrawn(NDG), "eur", More
         End If
     End If
 
@@ -3272,6 +3447,8 @@ Private Sub WriteHistorySection( _
     Dim SnapshotDate As Date
     Dim NDG As String
     Dim Key As Variant
+    Dim Tied As Variant
+    Dim More As Long
     Dim r As Long
     Dim i As Long
 
@@ -3462,9 +3639,13 @@ Private Sub WriteHistorySection( _
 
     NDG = BestKey(Ages, True)
     If NDG <> "" Then
-        WriteFact "Oldest active loan", CDate(FirstSeen(NDG)), "date", TiedNdgText(Ages, NDG), _
-            "first seen; " & Plural(CLng(Ages(NDG)), "day", "days") & " on the book" & _
-            SpellsText(Spells, NDG)
+        For Each Tied In TiedRows(Ages, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Oldest active loan", CDate(FirstSeen(NDG)), "date", NdgText(NDG), _
+                "first seen; " & Plural(CLng(Ages(NDG)), "day", "days") & " on the book" & _
+                SpellsText(Spells, NDG)
+        Next Tied
+        WriteMoreTied "Oldest active loan", CDate(FirstSeen(NDG)), "date", More
     End If
 
     '
@@ -3482,23 +3663,35 @@ Private Sub WriteHistorySection( _
     NDG = BestKey(Spells, True)
     If NDG <> "" Then
         If DictAmount(Spells, NDG) > 1 Then
-            WriteFact "Most spells on the book", Spells(NDG), "int", TiedNdgText(Spells, NDG), _
-                "first seen " & DateText(CDate(FirstSeen(NDG))) & ", last " & _
-                DateText(CDate(LastSeen(NDG)))
+            For Each Tied In TiedRows(Spells, NDG, More)
+                NDG = CStr(Tied)
+                WriteFact "Most spells on the book", Spells(NDG), "int", NdgText(NDG), _
+                    "first seen " & DateText(CDate(FirstSeen(NDG))) & ", last " & _
+                    DateText(CDate(LastSeen(NDG)))
+            Next Tied
+            WriteMoreTied "Most spells on the book", Spells(NDG), "int", More
         End If
     End If
 
     NDG = BestKey(Lives, True)
     If NDG <> "" Then
-        WriteFact "Longest-lived ended loan", Lives(NDG), "int", TiedNdgText(Lives, NDG), _
-            "days from " & DateText(CDate(FirstSeen(NDG))) & " to " & DateText(CDate(LastSeen(NDG)))
+        For Each Tied In TiedRows(Lives, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Longest-lived ended loan", Lives(NDG), "int", NdgText(NDG), _
+                "days from " & DateText(CDate(FirstSeen(NDG))) & " to " & DateText(CDate(LastSeen(NDG)))
+        Next Tied
+        WriteMoreTied "Longest-lived ended loan", Lives(NDG), "int", More
     End If
 
     NDG = BestKey(Lives, False)
     If NDG <> "" Then
-        WriteFact "Shortest-lived ended loan", Lives(NDG), "int", TiedNdgText(Lives, NDG), _
-            IIf(CDbl(Lives(NDG)) = 0, "seen in one snapshot only, ", "days; ") & _
-            DateText(CDate(FirstSeen(NDG))) & " to " & DateText(CDate(LastSeen(NDG)))
+        For Each Tied In TiedRows(Lives, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Shortest-lived ended loan", Lives(NDG), "int", NdgText(NDG), _
+                IIf(CDbl(Lives(NDG)) = 0, "seen in one snapshot only, ", "days; ") & _
+                DateText(CDate(FirstSeen(NDG))) & " to " & DateText(CDate(LastSeen(NDG)))
+        Next Tied
+        WriteMoreTied "Shortest-lived ended loan", Lives(NDG), "int", More
     End If
 
     WriteFact "Busiest snapshot for new loans", BusiestNew, "int", _
@@ -3546,14 +3739,22 @@ Private Sub WriteHistorySection( _
 
     NDG = BestKey(McCount, True, True)
     If NDG <> "" Then
-        WriteFact "Most snapshots in margin call", McCount(NDG), "int", TiedNdgText(McCount, NDG), _
-            IIf(EndIndex.Exists(NDG), "still on the book", "since ended")
+        For Each Tied In TiedRows(McCount, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Most snapshots in margin call", McCount(NDG), "int", NdgText(NDG), _
+                IIf(EndIndex.Exists(NDG), "still on the book", "since ended")
+        Next Tied
+        WriteMoreTied "Most snapshots in margin call", McCount(NDG), "int", More
     End If
 
     NDG = BestKey(McBest, True, True)
     If NDG <> "" Then
-        WriteFact "Longest margin call spell", McBest(NDG), "int", TiedNdgText(McBest, NDG), _
-            "snapshots in a row, ending " & DateText(CDate(McBestEnd(NDG)))
+        For Each Tied In TiedRows(McBest, NDG, More)
+            NDG = CStr(Tied)
+            WriteFact "Longest margin call spell", McBest(NDG), "int", NdgText(NDG), _
+                "snapshots in a row, ending " & DateText(CDate(McBestEnd(NDG)))
+        Next Tied
+        WriteMoreTied "Longest margin call spell", McBest(NDG), "int", More
     End If
 
 End Sub
@@ -3747,8 +3948,12 @@ Private Function ReadFactsSheet( _
     Dim Facts As Object
     Dim Sect As Object
     Dim Notes As Collection
+    Dim TieWho As Object
+    Dim TieCount As Object
+    Dim Rec As Variant
     Dim Marker As String
     Dim Label As String
+    Dim Who As String
     Dim LastRow As Long
     Dim r As Long
 
@@ -3765,6 +3970,8 @@ Private Function ReadFactsSheet( _
 
                 Set Sect = NewTextDictionary()
                 Set Notes = New Collection
+                Set TieWho = NewTextDictionary()
+                Set TieCount = NewTextDictionary()
                 Sect.Add SECTION_BASIS_KEY, CStr(ws.Cells(r, FIRST_COL + 2).Value)
                 Sect.Add SECTION_NOTES_KEY, Notes
 
@@ -3787,6 +3994,37 @@ Private Function ReadFactsSheet( _
                             CStr(ws.Cells(r, FIRST_COL + 2).Value), _
                             CStr(ws.Cells(r, FIRST_COL + 3).Value), _
                             ws.Cells(r, FIRST_COL + 1).Value)
+                    End If
+
+                End If
+
+            Case "tie"
+
+                '
+                ' Another client at the same value: the slide keeps the
+                ' first row's who and detail and counts the rest behind
+                ' it - "NDG 1 and 3 more" - a closing "and n more" row
+                ' adding its n.
+                '
+
+                If Not Sect Is Nothing Then
+
+                    Label = CStr(ws.Cells(r, FIRST_COL).Value)
+
+                    If Sect.Exists(Label) Then
+
+                        Who = CStr(ws.Cells(r, FIRST_COL + 2).Value)
+                        Rec = Sect(Label)
+
+                        If Not TieWho.Exists(Label) Then TieWho.Add Label, Rec(1)
+
+                        TieCount(Label) = DictAmount(TieCount, Label) + _
+                            IIf(Left$(Who, 4) = "and ", Val(Mid$(Who, 5)), 1)
+
+                        Rec(1) = CStr(TieWho(Label)) & " and " & _
+                            Format(TieCount(Label), "#,##0") & " more"
+                        Sect(Label) = Rec
+
                     End If
 
                 End If

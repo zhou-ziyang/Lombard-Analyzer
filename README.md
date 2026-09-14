@@ -285,8 +285,10 @@ in one and the client spread over the most, members held by one client only;
 what is reached through certificates, the certificate with the most
 underlyings and the underlying in the most certificates, underlyings that
 could not be named, and the DPM share. Where several clients or securities
-tie for a superlative they are all listed. Every movement is read two ways,
-each against a snapshot on file — the first on or after one month back, the
+tie for a superlative, each gets a row of its own with its own detail, five
+at most, the rest counted on a closing row; a fact whose detail is about
+the value alone ("of 8") lists them on one row. Every movement is read two
+ways, each against a snapshot on file — the first on or after one month back, the
 first on or after year-end, resolved the way the report resolves its dates —
 with the book's totals, new and ended loans and the largest of each, the
 biggest riser and faller, the largest position increase and decrease, the
