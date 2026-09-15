@@ -33,8 +33,8 @@ Public Sub CreateWeeklyEmail()
     Dim CcAddresses As String
 
     Dim WordEditor As Object
-    Dim WordRange As Object
-    Dim shp As Object
+    Dim PieChart As Object
+    Dim FlowShape As Object
 
     Set ws = ThisWorkbook.Worksheets("Weekly Analysis")
 '   Set ws = ActiveSheet
@@ -138,10 +138,10 @@ Public Sub CreateWeeklyEmail()
 
     HTMLBody = HTMLBody & _
         "<table class='email-container' align='left' " & _
-        "width='1200' " & _
+        "width='1240' " & _
         "cellpadding='30' " & _
         "cellspacing='0' " & _
-        "style='width:1200px; table-layout:fixed;" & _
+        "style='width:1240px; table-layout:fixed;" & _
         "background-color:#ffffff;" & _
         "border:1px solid #ccc;" & _
         "font-family:Aptos Display,Aptos,UniCredit,Calibri,sans-serif;'>" & _
@@ -203,11 +203,12 @@ Public Sub CreateWeeklyEmail()
         BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 6, 8)
 
     '
-    ' Pie Chart Placeholder
+    ' Placeholders for the two pictures: the pie, then the loan flows
     '
 
     HTMLBody = HTMLBody & _
-        "<br>[[PIECHART]]<br>"
+        "<br>[[PIECHART]]<br>" & _
+        "<br>[[LOANFLOW]]<br>"
 
     '
     ' Exposure concentration
@@ -263,43 +264,74 @@ Public Sub CreateWeeklyEmail()
     End With
 
     '
-    ' Insert Pie Chart at Placeholder
+    ' The two pictures, pasted where their placeholders are.  Either may be
+    ' missing from the sheet - a run without positions draws neither - and
+    ' then only the placeholder goes.
     '
 
     Set WordEditor = _
         OutMail.GetInspector.WordEditor
+
+    On Error Resume Next
+    Set PieChart = ws.ChartObjects("CollateralPie")
+    Set FlowShape = ws.Shapes("LoanFlowSankey")
+    On Error GoTo 0
+
+    PastePictureAtPlaceholder WordEditor, "[[PIECHART]]", PieChart
+    PastePictureAtPlaceholder WordEditor, "[[LOANFLOW]]", FlowShape
+
+End Sub
+
+'
+' Replaces a placeholder in the open message with a picture of a sheet
+' object - a chart object or a shape, both of which can copy themselves as
+' a picture - at the object's own width.  Nothing on the sheet to copy
+' removes the placeholder alone.
+'
+Private Sub PastePictureAtPlaceholder( _
+    ByVal WordEditor As Object, _
+    ByVal Placeholder As String, _
+    ByVal Source As Object)
+
+    Dim WordRange As Object
+    Dim shp As Object
 
     Set WordRange = WordEditor.Content
 
     With WordRange.Find
 
         .ClearFormatting
-        .Text = "[[PIECHART]]"
+        .Text = Placeholder
 
-        If .Execute Then
-
-            WordRange.Text = ""
-
-            ws.ChartObjects("CollateralPie").Chart.CopyPicture _
-                Appearance:=xlScreen, _
-                Format:=xlPicture
-
-            WordRange.Paste
-
-            Set shp = _
-                WordEditor.InlineShapes( _
-                    WordEditor.InlineShapes.Count)
-
-            shp.Width = _
-                ws.ChartObjects("CollateralPie").Width
-
-'            shp.Range.ParagraphFormat.Alignment = 1
-
-        End If
+        If Not .Execute Then Exit Sub
 
     End With
-    
-    
+
+    WordRange.Text = ""
+
+    If Source Is Nothing Then Exit Sub
+
+    If TypeName(Source) = "ChartObject" Then
+
+        Source.Chart.CopyPicture _
+            Appearance:=xlScreen, _
+            Format:=xlPicture
+
+    Else
+
+        Source.CopyPicture _
+            Appearance:=xlScreen, _
+            Format:=xlPicture
+
+    End If
+
+    WordRange.Paste
+
+    Set shp = _
+        WordEditor.InlineShapes( _
+            WordEditor.InlineShapes.Count)
+
+    shp.Width = Source.Width
 
 End Sub
 
@@ -405,7 +437,7 @@ Private Function RiskTablePairToHTML( _
             ws, _
             FirstRow, _
             Layout.RiskCol, _
-            Layout.RiskExSegCol + 4)
+            Layout.RiskExSegCol + 5)
 
     If LastRow <= FirstRow Then Exit Function
 
@@ -417,7 +449,7 @@ Private Function RiskTablePairToHTML( _
                     Layout.RiskCol), _
                 ws.Cells( _
                     LastRow, _
-                    Layout.RiskExSegCol + 4)), _
+                    Layout.RiskExSegCol + 5)), _
             0)
 
 End Function
@@ -483,7 +515,7 @@ End Function
 '
 Private Function RangeToHTMLFragment( _
     ByVal rng As Range, _
-    Optional ByVal ExtraWidthPt As Long = 20) As String
+    Optional ByVal ExtraWidthPt As Long = 16) As String
 
     Dim Html As String
 
