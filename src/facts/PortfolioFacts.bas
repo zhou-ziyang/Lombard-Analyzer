@@ -52,13 +52,16 @@ Private Const FACT_TOLERANCE As Double = 0.005
 Private Const FIRST_COL As Long = 2
 
 '
-' Clients or securities that tie for a superlative each get a row of
-' their own, with their own detail, up to this many; the rest are counted
-' on a closing row.  Two values tie when they differ by less than this
-' share of the larger (of one, below one), which is rounding, not a
-' difference.
+' Clients or securities that tie for a superlative are all named when
+' they are three or fewer; more than that, two of them are, as examples,
+' and the rest are counted.  A fact whose detail is about the client
+' gives each one named a row of its own; one whose detail is about the
+' value alone names them on one row.  Two values tie when they differ by
+' less than this share of the larger (of one, below one), which is
+' rounding, not a difference.
 '
-Private Const TIE_ROWS As Long = 5
+Private Const TIE_LIST_MAX As Long = 3
+Private Const TIE_EXAMPLES As Long = 2
 Private Const TIE_TOLERANCE As Double = 0.000000001
 
 '
@@ -923,9 +926,24 @@ Private Function TiedKeys( _
 End Function
 
 '
+' How many of a tie's keys are named: all of them up to TIE_LIST_MAX,
+' TIE_EXAMPLES beyond that.
+'
+Private Function TiedShown( _
+    ByVal Count As Long) As Long
+
+    If Count > TIE_LIST_MAX Then
+        TiedShown = TIE_EXAMPLES
+    Else
+        TiedShown = Count
+    End If
+
+End Function
+
+'
 ' The keys that tie for a superlative, for a row each: the best key
-' first, then the others holding the same amount, the first TIE_ROWS of
-' them; More says how many are left over for the closing row.
+' first, then the others holding the same amount, as many as TiedShown
+' allows; More says how many are left over for the closing row.
 '
 Private Function TiedRows( _
     ByVal Dict As Object, _
@@ -938,8 +956,7 @@ Private Function TiedRows( _
     Set Keys = TiedKeys(Dict, Key)
     Set TiedRows = New Collection
 
-    For i = 1 To Keys.Count
-        If i > TIE_ROWS Then Exit For
+    For i = 1 To TiedShown(Keys.Count)
         TiedRows.Add Keys(i)
     Next i
 
@@ -948,9 +965,10 @@ Private Function TiedRows( _
 End Function
 
 '
-' The row that closes a tie wider than TIE_ROWS: how many more hold the
-' same value, as a count and nothing else, so that no one's detail stands
-' for the rest.  Nothing when every tied key had its row.
+' The row that closes a tie with more keys than were named: how many
+' more hold the same value, as a count and nothing else, so that no
+' one's detail stands for the rest.  Nothing when every tied key had its
+' row.
 '
 Private Sub WriteMoreTied( _
     ByVal Label As String, _
@@ -967,27 +985,26 @@ Private Sub WriteMoreTied( _
 End Sub
 
 '
-' A list of tied keys as text, each behind the prefix, the first MaxShown
-' spelt out and the rest counted.
+' A list of tied keys as text, each behind the prefix, as many as
+' TiedShown allows spelt out and the rest counted.
 '
 Private Function JoinTied( _
     ByVal Keys As Collection, _
-    ByVal Prefix As String, _
-    ByVal MaxShown As Long) As String
+    ByVal Prefix As String) As String
 
+    Dim Shown As Long
     Dim i As Long
 
-    For i = 1 To Keys.Count
+    Shown = TiedShown(Keys.Count)
 
-        If i > MaxShown Then
-            JoinTied = JoinTied & " and " & (Keys.Count - MaxShown) & " more"
-            Exit For
-        End If
-
+    For i = 1 To Shown
         If i > 1 Then JoinTied = JoinTied & ", "
         JoinTied = JoinTied & Prefix & Keys(i)
-
     Next i
+
+    If Keys.Count > Shown Then
+        JoinTied = JoinTied & " and " & (Keys.Count - Shown) & " more"
+    End If
 
 End Function
 
@@ -1000,7 +1017,7 @@ Private Function TiedNdgText( _
     ByVal Dict As Object, _
     ByVal NDG As String) As String
 
-    TiedNdgText = JoinTied(TiedKeys(Dict, NDG), "NDG ", 8)
+    TiedNdgText = JoinTied(TiedKeys(Dict, NDG), "NDG ")
 
 End Function
 
@@ -1021,18 +1038,30 @@ Private Function TiedInnerText( _
         Counts(K) = Outer(K).Count
     Next K
 
-    TiedInnerText = JoinTied(TiedKeys(Counts, Key), "", 4)
+    TiedInnerText = JoinTied(TiedKeys(Counts, Key), "")
 
 End Function
 
+'
+' A security's key: its ISIN; its name when it has none; and for a
+' position with neither, cash mostly, its asset type and currency -
+' "Cash EUR" - so that the position still has a name to go by.
+'
 Private Function SecurityKey( _
     ByVal ISIN As String, _
-    ByVal Name As String) As String
+    ByVal Name As String, _
+    ByVal AssetType As String, _
+    ByVal AssetClass As String, _
+    ByVal Ccy As String) As String
 
     If ISIN <> "" Then
         SecurityKey = ISIN
-    Else
+    ElseIf Name <> "" Then
         SecurityKey = Name
+    ElseIf AssetType <> "" Then
+        SecurityKey = Trim$(AssetType & " " & Ccy)
+    Else
+        SecurityKey = Trim$(CategoryLabel(AssetClass) & " " & Ccy)
     End If
 
 End Function
@@ -1041,7 +1070,7 @@ End Function
 ' Everything the sections read off a positions snapshot, summed once:
 ' totals, per client, per client and security, per security, issuer,
 ' currency and class.  Cash has no ISIN, so a security is keyed by its
-' ISIN or, failing that, its name.
+' ISIN or, failing that, its name, or its asset type and currency.
 '
 Private Function BuildPositionAggregates( _
     ByRef Positions As Variant) As Object
@@ -1071,6 +1100,7 @@ Private Function BuildPositionAggregates( _
     Dim NDG As String
     Dim ISIN As String
     Dim Name As String
+    Dim AssetType As String
     Dim AssetClass As String
     Dim Ccy As String
     Dim Issuer As String
@@ -1139,12 +1169,13 @@ Private Function BuildPositionAggregates( _
 
             ISIN = CStr(Positions(r, FactPosISIN))
             Name = CStr(Positions(r, FactPosName))
+            AssetType = Trim$(CStr(Positions(r, FactPosAssetType)))
             AssetClass = CStr(Positions(r, FactPosClass))
             Ccy = UCase$(CStr(Positions(r, FactPosCurrency)))
             Issuer = CStr(Positions(r, FactPosIssuer))
             Value = CDbl(Positions(r, FactPosValue))
 
-            SecKey = SecurityKey(ISIN, Name)
+            SecKey = SecurityKey(ISIN, Name, AssetType, AssetClass, Ccy)
             PosKey = NDG & vbTab & SecKey
 
             Agg("Total") = Agg("Total") + Value
@@ -1784,7 +1815,6 @@ Private Sub WritePortfolioSection( _
     Dim Securities As Long
     Dim EuroShare As Double
     Dim Share As Double
-    Dim Hhi As Double
     Dim TopFive As Double
     Dim TopTen As Double
     Dim Untouched As Long
@@ -1820,20 +1850,17 @@ Private Sub WritePortfolioSection( _
     WriteFact "Utilisation", SafeShare(Drawn, Approved), "pct", "", _
         "drawn over approved"
     WriteFact "Collateral", Collateral, "eur", "", _
+        "Position Value summed over " & _
         Plural(CLng(Agg("PositionCount")), "position", "positions") & _
         " held by " & Plural(Agg("Collateral").Count, "client", "clients")
 
     If Mtm > 0 Then
         WriteFact "Collateral as Accounts carry it (MTM)", Mtm, "eur", "", _
-            "against the positions' " & EuroText(Collateral)
+            "the eligible market value, concentration limits applied; " & _
+            SignedEuroText(Mtm - Collateral) & " against the positions' value"
     End If
 
-    If Hcv > 0 Then
-        WriteFact "Haircut collateral value", Hcv, "eur", "", _
-            PctText(SafeShare(Hcv, IIf(Mtm > 0, Mtm, Collateral))) & _
-            " of the collateral, its value-weighted Max LTV; headroom over the approved lines " & _
-            SignedEuroText(Hcv - Approved)
-    End If
+    If Hcv > 0 Then WriteFact "Haircut collateral value", Hcv, "eur"
 
     WriteFact "Loan to value", SafeShare(Approved, IIf(Mtm > 0, Mtm, Collateral)), "pct", "", _
         "approved lines over collateral, as the dashboard reads it" & _
@@ -1868,7 +1895,6 @@ Private Sub WritePortfolioSection( _
         For i = UBound(Sorted) To LBound(Sorted) Step -1
 
             Share = SafeShare(Sorted(i), Collateral)
-            Hhi = Hhi + Share * Share
 
             If UBound(Sorted) - i < 5 Then TopFive = TopFive + Share
             If UBound(Sorted) - i < 10 Then TopTen = TopTen + Share
@@ -1877,9 +1903,6 @@ Private Sub WritePortfolioSection( _
 
         WriteFact "Top 5 clients' share", TopFive, "pct", "", "of the collateral"
         WriteFact "Top 10 clients' share", TopTen, "pct", "", "of the collateral"
-        WriteFact "Concentration (Herfindahl index)", Hhi, "ratio", "", _
-            "the sum of every client's squared share of the collateral, 1 for a single client; " & _
-            "as concentrated as " & Format(SafeShare(1, Hhi), "0.0") & " equal clients would be"
 
     End If
 
@@ -2058,8 +2081,7 @@ Private Sub WriteClientSection( _
     If NDG <> "" Then
         For Each Tied In TiedRows(ApprovedBy, NDG, More)
             NDG = CStr(Tied)
-            WriteFact "Smallest approved line", ApprovedBy(NDG), "eur", NdgText(NDG), _
-                "drawn " & EuroText(DictAmount(DrawnBy, NDG))
+            WriteFact "Smallest approved line", ApprovedBy(NDG), "eur", NdgText(NDG)
         Next Tied
         WriteMoreTied "Smallest approved line", ApprovedBy(NDG), "eur", More
     End If
@@ -2233,18 +2255,6 @@ Private Sub WriteClientSection( _
     If NDG <> "" Then
         WriteFact "Most categories held", CategoryCount(NDG), "int", TiedNdgText(CategoryCount, NDG), _
             "of " & (UBound(CollateralCategories()) + 1)
-    End If
-
-    NDG = BestKey(TopShare, True)
-    If NDG <> "" Then
-        For Each Tied In TiedRows(TopShare, NDG, More)
-            NDG = CStr(Tied)
-            WriteFact "Most concentrated client", TopShare(NDG), "pct", NdgText(NDG), _
-                "of its " & EuroText(DictAmount(Collateral, NDG)) & " in " & _
-                SecurityText(Agg, PosKeySecurity(CStr(TopKey(NDG)))) & _
-                "; among clients with more than one security"
-        Next Tied
-        WriteMoreTied "Most concentrated client", TopShare(NDG), "pct", More
     End If
 
     NDG = BestKey(TopShare, False)
@@ -3435,13 +3445,14 @@ Private Sub WriteHistorySection( _
     Dim FirstSeen As Object
     Dim LastSeen As Object
     Dim Spells As Object
+    Dim SpellStart As Object
+    Dim SpellEnd As Object
     Dim McCount As Object
     Dim McStreak As Object
     Dim McBest As Object
     Dim McBestEnd As Object
     Dim SfEver As Object
     Dim EndIndex As Object
-    Dim Ages As Object
     Dim Lives As Object
 
     Dim SnapshotDate As Date
@@ -3486,6 +3497,8 @@ Private Sub WriteHistorySection( _
     Set FirstSeen = NewTextDictionary()
     Set LastSeen = NewTextDictionary()
     Set Spells = NewTextDictionary()
+    Set SpellStart = NewTextDictionary()
+    Set SpellEnd = NewTextDictionary()
     Set McCount = NewTextDictionary()
     Set McStreak = NewTextDictionary()
     Set McBest = NewTextDictionary()
@@ -3531,8 +3544,11 @@ Private Sub WriteHistorySection( _
 
                 If Not WasPresent.Exists(NDG) Then
                     AddAmount Spells, NDG, 1
+                    SpellStart(SpellKey(NDG, Spells)) = SnapshotDate
                     If SnapshotsRead > 1 Then NewToday = NewToday + 1
                 End If
+
+                SpellEnd(SpellKey(NDG, Spells)) = SnapshotDate
 
                 If CBool(Accounts(r, FactAccMarginCall)) Then
 
@@ -3616,18 +3632,15 @@ Private Sub WriteHistorySection( _
     End If
 
     '
-    ' The loans on the book today, by how long they have been there
+    ' Comings and goings
     '
 
     Set EndIndex = AccountIndex(EndSnap.Accounts)
-    Set Ages = NewTextDictionary()
     Set Lives = NewTextDictionary()
 
     For Each Key In FirstSeen.Keys
 
-        If EndIndex.Exists(Key) Then
-            Ages(Key) = CDbl(EndSnap.AsOfDate - CDate(FirstSeen(Key)))
-        Else
+        If Not EndIndex.Exists(Key) Then
             EndedCount = EndedCount + 1
             Lives(Key) = CDbl(CDate(LastSeen(Key)) - CDate(FirstSeen(Key)))
         End If
@@ -3636,21 +3649,6 @@ Private Sub WriteHistorySection( _
         If DictAmount(McCount, CStr(Key)) > 0 Then EverMc = EverMc + 1
 
     Next Key
-
-    NDG = BestKey(Ages, True)
-    If NDG <> "" Then
-        For Each Tied In TiedRows(Ages, NDG, More)
-            NDG = CStr(Tied)
-            WriteFact "Oldest active loan", CDate(FirstSeen(NDG)), "date", NdgText(NDG), _
-                "first seen; " & Plural(CLng(Ages(NDG)), "day", "days") & " on the book" & _
-                SpellsText(Spells, NDG)
-        Next Tied
-        WriteMoreTied "Oldest active loan", CDate(FirstSeen(NDG)), "date", More
-    End If
-
-    '
-    ' Comings and goings
-    '
 
     WriteFact "Clients ever on the book", FirstSeen.Count, "int", "", _
         EndIndex.Count & " on it today"
@@ -3666,8 +3664,8 @@ Private Sub WriteHistorySection( _
             For Each Tied In TiedRows(Spells, NDG, More)
                 NDG = CStr(Tied)
                 WriteFact "Most spells on the book", Spells(NDG), "int", NdgText(NDG), _
-                    "first seen " & DateText(CDate(FirstSeen(NDG))) & ", last " & _
-                    DateText(CDate(LastSeen(NDG)))
+                    "on the book " & _
+                    SpellRunsText(Spells, SpellStart, SpellEnd, NDG, EndIndex.Exists(NDG))
             Next Tied
             WriteMoreTied "Most spells on the book", Spells(NDG), "int", More
         End If
@@ -3759,13 +3757,51 @@ Private Sub WriteHistorySection( _
 
 End Sub
 
-Private Function SpellsText( _
-    ByVal Spells As Object, _
-    ByVal NDG As String) As String
+'
+' The key of a client's latest spell: the NDG and the spell's number.
+'
+Private Function SpellKey( _
+    ByVal NDG As String, _
+    ByVal Spells As Object) As String
 
-    If DictAmount(Spells, NDG) > 1 Then
-        SpellsText = " over " & Plural(CLng(DictAmount(Spells, NDG)), "spell", "spells")
-    End If
+    SpellKey = NDG & vbTab & CStr(CLng(DictAmount(Spells, NDG)))
+
+End Function
+
+'
+' A client's spells on the book, each from its first snapshot to its
+' last - "03/01/2025 to 12/05/2025, 02/02/2026 to 20/06/2026, back since
+' 01/09/2026" - the last one open when the client is on the book on the
+' end date.
+'
+Private Function SpellRunsText( _
+    ByVal Spells As Object, _
+    ByVal SpellStart As Object, _
+    ByVal SpellEnd As Object, _
+    ByVal NDG As String, _
+    ByVal OnBook As Boolean) As String
+
+    Dim Count As Long
+    Dim k As Long
+    Dim Key As String
+
+    Count = CLng(DictAmount(Spells, NDG))
+
+    For k = 1 To Count
+
+        Key = NDG & vbTab & CStr(k)
+
+        If k > 1 Then SpellRunsText = SpellRunsText & ", "
+
+        If k = Count And OnBook Then
+            SpellRunsText = SpellRunsText & IIf(k > 1, "back since ", "since ") & _
+                DateText(CDate(SpellStart(Key)))
+        Else
+            SpellRunsText = SpellRunsText & DateText(CDate(SpellStart(Key))) & _
+                " to " & DateText(CDate(SpellEnd(Key)))
+        End If
+
+    Next k
 
 End Function
 
@@ -3948,8 +3984,6 @@ Private Function ReadFactsSheet( _
     Dim Facts As Object
     Dim Sect As Object
     Dim Notes As Collection
-    Dim TieWho As Object
-    Dim TieCount As Object
     Dim Rec As Variant
     Dim Marker As String
     Dim Label As String
@@ -3970,8 +4004,6 @@ Private Function ReadFactsSheet( _
 
                 Set Sect = NewTextDictionary()
                 Set Notes = New Collection
-                Set TieWho = NewTextDictionary()
-                Set TieCount = NewTextDictionary()
                 Sect.Add SECTION_BASIS_KEY, CStr(ws.Cells(r, FIRST_COL + 2).Value)
                 Sect.Add SECTION_NOTES_KEY, Notes
 
@@ -4001,10 +4033,10 @@ Private Function ReadFactsSheet( _
             Case "tie"
 
                 '
-                ' Another client at the same value: the slide keeps the
-                ' first row's who and detail and counts the rest behind
-                ' it - "NDG 1 and 3 more" - a closing "and n more" row
-                ' adding its n.
+                ' Another client at the same value: the slide names them
+                ' all on the first row - "NDG 1, NDG 2 and 5 more
+                ' clients", the closing row's count last - and drops the
+                ' detail, which would be about one of them alone.
                 '
 
                 If Not Sect Is Nothing Then
@@ -4016,13 +4048,8 @@ Private Function ReadFactsSheet( _
                         Who = CStr(ws.Cells(r, FIRST_COL + 2).Value)
                         Rec = Sect(Label)
 
-                        If Not TieWho.Exists(Label) Then TieWho.Add Label, Rec(1)
-
-                        TieCount(Label) = DictAmount(TieCount, Label) + _
-                            IIf(Left$(Who, 4) = "and ", Val(Mid$(Who, 5)), 1)
-
-                        Rec(1) = CStr(TieWho(Label)) & " and " & _
-                            Format(TieCount(Label), "#,##0") & " more"
+                        Rec(1) = Rec(1) & IIf(Left$(Who, 4) = "and ", " ", ", ") & Who
+                        Rec(2) = ""
                         Sect(Label) = Rec
 
                     End If
@@ -4507,7 +4534,7 @@ Private Function BookSlide( _
         "<div class='mid five'>" & _
         FactTile(Facts, S, "Loan to value", "detail") & _
         FactTile(Facts, S, "Utilisation", "detail") & _
-        FactTile(Facts, S, "Haircut collateral value", "detail") & _
+        FactTile(Facts, S, "Haircut collateral value", "none") & _
         FactTile(Facts, S, "Clients in margin call", "detail") & _
         FactTile(Facts, S, "Clients in shortfall", "detail") & _
         "</div>" & _
@@ -4553,10 +4580,9 @@ Private Function SpreadSlide( _
     Take = Take & "."
 
     SpreadSlide = SlideOpen("How the book is spread", SectionBasis(Facts, S), Take) & _
-        "<div class='hero'>" & _
+        "<div class='hero three'>" & _
         FactTile(Facts, S, "Top 5 clients' share", "detail") & _
         FactTile(Facts, S, "Top 10 clients' share", "detail") & _
-        FactTile(Facts, S, "Concentration (Herfindahl index)", "detail") & _
         FactTile(Facts, S, "Median client", "detail") & _
         "</div>" & _
         "<div class='cols three'>" & _
@@ -4610,7 +4636,7 @@ Private Function EdgesSlide( _
             "Most non-eligible collateral"))) & _
         FactColumn("Holdings", FactRows(Facts, C, Array( _
             "Largest cash holder", "Most positions", "Most currencies", "Most categories held", _
-            "Most concentrated client", "Most evenly spread client"))) & _
+            "Most evenly spread client"))) & _
         "</div>" & _
         SlideClose(EndDate)
 
@@ -4873,8 +4899,7 @@ Private Function HistorySlide( _
             "Record collateral (MTM in Accounts)", "Lowest collateral (MTM in Accounts)", _
             "Record drawn", "Lowest drawn"))) & _
         FactColumn("Loans and lines", FactRows(Facts, H, Array( _
-            "Most loans at once", "Fewest loans at once", "Largest line ever approved", _
-            "Oldest active loan"))) & _
+            "Most loans at once", "Fewest loans at once", "Largest line ever approved"))) & _
         FactColumn("Spells and calls", FactRows(Facts, H, Array( _
             "Longest-lived ended loan", "Shortest-lived ended loan", "Most spells on the book", _
             "Busiest snapshot for new loans", "Busiest snapshot for ended loans", _
@@ -4985,6 +5010,7 @@ Private Function SlidesCss() As String
     Css = Css & ".body{flex:1;min-height:0;display:flex;flex-direction:column;gap:1.6rem;}"
     Css = Css & ".hero,.mid,.strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1.4rem;}"
     Css = Css & ".hero.five,.mid.five{grid-template-columns:repeat(5,1fr);}"
+    Css = Css & ".hero.three{grid-template-columns:repeat(3,1fr);}"
     Css = Css & ".mid.six{grid-template-columns:repeat(6,1fr);}"
     Css = Css & ".tile{border-left:.35rem solid #943634;padding:.2rem 0 .2rem 1.2rem;min-width:0;}"
     Css = Css & ".tile .k{font-size:1.3rem;color:#777;text-transform:uppercase;letter-spacing:.05em;" & _

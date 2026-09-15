@@ -263,18 +263,21 @@ as the dashboard's start date works; an end date with no snapshot is read as
 the last one on or before it — and goes into no email. Four sections read the
 end date's snapshots — the book (totals, utilisation, loan to value as the
 dashboard reads it — the approved lines over the MTM collateral Accounts
-carry — the haircut collateral value with its weighted Max LTV and its
-headroom over the lines, currencies, margin calls, the median client, the
-top-5 and top-10 shares and a Herfindahl index, untouched lines, and the
-clients holding every category outside DPM, whose DPM mandate spans equity,
+carry, which is the eligible market value with concentration limits
+applied, where the positions' collateral is their Position Value summed —
+the haircut collateral value, currencies, margin calls, the median client,
+the top-5 and top-10 shares, untouched lines, and the clients holding every
+category outside DPM, whose DPM mandate spans equity,
 bonds and funds, or who hold both), the clients (largest and smallest by
 collateral, drawn and line; highest and lowest loan to value; closest to a
 margin call and deepest in one, both against the approved line; most
-positions, currencies and categories; most concentrated and most evenly
-spread; largest cash, non-eligible and above-limit holders), the positions
-(the largest position over the book and in each category with its holder,
-the most widely held and the largest security, the largest and most common
-issuer, foreign currency, cash, non-eligible and above-limit totals), and the
+positions, currencies and categories; the most evenly spread; largest cash,
+non-eligible and above-limit holders), the positions (the largest position
+over the book and in each category with its holder — a position with
+neither ISIN nor name, cash mostly, going by its asset type and currency,
+"Cash EUR" — the most widely held and the largest security, the largest and
+most common issuer, foreign currency, cash, non-eligible and above-limit
+totals), and the
 exposure looked through — read from the end date's staged *Risk Exposure*
 table, the one the Weekly Analysis leaves behind, and never staged here,
 since resolving names can take a lookup by hand; each dimension runs over
@@ -285,20 +288,23 @@ in one and the client spread over the most, members held by one client only;
 what is reached through certificates, the certificate with the most
 underlyings and the underlying in the most certificates, underlyings that
 could not be named, and the DPM share. Where several clients or securities
-tie for a superlative, each gets a row of its own with its own detail, five
-at most, the rest counted on a closing row; a fact whose detail is about
-the value alone ("of 8") lists them on one row. Every movement is read two
-ways, each against a snapshot on file — the first on or after one month back, the
-first on or after year-end, resolved the way the report resolves its dates —
+tie for a superlative they are all named when three or fewer; more than
+that, two of them are, as examples, and the rest are counted — each named
+one on a row of its own with its own detail, the count on a closing row,
+unless the fact's detail is about the value alone ("of 8"), when one row
+names them all. Every movement is read two ways, each against a snapshot on
+file — the first on or after one month back, the first on or after
+year-end, resolved the way the report resolves its dates —
 with the book's totals, new and ended loans and the largest of each, the
 biggest riser and faller, the largest position increase and decrease, the
 most active repositioner, line increases and cuts, drawdowns and repayments,
 the categories gaining and losing most, securities new to and gone from the
 book, and margin calls raised and cleared. The last section walks every
 Accounts snapshot from the start date to the end date (Accounts only;
-positions are read for the three dates above): the oldest active loan,
-clients ever on the book, loans ended within the window and loans that came
-back, the longest- and shortest-lived ended loans, the busiest snapshots for
+positions are read for the three dates above): clients ever on the book,
+loans ended within the window and loans that came back, the most spells on
+the book with each spell's dates, the longest- and shortest-lived ended
+loans, the busiest snapshots for
 new and ended loans, record and lowest collateral, drawn and loan counts with
 their dates, the largest line ever approved, and margin calls over the run.
 The module reads the CSVs itself through the weekly module's field cleaner
