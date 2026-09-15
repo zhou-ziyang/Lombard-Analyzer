@@ -250,7 +250,7 @@ table is ever taken in its place. The run's own table carries the
 its date. The undated *Risk Exposure* sheet earlier builds wrote is adopted
 as a dated one on the first run. `CreateWeeklyEmail` re-exports the finished ranges as HTML — active
 loans, breakdown, new loans, loans ended, entered collateral, the pie, the
-loan-flow diagram, the concentration tables — and assembles the Outlook message, its intro naming
+concentration tables; the loan-flow diagram stays on the sheet — and assembles the Outlook message, its intro naming
 the date compared to. `docs/weekly-analysis-generate.md` walks
 through that module in detail — the staging table's schema, the certificate
 recursion, the entity name normalisation, the ranked formula, and the three

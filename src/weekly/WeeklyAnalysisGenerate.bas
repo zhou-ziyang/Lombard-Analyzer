@@ -12995,8 +12995,8 @@ End Sub
 ' four movements in one category, as wide as it is worth, all on one
 ' scale; a category node is as tall as the larger of its two sides and
 ' coloured by the way its net move went: green up, red down, grey none.
-' The pieces are grouped under one name so the email copies the diagram
-' as one picture, like the pie.
+' The pieces are grouped under one name so the diagram moves as one; it
+' stays on the sheet, the email carries the pie alone.
 '
 Private Sub CreateLoanFlowDiagram( _
     ByVal ws As Worksheet, _

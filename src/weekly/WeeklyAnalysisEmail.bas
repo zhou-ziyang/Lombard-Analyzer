@@ -34,7 +34,6 @@ Public Sub CreateWeeklyEmail()
 
     Dim WordEditor As Object
     Dim PieChart As Object
-    Dim FlowShape As Object
 
     Set ws = ThisWorkbook.Worksheets("Weekly Analysis")
 '   Set ws = ActiveSheet
@@ -138,10 +137,10 @@ Public Sub CreateWeeklyEmail()
 
     HTMLBody = HTMLBody & _
         "<table class='email-container' align='left' " & _
-        "width='1240' " & _
+        "width='1320' " & _
         "cellpadding='30' " & _
         "cellspacing='0' " & _
-        "style='width:1240px; table-layout:fixed;" & _
+        "style='width:1320px; table-layout:fixed;" & _
         "background-color:#ffffff;" & _
         "border:1px solid #ccc;" & _
         "font-family:Aptos Display,Aptos,UniCredit,Calibri,sans-serif;'>" & _
@@ -203,12 +202,12 @@ Public Sub CreateWeeklyEmail()
         BlockHtml(ws, Layout.EnteredRow, Layout.EnteredCol, 6, 8)
 
     '
-    ' Placeholders for the two pictures: the pie, then the loan flows
+    ' A placeholder for the pie.  The loan-flow diagram stays on the
+    ' sheet.
     '
 
     HTMLBody = HTMLBody & _
-        "<br>[[PIECHART]]<br>" & _
-        "<br>[[LOANFLOW]]<br>"
+        "<br>[[PIECHART]]<br>"
 
     '
     ' Exposure concentration
@@ -264,9 +263,9 @@ Public Sub CreateWeeklyEmail()
     End With
 
     '
-    ' The two pictures, pasted where their placeholders are.  Either may be
-    ' missing from the sheet - a run without positions draws neither - and
-    ' then only the placeholder goes.
+    ' The pie, pasted where its placeholder is.  It may be missing from
+    ' the sheet - a run without positions draws none - and then only the
+    ' placeholder goes.
     '
 
     Set WordEditor = _
@@ -274,11 +273,9 @@ Public Sub CreateWeeklyEmail()
 
     On Error Resume Next
     Set PieChart = ws.ChartObjects("CollateralPie")
-    Set FlowShape = ws.Shapes("LoanFlowSankey")
     On Error GoTo 0
 
     PastePictureAtPlaceholder WordEditor, "[[PIECHART]]", PieChart
-    PastePictureAtPlaceholder WordEditor, "[[LOANFLOW]]", FlowShape
 
 End Sub
 
