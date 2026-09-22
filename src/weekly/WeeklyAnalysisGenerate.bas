@@ -1716,16 +1716,17 @@ Private Sub WriteCollateralChange( _
 End Sub
 
 '
-' The current snapshot's rows, in the two tables that carry one: dark red
-' (#943634) under white, so the eye lands on "now" before anything else.
-' The change rows under them keep their grey.
+' The current snapshot's rows, in the two tables that carry one: a pale
+' rose (#FAE2E0) under the usual black, so the eye lands on "now" before
+' anything else and can still read it.  The change rows under them keep
+' their grey.
 '
 Private Sub HighlightCurrentRows( _
     ByVal Target As Range)
 
     With Target
-        .Interior.Color = RGB(148, 54, 52)
-        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(250, 226, 224)
+        .Font.Color = RGB(0, 0, 0)
     End With
 
 End Sub
