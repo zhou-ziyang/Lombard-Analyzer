@@ -212,8 +212,8 @@ compared date's row (amounts and shares, for the entered table) over this
 report's, both over the past month, and close with a `% Change WoW` row
 between the two. Every ratio is a formula, blank on a base that is zero or
 under half a cent — the residue an allocation can leave. The current
-snapshot's rows in the overview and the breakdown are highlighted, a pale
-rose (#FAE2E0) under black. The overview and the two movement tables stack in the
+snapshot's rows in the overview, the breakdown and the two movement tables
+are highlighted, a pale rose (#FAE2E0) under black. The overview and the two movement tables stack in the
 left column with the same five columns — loans, approved loan, drawn amount,
 collateral value — so the three read as one; the notes box sits under them at
 the same width, the breakdown column starts one spacer column to their right

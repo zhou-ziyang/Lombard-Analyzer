@@ -29,7 +29,7 @@ v82，之后的改动只在 git 记录里）。
 一个月。比例都是公式，分母为 0 或小于半分钱（`ZERO_BASE_TOLERANCE`，分摊留下的零头）显示空白。Overview、New Loans、Loans Ended 三张表在左栏上下叠放，
 五列相同（Loans、Approved Loan、Drawn Amount、Collateral Value），Notes 框在它们下面、同样五列宽；
 Breakdown 那一栏隔一列空开始，Entered、饼图和贷款流向图在它下面，集中度区块再隔一列空紧接 Breakdown。
-Active 和 Breakdown 里当前日期那几行浅玫瑰底（#FAE2E0）黑字。
+Active、Breakdown 和两张 movement 表里当前日期那几行浅玫瑰底（#FAE2E0）黑字。
 
 但真正的重量不在报表区块，而在 `BuildRiskGranularitySection` —— 它一个人占了从第 10,980 行
 往后的篇幅，加上它依赖的证书展开、实体名规范化和参照表维护，超过全模块的三分之二。

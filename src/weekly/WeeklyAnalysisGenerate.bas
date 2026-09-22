@@ -1716,10 +1716,10 @@ Private Sub WriteCollateralChange( _
 End Sub
 
 '
-' The current snapshot's rows, in the two tables that carry one: a pale
-' rose (#FAE2E0) under the usual black, so the eye lands on "now" before
-' anything else and can still read it.  The change rows under them keep
-' their grey.
+' The current snapshot's rows, in the overview, the breakdown and the two
+' movement tables: a pale rose (#FAE2E0) under the usual black, so the
+' eye lands on "now" before anything else and can still read it.  The
+' change rows under them keep their grey.
 '
 Private Sub HighlightCurrentRows( _
     ByVal Target As Range)
@@ -1994,6 +1994,9 @@ Private Sub WriteLoanMovementSection( _
         .Font.Bold = True
         .Interior.Color = RGB(212, 212, 212)
     End With
+
+    HighlightCurrentRows _
+        ws.Range(ws.Cells(TopRow + 3, LeftCol), ws.Cells(TopRow + 3, LeftCol + 4))
 
 End Sub
 
