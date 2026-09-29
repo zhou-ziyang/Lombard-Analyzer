@@ -11063,6 +11063,14 @@ Private Sub WriteRiskStageWorksheet( _
     Set StageTable = wsStage.ListObjects(TableName)
     On Error GoTo 0
 
+    '
+    ' A filter someone left on the table, or on the sheet, would confine
+    ' the clearing below to the visible rows and hide most of the rebuilt
+    ' table behind the old criteria: show every row first.
+    '
+
+    ShowAllRiskStageRows wsStage, StageTable
+
     If StageTable Is Nothing Then
 
         Do While wsStage.ListObjects.Count > 0
@@ -11070,6 +11078,8 @@ Private Sub WriteRiskStageWorksheet( _
             wsStage.ListObjects(1).Unlist
 
         Loop
+
+        If wsStage.AutoFilterMode Then wsStage.AutoFilterMode = False
 
         wsStage.Cells.Clear
 
@@ -11171,6 +11181,37 @@ Private Sub WriteRiskStageWorksheet( _
     ' The staging sheet is an audit trail and calculation source. Leave its
     ' existing presentation untouched instead of reformatting up to
     ' thirty thousand rows on every rebuild.
+
+End Sub
+
+'
+' Drops the criteria of any filter on a staging sheet - the table's own,
+' or one on the sheet - so that clearing and rewriting reach every row.
+' With rows filtered away, ClearContents and Clear touch only the visible
+' ones, the old rows stay under the new, and the rebuilt table shows
+' through the old criteria as a handful of rows.  The filter arrows stay.
+'
+Private Sub ShowAllRiskStageRows( _
+    ByVal wsStage As Worksheet, _
+    ByVal StageTable As ListObject)
+
+    On Error Resume Next
+
+    If Not StageTable Is Nothing Then
+
+        If Not StageTable.AutoFilter Is Nothing Then
+
+            If StageTable.AutoFilter.FilterMode Then
+                StageTable.AutoFilter.ShowAllData
+            End If
+
+        End If
+
+    End If
+
+    If wsStage.FilterMode Then wsStage.ShowAllData
+
+    On Error GoTo 0
 
 End Sub
 
