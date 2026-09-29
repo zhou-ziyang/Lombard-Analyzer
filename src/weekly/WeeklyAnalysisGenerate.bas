@@ -1717,15 +1717,16 @@ End Sub
 
 '
 ' The current snapshot's rows, in the overview, the breakdown and the two
-' movement tables: a pale rose (#FAE2E0) under the usual black, so the
-' eye lands on "now" before anything else and can still read it.  The
-' change rows under them keep their grey.
+' movement tables: a light amber (#FBE3A6) under the usual black - warm
+' against the grey bands and the dark-red rules, strong enough to find at
+' a glance, light enough to read.  The change rows under them keep their
+' grey.
 '
 Private Sub HighlightCurrentRows( _
     ByVal Target As Range)
 
     With Target
-        .Interior.Color = RGB(250, 226, 224)
+        .Interior.Color = RGB(251, 227, 166)
         .Font.Color = RGB(0, 0, 0)
     End With
 
